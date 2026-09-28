@@ -1,5 +1,7 @@
 'use strict';
 
+const { addColumnIfMissing, addIndexIfMissing } = require('../migrationHelpers');
+
 /**
  * Backs the chat unread-message indicator — null means "never read", so an
  * existing participant's whole message history counts as unread until they
@@ -7,7 +9,7 @@
  */
 module.exports = {
   async up(queryInterface, Sequelize) {
-    await queryInterface.addColumn('conversation_participants', 'last_read_at', {
+    await addColumnIfMissing(queryInterface, 'conversation_participants', 'last_read_at', {
       type: Sequelize.DATE,
       allowNull: true,
       defaultValue: null,

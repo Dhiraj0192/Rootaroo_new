@@ -1,5 +1,7 @@
 'use strict';
 
+const { addColumnIfMissing, addIndexIfMissing } = require('../migrationHelpers');
+
 /**
  * Makes calendar sync multi-provider. `calendar_sync_states` and
  * `calendar_events.google_event_id` were implicitly Google-only (no
@@ -15,7 +17,7 @@
 module.exports = {
   async up(queryInterface, Sequelize) {
     // ── calendar_sync_states ──
-    await queryInterface.addColumn('calendar_sync_states', 'provider', {
+    await addColumnIfMissing(queryInterface, 'calendar_sync_states', 'provider', {
       type: Sequelize.ENUM('google', 'outlook', 'apple'),
       allowNull: false,
       defaultValue: 'google',
@@ -37,46 +39,46 @@ module.exports = {
       allowNull: true,
     });
 
-    await queryInterface.addColumn('calendar_sync_states', 'outlook_calendar_id', {
+    await addColumnIfMissing(queryInterface, 'calendar_sync_states', 'outlook_calendar_id', {
       type: Sequelize.STRING(255),
       allowNull: true,
     });
     // Apple ID email — not a secret, stored plaintext (unlike the password).
-    await queryInterface.addColumn('calendar_sync_states', 'apple_id', {
+    await addColumnIfMissing(queryInterface, 'calendar_sync_states', 'apple_id', {
       type: Sequelize.STRING(255),
       allowNull: true,
     });
     // Encrypted at rest via the same getter/setter pattern as access_token/
     // refresh_token (CalendarSyncState model), keyed by env.calendarTokenKek.
-    await queryInterface.addColumn('calendar_sync_states', 'apple_password', {
+    await addColumnIfMissing(queryInterface, 'calendar_sync_states', 'apple_password', {
       type: Sequelize.TEXT,
       allowNull: true,
     });
     // Cached CalDAV calendar-home-set URL from service discovery, so
     // reconnects/syncs skip re-discovering it against caldav.icloud.com.
-    await queryInterface.addColumn('calendar_sync_states', 'caldav_calendar_home_url', {
+    await addColumnIfMissing(queryInterface, 'calendar_sync_states', 'caldav_calendar_home_url', {
       type: Sequelize.STRING(500),
       allowNull: true,
     });
 
-    await queryInterface.addIndex('calendar_sync_states', ['user_id', 'provider'], {
+    await addIndexIfMissing(queryInterface, 'calendar_sync_states', ['user_id', 'provider'], {
       name: 'idx_calendar_sync_states_user_provider',
       unique: true,
     });
 
     // ── calendar_events ──
-    await queryInterface.addColumn('calendar_events', 'external_provider', {
+    await addColumnIfMissing(queryInterface, 'calendar_events', 'external_provider', {
       type: Sequelize.ENUM('google', 'outlook', 'apple'),
       allowNull: true,
     });
-    await queryInterface.addColumn('calendar_events', 'external_event_id', {
+    await addColumnIfMissing(queryInterface, 'calendar_events', 'external_event_id', {
       type: Sequelize.STRING(255),
       allowNull: true,
     });
     await queryInterface.sequelize.query(
       "UPDATE `calendar_events` SET `external_provider` = 'google', `external_event_id` = `google_event_id` WHERE `google_event_id` IS NOT NULL",
     );
-    await queryInterface.addIndex('calendar_events', ['external_provider', 'external_event_id'], {
+    await addIndexIfMissing(queryInterface, 'calendar_events', ['external_provider', 'external_event_id'], {
       name: 'idx_calendar_events_external',
     });
   },
