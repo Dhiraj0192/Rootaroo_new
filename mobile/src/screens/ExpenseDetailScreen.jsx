@@ -356,7 +356,7 @@ export default function ExpenseDetailScreen({ navigation, route }) {
             disabled={settling}
             activeOpacity={0.85}
           >
-              <GoldFill radius={radius.pill} disabled={settling} />
+            <GoldFill radius={radius.pill} disabled={settling} />
             <Text style={styles.primaryBtnText}>{settling ? 'Settling…' : 'Mark as settled'}</Text>
           </TouchableOpacity>
         )}
@@ -559,7 +559,7 @@ export default function ExpenseDetailScreen({ navigation, route }) {
                 disabled={saving}
                 activeOpacity={0.85}
               >
-                  <GoldFill radius={radius.pill} disabled={saving} />
+                <GoldFill radius={radius.pill} disabled={saving} />
                 {saving ? (
                   <ActivityIndicator size="small" color={colors.onAccent} />
                 ) : (

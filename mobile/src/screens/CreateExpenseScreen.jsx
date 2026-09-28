@@ -324,7 +324,7 @@ export default function CreateExpenseScreen({ navigation }) {
           disabled={saving}
           activeOpacity={0.85}
         >
-            <GoldFill radius={radius.pill} disabled={saving} />
+          <GoldFill radius={radius.pill} disabled={saving} />
           {saving ? (
             <ActivityIndicator size="small" color={colors.onAccent} />
           ) : (

@@ -256,7 +256,7 @@ export default function CreateEventScreen({ navigation }) {
           disabled={saving}
           activeOpacity={0.85}
         >
-            <GoldFill radius={9999} disabled={saving} />
+          <GoldFill radius={9999} disabled={saving} />
           {saving ? (
             <ActivityIndicator size="small" color={colors.onAccent} />
           ) : (

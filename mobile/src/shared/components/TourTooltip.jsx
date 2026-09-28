@@ -27,7 +27,7 @@ export default function TourTooltip({ title, body, total, current, isLast, next,
           activeOpacity={0.85}
           onPress={continueLabel ? onContinue : next}
         >
-            <GoldFill radius={radius.pill} />
+          <GoldFill radius={radius.pill} />
           <Text style={styles.nextText}>{continueLabel ?? (isLast ? 'Done' : 'Next')}</Text>
         </TouchableOpacity>
       </View>

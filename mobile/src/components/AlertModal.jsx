@@ -55,7 +55,7 @@ export default function AlertModal({ visible, title, message, buttons, onRequest
                   }}
                   activeOpacity={0.85}
                 >
-                    <GoldFill radius={radius.pill} />
+                  {!isCancel && !isDestructive && <GoldFill radius={radius.pill} />}
                   <Text style={[styles.btnText, isCancel && styles.btnTextCancel]}>{btn.text}</Text>
                 </TouchableOpacity>
               );

@@ -747,7 +747,7 @@ export default function HouseholdSettingsScreen({ navigation }) {
               disabled={actionLoading}
               activeOpacity={0.85}
             >
-                <GoldFill radius={9999} disabled={actionLoading} />
+              <GoldFill radius={9999} disabled={actionLoading} />
               <Text style={styles.saveBtnText}>{actionLoading ? 'Saving…' : 'Save'}</Text>
             </TouchableOpacity>
 
@@ -955,6 +955,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: colors.gold,
     ...goldButton.glow,
   },
   copyBtnText: {

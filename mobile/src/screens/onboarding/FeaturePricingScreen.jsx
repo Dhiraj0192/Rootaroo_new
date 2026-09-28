@@ -1,21 +1,35 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Animated, Easing } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useIsFocused } from '@react-navigation/native';
 import Svg, { Path } from 'react-native-svg';
 import FeatureTourShell from './FeatureTourShell';
 import { Eyebrow } from './tourPrimitives';
+import { useReducedMotion } from './useReducedMotion';
 import { pricing, oldWay, PRICE, derivePricing } from './featureTourContent';
 import { updateSignupProgress } from '../../shared/store/signupProgress';
 import { useAuthStore } from '../../shared/store/authStore';
 import { colors, fonts, radius, goldButton, withAlpha } from '../../shared/theme';
 
+// Two groups, not eight — the "what you'd pay elsewhere / what you pay here"
+// hero enters from the left, the plan controls follow in from the right.
+// There was no animation here before this pass (see the research report);
+// this is new work, not a preserved effect.
+const GROUP_STAGGER_MS = 380;
+const GROUP_ENTER_MS = 640;
+const SLIDE_PX = 32;
+
 /**
- * Step 5 of 5 — the close, and the last screen of onboarding. Everything the
+ * Step 4 of 4 — the close, and the last screen of onboarding. Everything the
  * tour just showed, priced against what the same five apps cost separately.
+ *
+ * Unlike the previous three steps, this one does NOT auto-advance and has no
+ * Skip — it's the screen with a real decision on it (plan, household size),
+ * so it only ever proceeds when the user actually presses Continue.
  *
  * NOTE: this screen takes no payment. There is no billing, subscription or
  * in-app-purchase code in the app or the server, so its CTA does what the
- * previous four CTAs do — finishes the flow and drops the user on Home. The
+ * previous three CTAs do — finishes the flow and drops the user on Home. The
  * plan toggle and household-size stepper are live (the maths is the design's,
  * in featureTourContent.derivePricing) so the screen is ready to wire to a
  * real store transaction later; charging for this would need Apple/Google
@@ -25,6 +39,53 @@ export default function FeaturePricingScreen({ navigation }) {
   const [plan, setPlan] = useState('year');
   const [size, setSize] = useState(PRICE.includedSeats);
   const p = derivePricing(plan, size);
+
+  const isFocused = useIsFocused();
+  const reduceMotion = useReducedMotion();
+
+  const heroAnim = useRef({ opacity: new Animated.Value(0), translateX: new Animated.Value(-SLIDE_PX) }).current;
+  const controlsAnim = useRef({ opacity: new Animated.Value(0), translateX: new Animated.Value(SLIDE_PX) }).current;
+  const sequenceRef = useRef(null);
+
+  useEffect(() => {
+    if (!isFocused) return undefined;
+
+    if (reduceMotion) {
+      sequenceRef.current?.stop?.();
+      heroAnim.opacity.setValue(1);
+      heroAnim.translateX.setValue(0);
+      controlsAnim.opacity.setValue(1);
+      controlsAnim.translateX.setValue(0);
+      return undefined;
+    }
+
+    heroAnim.opacity.setValue(0);
+    heroAnim.translateX.setValue(-SLIDE_PX);
+    controlsAnim.opacity.setValue(0);
+    controlsAnim.translateX.setValue(SLIDE_PX);
+
+    const enter = (anim) =>
+      Animated.parallel([
+        Animated.timing(anim.opacity, {
+          toValue: 1,
+          duration: GROUP_ENTER_MS,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.timing(anim.translateX, {
+          toValue: 0,
+          duration: GROUP_ENTER_MS,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]);
+
+    sequenceRef.current = Animated.stagger(GROUP_STAGGER_MS, [enter(heroAnim), enter(controlsAnim)]);
+    sequenceRef.current.start();
+
+    return () => sequenceRef.current?.stop?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isFocused, reduceMotion]);
 
   // The tour is the tail of onboarding, so finishing it — not InviteMembers —
   // is what ends setup for a household creator: same three calls, moved here
@@ -38,130 +99,134 @@ export default function FeaturePricingScreen({ navigation }) {
 
   return (
     <FeatureTourShell
-      step={4}
+      step={3}
       navigation={navigation}
       contentPadding={22}
       ctaLabel={p.payLabel}
       ctaSubLabel={p.payFine}
       onContinue={finish}
     >
-      <Eyebrow style={styles.topEyebrow}>{pricing.eyebrow}</Eyebrow>
-      <Text style={styles.title}>
-        {pricing.title[0]}
-        {'\n'}
-        {pricing.title[1]}
-      </Text>
+      <Animated.View style={{ opacity: heroAnim.opacity, transform: [{ translateX: heroAnim.translateX }] }}>
+        <Eyebrow style={styles.topEyebrow}>{pricing.eyebrow}</Eyebrow>
+        <Text style={styles.title}>
+          {pricing.title[0]}
+          {'\n'}
+          {pricing.title[1]}
+        </Text>
 
-      {/* What the same jobs cost across five separate subscriptions. */}
-      <View style={styles.oldCard}>
-        <Text style={styles.microLabel}>{pricing.oldWayLabel}</Text>
-        <View style={styles.oldList}>
-          {oldWay.map((o) => (
-            <View key={o.name} style={styles.oldRow}>
-              <Text style={styles.oldName} numberOfLines={1}>
-                {o.name}
-              </Text>
-              <Text style={styles.oldCost}>{o.cost}</Text>
-            </View>
-          ))}
-        </View>
-        <View style={styles.oldTotalRow}>
-          <Text style={styles.oldTotalName}>{pricing.oldWayTotalLabel}</Text>
-          <Text style={styles.oldTotal}>{pricing.oldWayTotal}</Text>
-        </View>
-      </View>
-
-      <View style={styles.dividerRow}>
-        <View style={styles.rule} />
-        <Text style={styles.dividerLabel}>{pricing.divider}</Text>
-        <View style={styles.rule} />
-      </View>
-
-      <View style={styles.priceRow}>
-        <Text style={styles.currency}>$</Text>
-        <Text style={styles.priceWhole}>{p.bigWhole}</Text>
-        <Text style={styles.priceCents}>{p.bigCents}</Text>
-        <Text style={styles.pricePer}>{p.bigPerShort}</Text>
-      </View>
-      <Text style={styles.headSub}>{p.headSub}</Text>
-
-      {/* The saving, with a bar comparing Rootaroo's yearly cost to ~$399. */}
-      <LinearGradient
-        colors={[withAlpha(colors.successBright, 0.16), withAlpha(colors.successBright, 0.04), 'transparent']}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.savedCard}
-      >
-        <View style={styles.savedRow}>
-          <Svg width={22} height={22} viewBox="0 0 24 24" fill="none">
-            <Path d="M12 19V7" stroke={colors.successBright} strokeWidth={2.3} strokeLinecap="round" />
-            <Path
-              d="M6 13l6-6 6 6"
-              stroke={colors.successBright}
-              strokeWidth={2.3}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </Svg>
-          <View style={styles.grow}>
-            <View style={styles.savedHead}>
-              <Text style={styles.savedAmount}>{p.savedAmount}</Text>
-              <Text style={styles.savedUnit}>{pricing.savedUnit}</Text>
-            </View>
-            <Text style={styles.savedSub}>{p.savedSub}</Text>
+        {/* What the same jobs cost across five separate subscriptions. */}
+        <View style={styles.oldCard}>
+          <Text style={styles.microLabel}>{pricing.oldWayLabel}</Text>
+          <View style={styles.oldList}>
+            {oldWay.map((o) => (
+              <View key={o.name} style={styles.oldRow}>
+                <Text style={styles.oldName} numberOfLines={1}>
+                  {o.name}
+                </Text>
+                <Text style={styles.oldCost}>{o.cost}</Text>
+              </View>
+            ))}
+          </View>
+          <View style={styles.oldTotalRow}>
+            <Text style={styles.oldTotalName}>{pricing.oldWayTotalLabel}</Text>
+            <Text style={styles.oldTotal}>{pricing.oldWayTotal}</Text>
           </View>
         </View>
 
-        <View style={styles.barTrack}>
-          <LinearGradient
-            colors={[colors.goldGlowSoft, colors.goldWarmDark]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 0 }}
-            style={[styles.barFill, { width: p.goldW }]}
-          />
+        <View style={styles.dividerRow}>
+          <View style={styles.rule} />
+          <Text style={styles.dividerLabel}>{pricing.divider}</Text>
+          <View style={styles.rule} />
         </View>
-        <View style={styles.barLabels}>
-          <Text style={styles.barGold}>ROOTAROO {p.rootYearly}</Text>
-          <Text style={styles.barRed}>{pricing.elsewhereLabel}</Text>
-        </View>
-      </LinearGradient>
 
-      {/* Plan toggle */}
-      <View style={styles.tabs}>
-        <Tab label={pricing.yearTab} on={p.year} onPress={() => setPlan('year')} />
-        <Tab label={pricing.monthTab} on={!p.year} onPress={() => setPlan('month')} />
-      </View>
+        <View style={styles.priceRow}>
+          <Text style={styles.currency}>$</Text>
+          <Text style={styles.priceWhole}>{p.bigWhole}</Text>
+          <Text style={styles.priceCents}>{p.bigCents}</Text>
+          <Text style={styles.pricePer}>{p.bigPerShort}</Text>
+        </View>
+        <Text style={styles.headSub}>{p.headSub}</Text>
 
-      {/* Household size stepper */}
-      <View style={styles.settingRow}>
-        <View style={styles.grow}>
-          <Text style={styles.settingTitle}>{pricing.sizeLabel}</Text>
-          <Text style={[styles.settingSub, p.extras > 0 && styles.settingSubOn]}>{p.extraLine}</Text>
-        </View>
-        <View style={styles.stepper}>
-          <StepperButton
-            sign="minus"
-            disabled={size <= PRICE.minSeats}
-            onPress={() => setSize((s) => Math.max(PRICE.minSeats, s - 1))}
-            label="Remove a member"
-          />
-          <Text style={styles.stepperValue}>{size}</Text>
-          <StepperButton
-            sign="plus"
-            disabled={size >= PRICE.maxSeats}
-            onPress={() => setSize((s) => Math.min(PRICE.maxSeats, s + 1))}
-            label="Add a member"
-          />
-        </View>
-      </View>
+        {/* The saving, with a bar comparing Rootaroo's yearly cost to ~$399. */}
+        <LinearGradient
+          colors={[withAlpha(colors.successBright, 0.16), withAlpha(colors.successBright, 0.04), 'transparent']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.savedCard}
+        >
+          <View style={styles.savedRow}>
+            <Svg width={22} height={22} viewBox="0 0 24 24" fill="none">
+              <Path d="M12 19V7" stroke={colors.successBright} strokeWidth={2.3} strokeLinecap="round" />
+              <Path
+                d="M6 13l6-6 6 6"
+                stroke={colors.successBright}
+                strokeWidth={2.3}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </Svg>
+            <View style={styles.grow}>
+              <View style={styles.savedHead}>
+                <Text style={styles.savedAmount}>{p.savedAmount}</Text>
+                <Text style={styles.savedUnit}>{pricing.savedUnit}</Text>
+              </View>
+              <Text style={styles.savedSub}>{p.savedSub}</Text>
+            </View>
+          </View>
 
-      <View style={styles.settingRow}>
-        <View style={styles.grow}>
-          <Text style={styles.settingTitle}>{pricing.featuresTitle}</Text>
-          <Text style={styles.settingSub}>{pricing.featuresSub}</Text>
+          <View style={styles.barTrack}>
+            <LinearGradient
+              colors={[colors.goldGlowSoft, colors.goldWarmDark]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={[styles.barFill, { width: p.goldW }]}
+            />
+          </View>
+          <View style={styles.barLabels}>
+            <Text style={styles.barGold}>ROOTAROO {p.rootYearly}</Text>
+            <Text style={styles.barRed}>{pricing.elsewhereLabel}</Text>
+          </View>
+        </LinearGradient>
+      </Animated.View>
+
+      <Animated.View style={{ opacity: controlsAnim.opacity, transform: [{ translateX: controlsAnim.translateX }] }}>
+        {/* Plan toggle */}
+        <View style={styles.tabs}>
+          <Tab label={pricing.yearTab} on={p.year} onPress={() => setPlan('year')} />
+          <Tab label={pricing.monthTab} on={!p.year} onPress={() => setPlan('month')} />
         </View>
-        <Text style={styles.includedBadge}>{pricing.featuresBadge}</Text>
-      </View>
+
+        {/* Household size stepper */}
+        <View style={styles.settingRow}>
+          <View style={styles.grow}>
+            <Text style={styles.settingTitle}>{pricing.sizeLabel}</Text>
+            <Text style={[styles.settingSub, p.extras > 0 && styles.settingSubOn]}>{p.extraLine}</Text>
+          </View>
+          <View style={styles.stepper}>
+            <StepperButton
+              sign="minus"
+              disabled={size <= PRICE.minSeats}
+              onPress={() => setSize((s) => Math.max(PRICE.minSeats, s - 1))}
+              label="Remove a member"
+            />
+            <Text style={styles.stepperValue}>{size}</Text>
+            <StepperButton
+              sign="plus"
+              disabled={size >= PRICE.maxSeats}
+              onPress={() => setSize((s) => Math.min(PRICE.maxSeats, s + 1))}
+              label="Add a member"
+            />
+          </View>
+        </View>
+
+        <View style={styles.settingRow}>
+          <View style={styles.grow}>
+            <Text style={styles.settingTitle}>{pricing.featuresTitle}</Text>
+            <Text style={styles.settingSub}>{pricing.featuresSub}</Text>
+          </View>
+          <Text style={styles.includedBadge}>{pricing.featuresBadge}</Text>
+        </View>
+      </Animated.View>
     </FeatureTourShell>
   );
 }

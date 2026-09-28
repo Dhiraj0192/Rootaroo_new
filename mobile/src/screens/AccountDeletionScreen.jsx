@@ -14,6 +14,7 @@ import { showAlert } from '../shared/services/themedAlert';
 import { useAuthStore } from '../shared/store/authStore';
 import { authApi } from '../shared/api/auth';
 import { colors, fonts, withAlpha } from '../shared/theme';
+import { GoldFill } from '../shared/components/GoldButton';
 import { KeyboardAvoider, keyboardScrollProps } from '../shared/components/KeyboardAware';
 import { useTabBarDockHeight } from '../shared/hooks/useTabBarDockHeight';
 export default function AccountDeletionScreen({ navigation }) {
@@ -93,6 +94,7 @@ export default function AccountDeletionScreen({ navigation }) {
             Your account and all associated data have been permanently removed.
           </Text>
           <TouchableOpacity style={styles.primaryBtn} onPress={handleLogout}>
+            <GoldFill radius={10} />
             <Text style={styles.primaryText}>GO BACK TO LOGIN</Text>
           </TouchableOpacity>
         </View>
@@ -165,6 +167,7 @@ export default function AccountDeletionScreen({ navigation }) {
               activeOpacity={0.85}
               disabled={loading}
             >
+              <GoldFill radius={10} disabled={loading} />
               {loading ? (
                 <ActivityIndicator color={colors.legacyNavySoft} />
               ) : (
@@ -269,18 +272,16 @@ const styles = StyleSheet.create({
   primaryBtn: {
     width: '100%',
     height: 46,
-    backgroundColor: colors.legacyGold,
+    backgroundColor: colors.gold,
     borderRadius: 10,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 4,
     marginBottom: 14,
-    shadowColor: colors.legacyGold,
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.28,
-    shadowRadius: 20,
-    elevation: 6,
+    shadowOpacity: 0,
+    shadowRadius: 0,
+    elevation: 0,
   },
   primaryText: {
     fontFamily: fonts.bodyBold,

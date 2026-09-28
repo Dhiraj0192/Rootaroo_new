@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -10,12 +10,12 @@ import {
   Easing,
   PanResponder,
   Dimensions,
-} from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import LottieView from 'lottie-react-native';
-import { colors, fonts, goldButton, radius } from '../shared/theme';
-import { GoldFill } from '../shared/components/GoldButton';
-const { width: W } = Dimensions.get('window');
+} from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import LottieView from "lottie-react-native";
+import { colors, fonts, goldButton, radius } from "../shared/theme";
+import { GoldFill } from "../shared/components/GoldButton";
+const { width: W } = Dimensions.get("window");
 const AUTOPLAY_INTERVAL = 4200;
 const SLIDE_DURATION = 460; // eased forward/loop transition
 const SWIPE_THRESHOLD = W * 0.22;
@@ -28,14 +28,14 @@ function KangarooHero() {
   return (
     <View
       style={{
-        width: '100%',
-        height: '100%',
-        alignItems: 'center',
-        justifyContent: 'center',
+        width: "100%",
+        height: "100%",
+        alignItems: "center",
+        justifyContent: "center",
       }}
     >
       <LottieView
-        source={require('../../assets/animations/kangaroo.json')}
+        source={require("../../assets/animations/kangaroo.json")}
         autoPlay
         loop
         style={{ width: 176, height: 176 }}
@@ -51,14 +51,14 @@ function OrganizeHero() {
   return (
     <View
       style={{
-        width: '100%',
-        height: '100%',
-        alignItems: 'center',
-        justifyContent: 'center',
+        width: "100%",
+        height: "100%",
+        alignItems: "center",
+        justifyContent: "center",
       }}
     >
       <LottieView
-        source={require('../../assets/animations/todo.json')}
+        source={require("../../assets/animations/todo.json")}
         autoPlay
         loop
         style={{ width: 220, height: 220 }}
@@ -74,14 +74,14 @@ function SecurityHero() {
   return (
     <View
       style={{
-        width: '100%',
-        height: '100%',
-        alignItems: 'center',
-        justifyContent: 'center',
+        width: "100%",
+        height: "100%",
+        alignItems: "center",
+        justifyContent: "center",
       }}
     >
       <LottieView
-        source={require('../../assets/animations/Vault.json')}
+        source={require("../../assets/animations/Vault.json")}
         autoPlay
         loop
         style={{ width: 220, height: 220 }}
@@ -95,18 +95,18 @@ function SecurityHero() {
 const SLIDES = [
   {
     hero: KangarooHero,
-    title: 'Family coordination',
-    body: 'Tasks, groceries, schedules, and reminders — all in one place.',
+    title: "Family coordination",
+    body: "Tasks, groceries, schedules, and reminders — all in one place.",
   },
   {
     hero: OrganizeHero,
-    title: 'Harmonious organization',
-    body: 'Every shared list, bill, and event sorted beautifully for the whole household.',
+    title: "Harmonious organization",
+    body: "Every shared list, bill, and event sorted beautifully for the whole household.",
   },
   {
     hero: SecurityHero,
-    title: 'Private by design',
-    body: 'End-to-end encrypted messages, vaults, and documents — yours alone.',
+    title: "Private by design",
+    body: "End-to-end encrypted messages, vaults, and documents — yours alone.",
   },
 ];
 /* Trailing clone of slide 0 lets autoplay/swipe always animate forward,
@@ -164,7 +164,8 @@ export default function WelcomeScreen({ navigation }) {
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => false,
-      onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > 8 && Math.abs(g.dx) > Math.abs(g.dy),
+      onMoveShouldSetPanResponder: (_, g) =>
+        Math.abs(g.dx) > 8 && Math.abs(g.dx) > Math.abs(g.dy),
       onPanResponderGrant: () => {
         stopAutoplay();
         translateX.stopAnimation((value) => {
@@ -174,11 +175,13 @@ export default function WelcomeScreen({ navigation }) {
       onPanResponderMove: (_, g) => {
         const raw = dragBase.current + g.dx;
         const min = -SLIDES.length * W;
-        const overdrag = raw > 0 ? raw * 0.3 : raw < min ? min + (raw - min) * 0.3 : raw;
+        const overdrag =
+          raw > 0 ? raw * 0.3 : raw < min ? min + (raw - min) * 0.3 : raw;
         translateX.setValue(overdrag);
       },
       onPanResponderRelease: (_, g) => {
-        const passedThreshold = Math.abs(g.dx) > SWIPE_THRESHOLD || Math.abs(g.vx) > 0.5;
+        const passedThreshold =
+          Math.abs(g.dx) > SWIPE_THRESHOLD || Math.abs(g.vx) > 0.5;
         let target = activeSlideRef.current;
         if (passedThreshold) target += g.dx < 0 ? 1 : -1;
         goToPage(target);
@@ -201,7 +204,7 @@ export default function WelcomeScreen({ navigation }) {
       <View style={styles.carousel} {...panResponder.panHandlers}>
         <Animated.View
           style={{
-            flexDirection: 'row',
+            flexDirection: "row",
             width: W * LOOP_SLIDES.length,
             transform: [
               {
@@ -217,8 +220,8 @@ export default function WelcomeScreen({ navigation }) {
                 key={`hero-${i}`}
                 style={{
                   width: W,
-                  alignItems: 'center',
-                  justifyContent: 'center',
+                  alignItems: "center",
+                  justifyContent: "center",
                 }}
               >
                 <View style={styles.heroBox}>
@@ -238,15 +241,15 @@ export default function WelcomeScreen({ navigation }) {
       >
         <Text style={styles.title}>Welcome to Rootaroo</Text>
         <Text style={styles.subtitle}>
-          Everything your family needs lives in one place — shared safely, organized beautifully,
-          and always with you.
+          Everything your family needs lives in one place — shared safely,
+          organized beautifully, and always with you.
         </Text>
 
         {/* Feature card — same translateX, always synced with the hero */}
         <View style={styles.cardPager} {...panResponder.panHandlers}>
           <Animated.View
             style={{
-              flexDirection: 'row',
+              flexDirection: "row",
               width: W * LOOP_SLIDES.length,
               transform: [
                 {
@@ -285,7 +288,9 @@ export default function WelcomeScreen({ navigation }) {
                 right: 4,
               }}
             >
-              <View style={[styles.dot, i === activeSlide && styles.dotActive]} />
+              <View
+                style={[styles.dot, i === activeSlide && styles.dotActive]}
+              />
             </TouchableOpacity>
           ))}
         </View>
@@ -307,13 +312,13 @@ export default function WelcomeScreen({ navigation }) {
         <TouchableOpacity
           style={styles.ctaButton}
           activeOpacity={0.85}
-          onPress={() => navigation.navigate('ChooseMethod')}
+          onPress={() => navigation.navigate("ChooseMethod")}
         >
-            <GoldFill radius={radius.pill} />
+          <GoldFill radius={radius.pill} />
           <Text style={styles.ctaText}>Get Started</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          onPress={() => navigation.navigate('SignIn')}
+          onPress={() => navigation.navigate("SignIn")}
           hitSlop={{
             top: 10,
             bottom: 10,
@@ -336,13 +341,13 @@ const styles = StyleSheet.create({
   carousel: {
     flexGrow: 0,
     height: 230,
-    overflow: 'hidden',
+    overflow: "hidden",
   },
   heroBox: {
-    width: '86%',
+    width: "86%",
     height: 220,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
   },
   body: {
     flex: 1,
@@ -371,7 +376,7 @@ const styles = StyleSheet.create({
   /* Feature card pager — full-width pages, swipeable */
   cardPager: {
     flexGrow: 0,
-    overflow: 'hidden',
+    overflow: "hidden",
   },
   cardWrap: {
     paddingHorizontal: 28,
@@ -404,9 +409,9 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
   },
   dotsRow: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
     gap: 6,
     marginBottom: 20,
     minHeight: 24,
@@ -424,9 +429,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceRaised,
   },
   privacyPill: {
-    alignSelf: 'center',
-    flexDirection: 'row',
-    alignItems: 'center',
+    alignSelf: "center",
+    flexDirection: "row",
+    alignItems: "center",
     paddingVertical: 7,
     paddingHorizontal: 14,
     backgroundColor: colors.borderCool,
@@ -444,14 +449,13 @@ const styles = StyleSheet.create({
     backgroundColor: colors.canvas,
   },
   ctaButton: {
-    width: '100%',
+    width: "100%",
     height: 54,
     backgroundColor: colors.gold,
     borderRadius: radius.pill,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
     marginBottom: 14,
-    ...goldButton.glow,
   },
   ctaText: {
     fontFamily: fonts.bodySemiBold,
@@ -464,6 +468,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 13,
     color: colors.ink,
-    textAlign: 'center',
+    textAlign: "center",
   },
 });

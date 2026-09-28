@@ -235,7 +235,7 @@ export default function JournalEntryDetailScreen({ navigation, route }) {
           onPress={() => navigation.navigate("JournalEditor", { entry })}
           activeOpacity={0.85}
         >
-            <GoldFill radius={radius.md} />
+          <GoldFill radius={radius.md} />
           <Text style={styles.editBtnText}>Edit entry</Text>
         </TouchableOpacity>
         <TouchableOpacity

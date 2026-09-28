@@ -390,7 +390,7 @@ export default function VaultListScreen({ navigation }) {
             disabled={unlockLoading}
             activeOpacity={0.85}
           >
-              <GoldFill radius={9999} disabled={unlockLoading} />
+            <GoldFill radius={9999} disabled={unlockLoading} />
             {unlockLoading ? (
               <ActivityIndicator size="small" color={colors.onAccent} />
             ) : (
@@ -472,7 +472,7 @@ export default function VaultListScreen({ navigation }) {
         onPress={() => navigation.navigate('VaultUpload')}
         activeOpacity={0.85}
       >
-          <GoldFill radius={28} />
+        <GoldFill radius={28} />
         <Text style={styles.fabText}>+</Text>
       </TouchableOpacity>
 
@@ -570,7 +570,7 @@ export default function VaultListScreen({ navigation }) {
                 onPress={confirmRename}
                 activeOpacity={0.85}
               >
-                  <GoldFill radius={10} />
+                <GoldFill radius={10} />
                 <Text style={styles.renameSaveText}>Save</Text>
               </TouchableOpacity>
             </View>
@@ -824,11 +824,9 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderRadius: 9999,
     marginTop: 16,
-    shadowColor: colors.gold,
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.28,
-    shadowRadius: 20,
-    elevation: 6,
+    shadowOpacity: 0,
+    shadowRadius: 0,
+    elevation: 0,
   },
   emptyAddButtonText: {
     color: colors.onAccent,

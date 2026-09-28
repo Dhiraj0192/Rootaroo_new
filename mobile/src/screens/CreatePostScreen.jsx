@@ -627,7 +627,7 @@ export default function CreatePostScreen({ navigation, route }) {
               pressed && styles.postButtonPressed,
             ]}
           >
-              <GoldFill radius={9999} disabled={!canPost} />
+            <GoldFill radius={9999} />
             <Animated.View
               style={{
                 transform: [

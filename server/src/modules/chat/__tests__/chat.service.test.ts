@@ -9,6 +9,7 @@ import {
   createConversation,
   deleteConversation,
   addParticipant,
+  getUserConversations,
 } from '../service';
 import { NotFoundError, ForbiddenError, ValidationError } from '../../../shared/utils/errors';
 
@@ -36,7 +37,7 @@ jest.mock('../../../database/models', () => {
     return cls;
   };
   return {
-    sequelize: { transaction: jest.fn((cb: any) => cb({})) },
+    sequelize: { transaction: jest.fn((cb: any) => cb({})), query: jest.fn() },
     ChatMessage: mockModel('ChatMessage'),
     ChatReaction: mockModel('ChatReaction'),
     Conversation: mockModel('Conversation'),
@@ -55,7 +56,7 @@ jest.mock('../../../shared/utils/socket', () => ({
   })),
 }));
 
-import { ChatMessage, ChatReaction, Conversation, ConversationParticipant, FeedMedia, HouseholdMember, User } from '../../../database/models';
+import { ChatMessage, ChatReaction, Conversation, ConversationParticipant, FeedMedia, HouseholdMember, User, sequelize } from '../../../database/models';
 
 // ── Helpers ──
 
@@ -494,6 +495,46 @@ describe('Chat Service', () => {
 
       await expect(deleteConversation(conversationId, userId)).resolves.toBeUndefined();
       expect(conv.destroy).toHaveBeenCalled();
+    });
+  });
+
+  // ── getUserConversations ──
+
+  describe('getUserConversations', () => {
+    const fakeConv = (id: string) => ({
+      id,
+      householdId,
+      type: 'direct',
+      name: null,
+      createdBy: userId,
+      createdAt: now,
+      get: (key: string) => (key === 'participants' ? [] : key === 'messages' ? [] : undefined),
+    });
+
+    it('fetches unread counts for every conversation in one grouped query', async () => {
+      (ConversationParticipant.findAll as jest.Mock).mockResolvedValue([
+        { conversationId: 'c1' },
+        { conversationId: 'c2' },
+      ]);
+      (Conversation.findAll as jest.Mock).mockResolvedValue([fakeConv('c1'), fakeConv('c2')]);
+      (sequelize.query as jest.Mock).mockResolvedValue([{ conversationId: 'c1', unread: '3' }]);
+
+      const result = await getUserConversations(userId);
+
+      expect(sequelize.query).toHaveBeenCalledTimes(1);
+      const [sql, options] = (sequelize.query as jest.Mock).mock.calls[0];
+      expect(sql).toContain('GROUP BY m.conversation_id');
+      expect(sql).toContain('m.deleted_at IS NULL');
+      expect(options.replacements).toEqual({ userId, conversationIds: ['c1', 'c2'] });
+      // c1 has 3 unread (MySQL returns COUNT as a string); c2 has none, so it's absent from the rows.
+      expect(result.map((c) => [c.id, c.unreadCount])).toEqual([['c1', 3], ['c2', 0]]);
+    });
+
+    it('skips the unread query when the user has no conversations', async () => {
+      (ConversationParticipant.findAll as jest.Mock).mockResolvedValue([]);
+
+      expect(await getUserConversations(userId)).toEqual([]);
+      expect(sequelize.query).not.toHaveBeenCalled();
     });
   });
 });

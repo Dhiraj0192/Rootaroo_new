@@ -16,9 +16,8 @@ const STEP_TO_ROUTE = {
   // failing to map — see FeatureTourShell for why a re-login skips the tour.
   feature1: 'FeatureIntro',
   feature2: 'FeatureDay',
-  feature3: 'FeatureHub',
-  feature4: 'FeaturePrivacy',
-  feature5: 'FeaturePricing',
+  feature3: 'FeaturePrivacy',
+  feature4: 'FeaturePricing',
 };
 
 export function stepToRoute(step, authMethod) {

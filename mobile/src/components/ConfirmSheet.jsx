@@ -51,7 +51,7 @@ export default function ConfirmSheet({
             disabled={loading}
             activeOpacity={0.85}
           >
-              <GoldFill radius={radius.pill} disabled={loading} />
+            {!danger && <GoldFill radius={radius.pill} disabled={loading} />}
             {loading ? (
               <ActivityIndicator size="small" color={colors.onAccent} />
             ) : (

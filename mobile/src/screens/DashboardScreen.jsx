@@ -42,6 +42,8 @@ import { taskApi } from "../shared/api/task";
 import { expenseApi } from "../shared/api/expense";
 import { vaultApi } from "../shared/api/vault";
 import { eventApi } from "../shared/api/event";
+import { homeRequests } from "../shared/cache/homePrefetch";
+import { readCache, writeCache } from "../shared/cache/screenCache";
 import { weatherApi } from "../shared/api/weather";
 import * as Location from "expo-location";
 import { ensureLocation } from "../shared/permissions";
@@ -358,17 +360,25 @@ export default function DashboardScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clearCelebration]);
 
-  const [data, setData] = useState(null);
-  const [unreadCount, setUnreadCount] = useState(0);
-  const [members, setMembers] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // Every Home widget starts from last session's data (screenCache) so a
+  // cold start paints immediately; load() below refreshes it in place.
+  const [data, setData] = useState(() => readCache("home:dashboard") ?? null);
+  const [unreadCount, setUnreadCount] = useState(
+    () => readCache("home:dashboard")?.notifications?.unreadCount || 0,
+  );
+  const [members, setMembers] = useState(() => readCache("home:members") || []);
+  const [loading, setLoading] = useState(() => !readCache("home:dashboard"));
   const [refreshing, setRefreshing] = useState(false);
   const [fetchError, setFetchError] = useState(false);
   const [weather, setWeather] = useState(null);
 
   // Widget data
-  const [coverPhotoUrl, setCoverPhotoUrl] = useState(null);
-  const [pendingTasks, setPendingTasks] = useState([]);
+  const [coverPhotoUrl, setCoverPhotoUrl] = useState(
+    () => readCache("home:cover") ?? null,
+  );
+  const [pendingTasks, setPendingTasks] = useState(
+    () => readCache("home:pendingTasks") || [],
+  );
   const [oweText, setOweText] = useState(null);
   const [oweName, setOweName] = useState(null);
   const [latestDoc, setLatestDoc] = useState(null);
@@ -389,7 +399,7 @@ export default function DashboardScreen() {
   const feedTopRef = useRef(0); // which slot is currently visible
 
   // Calendar + household widgets (real data)
-  const [events, setEvents] = useState([]);
+  const [events, setEvents] = useState(() => readCache("home:events") || []);
   const [weekAnchor, setWeekAnchor] = useState(() => startOfWeek(new Date()));
   const [selectedDate, setSelectedDate] = useState(() => new Date());
 
@@ -406,6 +416,9 @@ export default function DashboardScreen() {
   // doesn't hammer the API — still catches "did something elsewhere, came
   // back to Home" without a manual pull-to-refresh.
   const lastLoadAtRef = useRef(0);
+  // The first load picks up the requests prefetched during the splash
+  // (homePrefetch); every later one (focus, pull, live events) goes fresh.
+  const firstLoadRef = useRef(true);
 
   // Weather pill next to the greeting — best-effort, once per mount. Silent
   // permission ask (no primer sheet) since a weather widget isn't worth
@@ -439,26 +452,40 @@ export default function DashboardScreen() {
   const load = useCallback(async () => {
     lastLoadAtRef.current = Date.now();
     setFetchError(false);
+    const first = firstLoadRef.current;
+    firstLoadRef.current = false;
+    // Each widget fills in as its own response lands — Home no longer waits
+    // for the slowest of four requests before showing anything.
+    if (householdId) {
+      (first ? homeRequests.members(householdId) : householdApi.getMembers(householdId))
+        .then((m) => {
+          setMembers(m);
+          writeCache("home:members", m);
+        })
+        .catch(() => {});
+      (first ? homeRequests.household(householdId) : householdApi.getHousehold(householdId))
+        .then((hh) => {
+          const cover = hh?.coverPhotoUrl || null;
+          setCoverPhotoUrl(cover);
+          writeCache("home:cover", cover);
+        })
+        .catch(() => {});
+    } else {
+      setMembers([]);
+      setCoverPhotoUrl(null);
+    }
+    // Calendar widget — all household events (filtered per selected day).
+    (first ? homeRequests.events() : eventApi.list())
+      .then((calendarEvents) => {
+        setEvents(calendarEvents || []);
+        writeCache("home:events", calendarEvents || []);
+      })
+      .catch(() => {});
     try {
-      const [d, m, hh, calendarEvents] = await Promise.all([
-        dashboardApi.get(),
-        householdId
-          ? householdApi.getMembers(householdId)
-          : Promise.resolve([]),
-        householdId
-          ? householdApi.getHousehold(householdId)
-          : Promise.resolve(null),
-        // Calendar widget — all household events (filtered per selected day
-        // in the widget). Run alongside the calls above instead of after —
-        // nothing here depends on their results, so awaiting it separately
-        // only added a serial round trip to every load.
-        eventApi.list().catch(() => []),
-      ]);
+      const d = await (first ? homeRequests.dashboard() : dashboardApi.get());
       setData(d);
-      setMembers(m);
-      setCoverPhotoUrl(hh?.coverPhotoUrl || null);
       setUnreadCount(d?.notifications?.unreadCount || 0);
-      setEvents(calendarEvents || []);
+      writeCache("home:dashboard", d);
     } catch {
       setFetchError(true);
     } finally {
@@ -486,6 +513,7 @@ export default function DashboardScreen() {
       .then((res) => {
         const arr = Array.isArray(res) ? res : res?.pending || [];
         setPendingTasks(arr.slice(0, 3));
+        writeCache("home:pendingTasks", arr.slice(0, 3));
       })
       .catch(() => {});
   }, []);
@@ -543,8 +571,14 @@ export default function DashboardScreen() {
   // Re-check unread count on every focus so the bell badge clears as soon as
   // the user comes back from reading notifications (cheap single-field call —
   // no need for a full dashboard reload just for this).
+  // Skips the first focus: the dashboard load on mount already carries it.
+  const unreadFocusSeenRef = useRef(false);
   useFocusEffect(
     useCallback(() => {
+      if (!unreadFocusSeenRef.current) {
+        unreadFocusSeenRef.current = true;
+        return;
+      }
       notificationApi
         .getUnreadCount()
         .then(setUnreadCount)
@@ -1816,7 +1850,7 @@ export default function DashboardScreen() {
                   disabled={!canSend || sending}
                   activeOpacity={0.7}
                 >
-                    <GoldFill radius={radius.md} disabled={!canSend} />
+                  <GoldFill radius={radius.md} disabled={!canSend || sending} />
                   {sending ? (
                     <ActivityIndicator size="small" color={colors.navyDeep} />
                   ) : (
@@ -2795,7 +2829,7 @@ const mo = StyleSheet.create({
     flex: 1,
     paddingVertical: 15,
     borderRadius: radius.md,
-    backgroundColor: colors.goldGlow,
+    backgroundColor: colors.gold,
     alignItems: "center",
     ...goldButton.glow,
   },

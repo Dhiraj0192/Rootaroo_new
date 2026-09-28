@@ -1,4 +1,4 @@
-import { Op } from 'sequelize';
+import { Op, QueryTypes } from 'sequelize';
 import { v4 as uuidv4 } from 'uuid';
 import {
   sequelize,
@@ -218,12 +218,9 @@ export async function getUserConversations(userId: string): Promise<Conversation
   // Find conversations where user is a participant
   const participations = await ConversationParticipant.findAll({
     where: { userId },
-    attributes: ['conversationId', 'lastReadAt'],
+    attributes: ['conversationId'],
   });
   const convIds = participations.map((p) => p.conversationId);
-  const lastReadByConvId = new Map(
-    participations.map((p) => [p.conversationId, p.lastReadAt]),
-  );
 
   if (convIds.length === 0) return [];
 
@@ -242,17 +239,33 @@ export async function getUserConversations(userId: string): Promise<Conversation
     order: [['createdAt', 'DESC']],
   });
 
-  return Promise.all(convs.map(async (conv) => {
-    const lastReadAt = lastReadByConvId.get(conv.id) || null;
-    const unreadCount = await ChatMessage.count({
-      where: {
-        conversationId: conv.id,
-        senderId: { [Op.ne]: userId },
-        createdAt: { [Op.gt]: lastReadAt || new Date(0) },
-      },
-    });
-    return toConversationResponse(conv, unreadCount);
-  }));
+  const unreadByConvId = await getUnreadCounts(userId, convs.map((c) => c.id));
+  return Promise.all(convs.map((conv) => toConversationResponse(conv, unreadByConvId.get(conv.id) || 0)));
+}
+
+/**
+ * Unread counts for all of a user's conversations in ONE grouped query,
+ * instead of one COUNT per conversation (which also competed for the
+ * 10-connection pool on app open). Mirrors the old per-conversation
+ * ChatMessage.count exactly: messages from others, newer than this user's
+ * lastReadAt (or all, if never read), excluding soft-deleted messages —
+ * ChatMessage is paranoid, which the raw query has to spell out.
+ */
+async function getUnreadCounts(userId: string, conversationIds: string[]): Promise<Map<string, number>> {
+  if (conversationIds.length === 0) return new Map();
+  const rows = await sequelize.query<{ conversationId: string; unread: number | string }>(
+    `SELECT m.conversation_id AS conversationId, COUNT(*) AS unread
+       FROM chat_messages m
+       JOIN conversation_participants p
+         ON p.conversation_id = m.conversation_id AND p.user_id = :userId
+      WHERE m.conversation_id IN (:conversationIds)
+        AND m.sender_id <> :userId
+        AND m.deleted_at IS NULL
+        AND m.created_at > COALESCE(p.last_read_at, '1970-01-01')
+      GROUP BY m.conversation_id`,
+    { replacements: { userId, conversationIds }, type: QueryTypes.SELECT },
+  );
+  return new Map(rows.map((r) => [r.conversationId, Number(r.unread)]));
 }
 
 /** Marks a conversation as read up to now for this user — resets its unread count to 0. */

@@ -18,7 +18,8 @@ import Svg, { Circle, Path } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { chatApi } from '../shared/api/chat';
-import { householdApi } from '../shared/api/household';
+import { homeRequests } from '../shared/cache/homePrefetch';
+import { readCache, writeCache } from '../shared/cache/screenCache';
 import { useAuthStore } from '../shared/store/authStore';
 import { colors, withAlpha, fonts, goldButton, spacing, radius } from '../shared/theme';
 import { GoldFill } from '../shared/components/GoldButton';
@@ -232,8 +233,9 @@ export default function ConversationsScreen() {
       cancelled = true;
     };
   }, [showChatTour, dismissChatTour]);
-  const [conversations, setConversations] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // Last session's list paints instantly; the focus fetch below refreshes it.
+  const [conversations, setConversations] = useState(() => readCache('conversations') || []);
+  const [loading, setLoading] = useState(() => !readCache('conversations'));
   const [refreshing, setRefreshing] = useState(false);
   const [fetchError, setFetchError] = useState(false);
   const [members, setMembers] = useState([]);
@@ -251,6 +253,7 @@ export default function ConversationsScreen() {
       setFetchError(false);
       const data = await chatApi.listConversations();
       setConversations(data);
+      writeCache('conversations', data);
     } catch {
       setFetchError(true);
     } finally {
@@ -267,8 +270,8 @@ export default function ConversationsScreen() {
   // Fetch household members on mount for the member strip
   useEffect(() => {
     if (!householdId) return;
-    householdApi
-      .getMembers(householdId)
+    homeRequests
+      .members(householdId)
       .then(setMembers)
       .catch(() => {});
   }, [householdId]);
@@ -276,8 +279,8 @@ export default function ConversationsScreen() {
   // Fetch household name (used as the auto-name for the Everyone conversation)
   useEffect(() => {
     if (!householdId) return;
-    householdApi
-      .getHousehold(householdId)
+    homeRequests
+      .household(householdId)
       .then((h) => setHouseholdName(h.name))
       .catch(() => {});
   }, [householdId]);
@@ -709,6 +712,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.card,
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: colors.gold,
     ...goldButton.glow,
   },
   composeIcon: {

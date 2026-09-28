@@ -253,7 +253,7 @@ export default function ForgotPasswordScreen({ navigation }) {
                 activeOpacity={0.85}
                 disabled={loading}
               >
-                  <GoldFill radius={27} disabled={loading} />
+                <GoldFill radius={27} disabled={loading} />
                 {loading ? (
                   <ActivityIndicator color={colors.onAccent} />
                 ) : (
@@ -273,7 +273,7 @@ export default function ForgotPasswordScreen({ navigation }) {
                   activeOpacity={0.85}
                   disabled={otp.join('').length < OTP_LENGTH || loading}
                 >
-                    <GoldFill radius={27} disabled={(otp.join('').length < OTP_LENGTH || loading)} />
+                  <GoldFill radius={27} disabled={otp.join('').length < OTP_LENGTH || loading} />
                   {loading ? (
                     <ActivityIndicator color={colors.onAccent} />
                   ) : (
@@ -300,7 +300,7 @@ export default function ForgotPasswordScreen({ navigation }) {
                 activeOpacity={0.85}
                 disabled={loading}
               >
-                  <GoldFill radius={27} disabled={loading} />
+                <GoldFill radius={27} disabled={loading} />
                 {loading ? (
                   <ActivityIndicator color={colors.onAccent} />
                 ) : (
@@ -464,7 +464,7 @@ const styles = StyleSheet.create({
   // CTA — full pill
   primaryBtn: {
     height: 54,
-    backgroundColor: colors.goldWarm,
+    backgroundColor: colors.gold,
     borderRadius: 27,
     alignItems: 'center',
     justifyContent: 'center',

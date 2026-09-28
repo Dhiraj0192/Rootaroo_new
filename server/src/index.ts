@@ -3,7 +3,6 @@ import { Server as SocketIOServer } from 'socket.io';
 import app from './app';
 import { env } from './config/env';
 import { testDatabaseConnection } from './config/database';
-import sequelize from './config/database';
 import { setupAssociations } from './database/models';
 import './config/redis';
 import { startGroceryArchiveJob } from './jobs/grocery-archive';
@@ -64,11 +63,9 @@ async function start(): Promise<void> {
     // Set up model associations
     setupAssociations();
 
-    // Auto-sync models in development mode
-    if (env.nodeEnv === 'development') {
-      await sequelize.sync();
-      logger.info('✓ Database synced (development mode)');
-    }
+    // Schema comes from migrations only (`npm run db:migrate`, also run by
+    // `npm start`/`npm run dev`) — never sequelize.sync(), which built dev
+    // schemas the migrations didn't know about and broke db:migrate.
 
     // Redis is already connecting (config/redis.ts handles it)
     // No need to await — it connects asynchronously

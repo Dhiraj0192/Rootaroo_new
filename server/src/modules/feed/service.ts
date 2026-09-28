@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
-import { Op } from 'sequelize';
+import { Op, QueryTypes } from 'sequelize';
 import sequelize from '../../config/database';
 import {
   FeedPost,
@@ -23,6 +23,7 @@ import type {
   FeedPostResponse,
   PaginatedFeedResponse,
   FeedCommentResponse,
+  FeedCommentPreview,
   PaginatedCommentsResponse,
   FeedAuthorResponse,
   FeedMediaResponse,
@@ -123,10 +124,44 @@ async function getCommentCounts(
   return map;
 }
 
+/**
+ * The inline comment preview shown under each feed post — the post's first
+ * top-level comment, same one the client used to fetch per post with
+ * GET /feed/:id/comments?limit=1 (up to 20 extra requests per feed page on
+ * a slow link). One grouped query for the whole page instead. Written
+ * without window functions so it doesn't depend on the MySQL version.
+ */
+async function getPreviewComments(postIds: string[]): Promise<Map<string, FeedCommentPreview>> {
+  if (postIds.length === 0) return new Map();
+  const rows = await sequelize.query<{ postId: string; id: string; content: string; authorName: string | null }>(
+    `SELECT c.post_id AS postId, c.id, c.content, u.display_name AS authorName
+       FROM feed_comments c
+       JOIN (
+         SELECT post_id, MIN(created_at) AS first_at
+           FROM feed_comments
+          WHERE post_id IN (:postIds) AND parent_id IS NULL AND deleted_at IS NULL
+          GROUP BY post_id
+       ) f ON f.post_id = c.post_id AND f.first_at = c.created_at
+       LEFT JOIN users u ON u.id = c.user_id
+      WHERE c.parent_id IS NULL AND c.deleted_at IS NULL
+      ORDER BY c.created_at ASC, c.id ASC`,
+    { replacements: { postIds }, type: QueryTypes.SELECT },
+  );
+  const map = new Map<string, FeedCommentPreview>();
+  for (const r of rows) {
+    // Two comments with the identical first timestamp: keep the first row.
+    if (!map.has(r.postId)) {
+      map.set(r.postId, { id: r.id, content: r.content, author: { displayName: r.authorName || 'Member' } });
+    }
+  }
+  return map;
+}
+
 async function toPostResponse(
   post: FeedPost,
   likeData: LikeData,
   commentCount: number,
+  previewComment: FeedCommentPreview | null = null,
 ): Promise<FeedPostResponse> {
   const postTags = post.get('postTags') as unknown as PostTag[] | undefined;
   const taggedUsers = await Promise.all(
@@ -150,6 +185,7 @@ async function toPostResponse(
     media: await toMediaResponse(post.get('media') as unknown as FeedMedia[] || []),
     likeCount: likeData.likeCount,
     commentCount,
+    previewComment,
     isLikedByMe: likeData.isLikedByMe,
     isPinned: false,
     activity: post.activity || null,
@@ -299,15 +335,16 @@ export async function getFeed(
   const pagePosts = posts.slice(0, limit);
   const postIds = pagePosts.map((p) => p.id);
 
-  // Batch-fetch likes and comment counts
-  const [likeDataMap, commentCounts] = await Promise.all([
+  // Batch-fetch likes, comment counts and the inline comment previews
+  const [likeDataMap, commentCounts, previews] = await Promise.all([
     getLikeData(postIds, userId),
     getCommentCounts(postIds),
+    getPreviewComments(postIds),
   ]);
 
   const resultPosts: FeedPostResponse[] = await Promise.all(pagePosts.map((post) => {
     const ld = likeDataMap.get(post.id) || { isLikedByMe: false, likeCount: 0 };
-    return toPostResponse(post, ld, commentCounts.get(post.id) || 0);
+    return toPostResponse(post, ld, commentCounts.get(post.id) || 0, previews.get(post.id) || null);
   }));
 
   return {

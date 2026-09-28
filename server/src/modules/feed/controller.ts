@@ -3,6 +3,8 @@ import { AuthenticatedRequest } from '../../shared/middleware/auth';
 import * as feedService from './service';
 import { uploadBuffer, getSignedUrl } from '../../shared/utils/s3';
 import { resizeImageBuffer } from '../../shared/utils/image';
+import { extractVideoPosterFrame } from '../../shared/utils/videoThumbnail';
+import logger from '../../shared/utils/logger';
 
 function getUserId(req: Request): string {
   return (req as AuthenticatedRequest).user!.userId;
@@ -103,15 +105,28 @@ export async function uploadMedia(req: Request, res: Response, next: NextFunctio
           f.originalname.split('.').pop(),
         );
 
-        // Images also get a compressed thumbnail so feed/gallery grids don't
+        // Photos get a compressed thumbnail so feed/gallery grids don't
         // download the full-resolution original just to show a small tile.
+        // Videos get a real poster-frame thumbnail extracted with ffmpeg,
+        // through the same resize pipeline — without this, the feed has no
+        // lightweight preview for a video post at all (falls back to trying
+        // to load the full video file as an image, which just fails).
         // `thumbnailFileName` is the S3 key — persist this as `thumbnailUrl`
         // when creating the post, same as `fileName`/`mediaUrl` below.
         let thumbnailFileName: string | null = null;
-        if (!isVideo) {
-          const thumbBuffer = await resizeImageBuffer(f.buffer, { width: 480 });
+        try {
+          const sourceBuffer = isVideo ? await extractVideoPosterFrame(f.buffer) : f.buffer;
+          const thumbBuffer = await resizeImageBuffer(sourceBuffer, { width: 480 });
           const thumbResult = await uploadBuffer(thumbBuffer, 'feed/thumbnails', 'image/jpeg', 'jpg');
           thumbnailFileName = thumbResult.key;
+        } catch (error) {
+          // A malformed/unusual video (or missing ffmpeg codec support) must
+          // not fail the whole upload — the post just falls back to no
+          // thumbnail, same as before this feature existed.
+          logger.warn(
+            `[Feed] Thumbnail generation failed for ${isVideo ? 'video' : 'photo'} upload:`,
+            (error as Error).message,
+          );
         }
 
         // `fileName` is the S3 key — persist this as `mediaUrl` when creating

@@ -19,9 +19,12 @@ import { colors, fonts, goldButton, radius } from '../theme';
  *     <Text style={styles.primaryBtnText}>Save</Text>
  *   </TouchableOpacity>
  *
- * The host keeps its size, layout, and the `goldButton.glow` shadow — the
- * glow must stay on the host because a shadow drawn on a clipped child does
- * not escape its parent.
+ * This is the canonical primary button treatment, app-wide — the exact
+ * surface WelcomeScreen's "Get Started" button uses. Onboarding and every
+ * in-app primary button now share it; there is no separate "softer" in-app
+ * tier any more. `goldButton.glow` is not spread anywhere: the amber
+ * drop-shadow was removed app-wide, so this is the gradient + specular edge
+ * only, no shadow.
  */
 export function GoldFill({ radius: r = radius.pill, disabled = false }) {
   // A disabled button paints its own muted background; laying the gradient
@@ -50,10 +53,10 @@ export function GoldFill({ radius: r = radius.pill, disabled = false }) {
 }
 
 /**
- * A complete primary button using that surface — for new call sites, so they
- * don't have to re-derive the height, radius, glow, and label treatment.
- * Existing buttons generally want `GoldFill` instead, which leaves their
- * layout alone.
+ * A complete primary button using that surface — for new call sites, so
+ * they don't have to re-derive the height, radius, and label treatment.
+ * Same canonical `colors.gold` + GoldFill treatment as every other primary
+ * button in the app.
  */
 export default function GoldButton({
   label,
@@ -87,12 +90,10 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
     alignItems: 'center',
     justifyContent: 'center',
-    ...goldButton.glow,
+    backgroundColor: colors.gold,
   },
   btnDisabled: {
     backgroundColor: colors.btnDisabledBg,
-    shadowOpacity: 0,
-    elevation: 0,
   },
   label: {
     fontSize: 15.5,

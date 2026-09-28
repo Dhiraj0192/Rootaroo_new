@@ -275,7 +275,7 @@ export default function DatePickerModal({
                 onPress={handleConfirm}
                 activeOpacity={0.85}
               >
-                  <GoldFill radius={22} />
+                <GoldFill radius={22} />
                 <Text style={styles.confirmText}>Done</Text>
               </TouchableOpacity>
             </View>

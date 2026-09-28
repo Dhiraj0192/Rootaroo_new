@@ -11,7 +11,7 @@ import {
   Linking,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { colors, fonts, goldButton, radius, spacing, withAlpha } from '../shared/theme';
+import { colors, fonts, radius, spacing, withAlpha } from '../shared/theme';
 import { GoldFill } from '../shared/components/GoldButton';
 
 const APP_PASSWORD_HELP_URL = 'https://appleid.apple.com/account/manage';
@@ -166,6 +166,7 @@ const styles = StyleSheet.create({
     width: '100%',
     height: 54,
     borderRadius: radius.pill,
+    backgroundColor: colors.gold,
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 24,

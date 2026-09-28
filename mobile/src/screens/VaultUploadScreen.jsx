@@ -498,7 +498,7 @@ export default function VaultUploadScreen({ navigation }) {
                 onPress={() => closeNamePrompt(namePrompt.value)}
                 activeOpacity={0.85}
               >
-                  <GoldFill radius={10} />
+                <GoldFill radius={10} />
                 <Text style={styles.namePromptSaveText}>Save</Text>
               </TouchableOpacity>
             </View>

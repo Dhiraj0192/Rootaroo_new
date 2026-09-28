@@ -28,6 +28,13 @@ export interface FeedAuthorResponse {
   avatarEmoji: string | null;
 }
 
+/** Minimal comment shape for the inline preview under a feed post. */
+export interface FeedCommentPreview {
+  id: string;
+  content: string;
+  author: { displayName: string };
+}
+
 export interface FeedPostResponse {
   id: string;
   author: FeedAuthorResponse;
@@ -36,6 +43,7 @@ export interface FeedPostResponse {
   media: FeedMediaResponse[];
   likeCount: number;
   commentCount: number;
+  previewComment: FeedCommentPreview | null;
   isLikedByMe: boolean;
   isPinned: boolean;
   activity: string | null;

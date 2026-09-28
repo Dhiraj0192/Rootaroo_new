@@ -5,21 +5,24 @@ import {
   StyleSheet,
   TouchableOpacity,
   ScrollView,
+  FlatList,
   Dimensions,
   RefreshControl,
   Modal,
   Pressable,
   TextInput,
   ActivityIndicator,
+  AppState,
 } from 'react-native';
 import { Image } from 'expo-image';
+import { Video, ResizeMode } from 'expo-av';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { SvgXml } from 'react-native-svg';
 import { feedApi } from '../shared/api/feed';
-import { householdApi } from '../shared/api/household';
+import { homeRequests } from '../shared/cache/homePrefetch';
 import { useFeedStore } from '../shared/store/feedStore';
 import { useAuthStore } from '../shared/store/authStore';
 import { loadSignupProgress } from '../shared/store/signupProgress';
@@ -93,7 +96,11 @@ export default function FeedScreen() {
     refreshing,
     error,
     fetchFeed,
+    fetchMore,
+    hasMore,
     refresh,
+    refreshIfStale,
+    lastFetchedAt,
     removePost,
     incrementCommentCount,
   } = useFeedStore();
@@ -150,6 +157,18 @@ export default function FeedScreen() {
     };
   }, [showFeedTour, dismissFeedTour]);
   const [activeMediaIndex, setActiveMediaIndex] = useState({});
+  // Per-media-item load failures (expired signed URL, transient network
+  // error) and a retry counter — expo-image shows nothing on a failed load
+  // by default, indistinguishable from "still loading"; this makes a
+  // failure visible and gives the user a way to try again without a full
+  // pull-to-refresh.
+  const [mediaErrors, setMediaErrors] = useState({});
+  const [mediaRetryNonce, setMediaRetryNonce] = useState({});
+  // A fresh fetch brings freshly signed URLs — give every image another go
+  // (e.g. ones that failed from an old cached page shown at cold start).
+  useEffect(() => {
+    setMediaErrors({});
+  }, [lastFetchedAt]);
   const [menuPost, setMenuPost] = useState(null);
   const [menuAnchor, setMenuAnchor] = useState(null);
   const dotsRefs = useRef({});
@@ -158,8 +177,9 @@ export default function FeedScreen() {
   // comment shown under each post (Facebook-style), all keyed by postId.
   const [commentDrafts, setCommentDrafts] = useState({});
   const [commentSending, setCommentSending] = useState({});
+  // The server ships each post's first comment as `previewComment`; this
+  // only holds comments posted inline this session so they show at once.
   const [recentComments, setRecentComments] = useState({});
-  const fetchedRecentRef = useRef(new Set());
 
   // Family home card: cover photo + household message
   const [familyCover, setFamilyCover] = useState(null);
@@ -174,31 +194,25 @@ export default function FeedScreen() {
       })
       .catch(() => {});
     if (householdId) {
-      householdApi
-        .getHousehold(householdId)
+      homeRequests
+        .household(householdId)
         .then((hh) => setHouseholdName(hh.name))
         .catch(() => {});
     }
   }, [fetchFeed, householdId]);
+  // Presigned S3 URLs expire after an hour — a household left open in the
+  // background past that (a gathering, an unattended phone) can end up
+  // with a mix of stale and fresh post images. Re-fetch on foreground if
+  // the base list is old enough that could plausibly have happened.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') refreshIfStale(45 * 60 * 1000);
+    });
+    return () => sub.remove();
+  }, [refreshIfStale]);
   const onRefresh = useCallback(() => {
     refresh();
   }, [refresh]);
-  // Lazily fetch just the most recent comment for each post that has one,
-  // so it can show inline under the post without opening the Comments screen.
-  useEffect(() => {
-    posts.forEach((post) => {
-      if (post.commentCount > 0 && !fetchedRecentRef.current.has(post.id)) {
-        fetchedRecentRef.current.add(post.id);
-        feedApi
-          .getComments(post.id, { limit: 1 })
-          .then((res) => {
-            const latest = res?.comments?.[0];
-            if (latest) setRecentComments((prev) => ({ ...prev, [post.id]: latest }));
-          })
-          .catch(() => {});
-      }
-    });
-  }, [posts]);
   const submitInlineComment = useCallback(
     async (postId) => {
       const text = (commentDrafts[postId] || '').trim();
@@ -263,12 +277,15 @@ export default function FeedScreen() {
   };
   const mediaSrc = (post) => {
     const list = post.media || [];
-    const url = list[0]?.mediaUrl;
+    const url = list[0]?.thumbnailUrl || list[0]?.mediaUrl;
     if (!url) return null;
     return {
       uri: url.startsWith('http') ? url : `${getServerBase()}${url}`,
     };
   };
+  const handleEndReached = useCallback(() => {
+    if (hasMore && !loading) fetchMore();
+  }, [hasMore, loading, fetchMore]);
   const initialsOf = (name) =>
     (name || '?')
       .split(' ')
@@ -281,6 +298,7 @@ export default function FeedScreen() {
     const media = mediaSrc(item);
     const authorName = item.author?.displayName || 'Unknown';
     const isOwner = item.author?.id === currentUserId;
+    const inlineComment = recentComments[item.id] || item.previewComment;
     const commentPreview =
       item.commentCount > 0
         ? `View ${item.commentCount} comment${item.commentCount > 1 ? 's' : ''}`
@@ -330,18 +348,61 @@ export default function FeedScreen() {
               }}
             >
               {item.media.map((m, i) => {
-                const rawUri = m.thumbnailUrl || m.mediaUrl;
-                const uri = rawUri.startsWith('http') ? rawUri : `${getServerBase()}${rawUri}`;
+                const mediaKey = m.id || i;
+                const toAbsolute = (u) => (u && u.startsWith('http') ? u : u ? `${getServerBase()}${u}` : null);
+                const posterUri = toAbsolute(m.thumbnailUrl);
+                const hasError = !!mediaErrors[mediaKey];
+                const retryKey = mediaRetryNonce[mediaKey] || 0;
+
+                if (m.mediaType === 'video') {
+                  // The video's PLAYABLE source is always the real video
+                  // file — never the poster thumbnail, which is a plain
+                  // JPEG expo-av can't play. posterSource shows a real
+                  // frame instead of a blank/black box while the player
+                  // hasn't started.
+                  const videoUri = toAbsolute(m.mediaUrl);
+                  return (
+                    <Video
+                      key={`${mediaKey}-${retryKey}`}
+                      source={{ uri: videoUri }}
+                      posterSource={posterUri ? { uri: posterUri } : undefined}
+                      usePoster={!!posterUri}
+                      style={[styles.postImage, { width: SCREEN_WIDTH - 24 }]}
+                      resizeMode={ResizeMode.COVER}
+                      shouldPlay={false}
+                      isMuted
+                      useNativeControls={false}
+                    />
+                  );
+                }
+
+                const uri = posterUri || toAbsolute(m.mediaUrl);
                 return (
-                  <Image
-                    key={m.id || i}
-                    // mediaUrl/thumbnailUrl are presigned S3 links that
-                    // change on every fetch — key by the stable media id.
-                    source={{ uri, cacheKey: m.id }}
-                    style={[styles.postImage, { width: SCREEN_WIDTH - 24 }]}
-                    contentFit="cover"
-                    cachePolicy="disk"
-                  />
+                  <Pressable
+                    key={`${mediaKey}-${retryKey}`}
+                    disabled={!hasError}
+                    onPress={() => {
+                      setMediaErrors((prev) => ({ ...prev, [mediaKey]: false }));
+                      setMediaRetryNonce((prev) => ({ ...prev, [mediaKey]: (prev[mediaKey] || 0) + 1 }));
+                    }}
+                  >
+                    <Image
+                      // mediaUrl/thumbnailUrl are presigned S3 links that
+                      // change on every fetch — key by the stable media id.
+                      source={{ uri, cacheKey: m.id }}
+                      style={[styles.postImage, { width: SCREEN_WIDTH - 24 }]}
+                      contentFit="cover"
+                      cachePolicy="disk"
+                      transition={200}
+                      priority={i === 0 ? 'high' : 'low'}
+                      onError={() => setMediaErrors((prev) => ({ ...prev, [mediaKey]: true }))}
+                    />
+                    {hasError && (
+                      <View style={[styles.postImage, { width: SCREEN_WIDTH - 24 }, styles.mediaErrorOverlay]}>
+                        <Text style={styles.mediaErrorText}>Couldn't load · Tap to retry</Text>
+                      </View>
+                    )}
+                  </Pressable>
                 );
               })}
             </ScrollView>
@@ -436,7 +497,7 @@ export default function FeedScreen() {
         </View>
 
         {/* Most recent comment — inline preview, Facebook-style */}
-        {recentComments[item.id] ? (
+        {inlineComment ? (
           <TouchableOpacity
             style={styles.recentCommentRow}
             activeOpacity={0.7}
@@ -444,9 +505,9 @@ export default function FeedScreen() {
           >
             <Text style={styles.recentCommentText} numberOfLines={2}>
               <Text style={styles.recentCommentAuthor}>
-                {recentComments[item.id].author?.displayName || 'Member'}{' '}
+                {inlineComment.author?.displayName || 'Member'}{' '}
               </Text>
-              {recentComments[item.id].content}
+              {inlineComment.content}
             </Text>
             {item.commentCount > 1 ? (
               <Text style={styles.recentCommentViewAll}>
@@ -521,7 +582,10 @@ export default function FeedScreen() {
         <ErrorState onRetry={fetchFeed} onGoHome={() => navigation.navigate('KnowsDashboard')} />
       ) : (
         <KeyboardAvoider style={styles.avoider}>
-          <ScrollView
+          <FlatList
+            data={posts}
+            keyExtractor={(post) => post.id}
+            renderItem={({ item }) => <View>{renderPost({ item })}</View>}
             contentContainerStyle={[styles.postsContainer, { paddingBottom: dockHeight + 24 }]}
             showsVerticalScrollIndicator={false}
             refreshControl={
@@ -531,16 +595,14 @@ export default function FeedScreen() {
                 tintColor={colors.gold}
               />
             }
-            {...keyboardScrollProps}
-          >
-            <View style={styles.bannerWrap}>
-              <OfflineBanner onRetry={onRefresh} />
-            </View>
-
-            {/* Family home card — cover photo + household message */}
-
-
-            {posts.length === 0 ? (
+            onEndReached={handleEndReached}
+            onEndReachedThreshold={0.5}
+            ListHeaderComponent={
+              <View style={styles.bannerWrap}>
+                <OfflineBanner onRetry={onRefresh} />
+              </View>
+            }
+            ListEmptyComponent={
               <View style={styles.emptyWrap}>
                 <EmptyState
                   icon={<SvgXml xml={PHOTO_SVG} width={28} height={28} />}
@@ -550,16 +612,14 @@ export default function FeedScreen() {
                   onAction={() => navigation.navigate('CreatePost')}
                 />
               </View>
-            ) : (
-              posts.map((post) => (
-                <View key={post.id}>
-                  {renderPost({
-                    item: post,
-                  })}
-                </View>
-              ))
-            )}
-          </ScrollView>
+            }
+            ListFooterComponent={
+              loading && posts.length > 0 ? (
+                <ActivityIndicator color={colors.gold} style={styles.feedFooterLoader} />
+              ) : null
+            }
+            {...keyboardScrollProps}
+          />
         </KeyboardAvoider>
       )}
 
@@ -577,7 +637,7 @@ export default function FeedScreen() {
           activeOpacity={0.8}
           onPress={() => navigation.navigate('CreatePost')}
         >
-            <GoldFill radius={28} />
+          <GoldFill radius={28} />
           <Text style={styles.fabIcon}>+</Text>
         </TouchableOpacity>
       </AttachStep>
@@ -692,6 +752,9 @@ const styles = StyleSheet.create({
   },
   emptyWrap: {
     height: 340,
+  },
+  feedFooterLoader: {
+    paddingVertical: 20,
   },
   featuredMemory: {
     position: 'relative',
@@ -1048,6 +1111,19 @@ const styles = StyleSheet.create({
     width: '100%',
     height: 300,
   },
+  mediaErrorOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    backgroundColor: withAlpha(colors.ink, 0.55),
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  mediaErrorText: {
+    color: colors.surface,
+    fontFamily: fonts.bodySemiBold,
+    fontSize: 13,
+  },
   postText: {
     fontSize: 15,
     color: colors.ink,
@@ -1089,11 +1165,9 @@ const styles = StyleSheet.create({
     borderRadius: 9999,
     paddingHorizontal: 24,
     paddingVertical: 10,
-    shadowColor: colors.gold,
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.28,
-    shadowRadius: 14,
-    elevation: 4,
+    shadowOpacity: 0,
+    shadowRadius: 0,
+    elevation: 0,
   },
   retryText: {
     fontSize: 14,

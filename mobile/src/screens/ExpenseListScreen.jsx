@@ -481,6 +481,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: colors.gold,
     ...goldButton.glow,
   },
   addBtnText: {
@@ -594,6 +595,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: colors.gold,
     ...goldButton.glow,
   },
   settleBtnText: {

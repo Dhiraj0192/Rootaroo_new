@@ -246,7 +246,7 @@ export default function PhoneSignUpScreen({ navigation }) {
               activeOpacity={0.85}
               disabled={loading}
             >
-                <GoldFill radius={27} disabled={loading} />
+              <GoldFill radius={27} disabled={loading} />
               {loading ? (
                 <ActivityIndicator color={colors.onAccent} />
               ) : (
@@ -483,7 +483,7 @@ const styles = StyleSheet.create({
   // CTA — gold pill
   primaryBtn: {
     height: 54,
-    backgroundColor: colors.goldWarm,
+    backgroundColor: colors.gold,
     borderRadius: 27,
     alignItems: 'center',
     justifyContent: 'center',

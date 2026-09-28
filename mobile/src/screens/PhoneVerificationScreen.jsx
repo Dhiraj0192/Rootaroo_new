@@ -251,7 +251,7 @@ export default function PhoneVerificationScreen({ navigation, route }) {
                   activeOpacity={0.85}
                   disabled={!otpFilled || verifying}
                 >
-                    <GoldFill radius={27} disabled={(!otpFilled || verifying)} />
+                  <GoldFill radius={27} disabled={!otpFilled || verifying} />
                   <Text style={styles.primaryText}>Verify number</Text>
                 </TouchableOpacity>
 
@@ -435,7 +435,7 @@ const styles = StyleSheet.create({
   primaryBtn: {
     height: 54,
     borderRadius: 27,
-    backgroundColor: colors.goldWarm,
+    backgroundColor: colors.gold,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 16,

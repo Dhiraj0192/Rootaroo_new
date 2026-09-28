@@ -313,7 +313,7 @@ export default function EditProfileScreen({ navigation }) {
                   right: 8,
                 }}
               >
-                  <GoldFill radius={17} />
+                <GoldFill radius={17} disabled={uploadingCover} />
                 <Text style={styles.coverEditBadgeIcon}>✎</Text>
               </TouchableOpacity>
             )}

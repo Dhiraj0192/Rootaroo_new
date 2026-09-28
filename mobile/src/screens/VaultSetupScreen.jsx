@@ -29,6 +29,7 @@ import { useVaultStore } from '../shared/store/vaultStore';
 import { setupVaultKeys } from '../shared/crypto/vaultSetup';
 import { getPrivateKey } from '../shared/crypto/secureKeyStore';
 import { colors, fonts, radius, withAlpha } from '../shared/theme';
+import { GoldFill } from '../shared/components/GoldButton';
 import { KeyboardAvoider, keyboardScrollProps } from '../shared/components/KeyboardAware';
 export default function VaultSetupScreen({ navigation }) {
   const insets = useSafeAreaInsets();
@@ -221,6 +222,7 @@ export default function VaultSetupScreen({ navigation }) {
           disabled={settingUp}
           activeOpacity={0.85}
         >
+          <GoldFill radius={9999} disabled={settingUp} />
           {settingUp ? (
             <View style={styles.creatingRow}>
               <ActivityIndicator size="small" color={colors.onAccent} />
@@ -349,14 +351,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.gold,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: colors.gold,
-    shadowOffset: {
-      width: 0,
-      height: 8,
-    },
-    shadowOpacity: 0.32,
-    shadowRadius: 20,
-    elevation: 5,
+    shadowOpacity: 0,
+    shadowRadius: 0,
+    elevation: 0,
   },
   creatingRow: {
     flexDirection: 'row',

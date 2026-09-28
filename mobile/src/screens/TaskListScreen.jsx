@@ -13,6 +13,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { SvgXml } from 'react-native-svg';
 import { taskApi } from '../shared/api/task';
+import { readCache, writeCache } from '../shared/cache/screenCache';
 import { useAuthStore } from '../shared/store/authStore';
 import { useTabBarDockHeight } from '../shared/hooks/useTabBarDockHeight';
 import { colors, spacing, fonts } from '../shared/theme';
@@ -81,12 +82,16 @@ function rowStatus(task, key) {
   return due ? `Due ${due}` : 'No date';
 }
 export default function TaskListScreen({ navigation }) {
-  const [grouped, setGrouped] = useState({
-    overdue: [],
-    pending: [],
-    completedToday: [],
-  });
-  const [loading, setLoading] = useState(true);
+  // Last session's lists paint instantly; the focus fetch below refreshes them.
+  const [grouped, setGrouped] = useState(
+    () =>
+      readCache('tasks') || {
+        overdue: [],
+        pending: [],
+        completedToday: [],
+      },
+  );
+  const [loading, setLoading] = useState(() => !readCache('tasks'));
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState('ALL');
   const user = useAuthStore((s) => s.user);
@@ -151,6 +156,7 @@ export default function TaskListScreen({ navigation }) {
         group: 'status',
       });
       setGrouped(data);
+      writeCache('tasks', data);
     } catch {
       showAlert('Error', 'Could not load tasks');
     } finally {

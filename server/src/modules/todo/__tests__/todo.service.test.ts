@@ -18,6 +18,7 @@ jest.mock('../../../database/models', () => ({
     findAll: jest.fn(),
     findOne: jest.fn(),
     findByPk: jest.fn(),
+    count: jest.fn(),
   },
   User: {},
   HouseholdMember: { findOne: jest.fn() },
@@ -120,11 +121,10 @@ describe('Todo Service', () => {
   describe('getSummary', () => {
     it('returns counts', async () => {
       (modelsMock.HouseholdMember.findOne as jest.Mock).mockResolvedValue({ householdId });
-      (modelsMock.TodoItem.findAll as jest.Mock).mockResolvedValue([
-        { id: '1', isCompleted: false, completedAt: null },
-        { id: '2', isCompleted: true, completedAt: new Date() },
-        { id: '3', isCompleted: false, completedAt: null },
-      ]);
+      // Call order matches getSummaryForHousehold's Promise.all: pending, completedToday.
+      (modelsMock.TodoItem.count as jest.Mock)
+        .mockResolvedValueOnce(2) // pending
+        .mockResolvedValueOnce(1); // completedToday
 
       const result = await getSummary(userId);
 

@@ -1,5 +1,7 @@
 'use strict';
 
+const { addColumnIfMissing, addIndexIfMissing } = require('../migrationHelpers');
+
 /**
  * Outlook Calendar sync switched from Microsoft Graph OAuth (needs an Azure
  * app registration the client couldn't complete) to a one-way ICS
@@ -9,11 +11,11 @@
  */
 module.exports = {
   async up(queryInterface, Sequelize) {
-    await queryInterface.addColumn('calendar_sync_states', 'outlook_feed_token', {
+    await addColumnIfMissing(queryInterface, 'calendar_sync_states', 'outlook_feed_token', {
       type: Sequelize.STRING(64),
       allowNull: true,
     });
-    await queryInterface.addIndex('calendar_sync_states', ['outlook_feed_token'], {
+    await addIndexIfMissing(queryInterface, 'calendar_sync_states', ['outlook_feed_token'], {
       unique: true,
       name: 'calendar_sync_states_outlook_feed_token_unique',
     });

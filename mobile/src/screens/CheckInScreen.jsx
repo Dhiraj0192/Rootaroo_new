@@ -884,7 +884,7 @@ export default function CheckInScreen({ navigation }) {
                     disabled={respondingPingId === request.id}
                     activeOpacity={0.8}
                   >
-                      <GoldFill radius={12} />
+                    <GoldFill radius={12} disabled={respondingPingId === request.id} />
                     {respondingPingId === request.id ? (
                       <ActivityIndicator size="small" color={colors.onAccent} />
                     ) : (
@@ -1257,6 +1257,7 @@ export default function CheckInScreen({ navigation }) {
                   handleRespondPing(request, 'accept', opt.minutes);
                 }}
               >
+                <GoldFill radius={14} disabled={respondingPingId === durationRequest?.id} />
                 <Text style={styles.durationOptionText}>{opt.label}</Text>
               </TouchableOpacity>
             ))}
@@ -1383,7 +1384,7 @@ export default function CheckInScreen({ navigation }) {
               disabled={!placeName.trim() || !placeCoords || savingPlace}
               activeOpacity={0.85}
             >
-                <GoldFill radius={radius.card} disabled={(!placeName.trim() || !placeCoords || savingPlace)} />
+              <GoldFill radius={radius.card} disabled={!placeName.trim() || !placeCoords || savingPlace} />
               {savingPlace ? (
                 <ActivityIndicator size="small" color={colors.onAccent} />
               ) : (
@@ -1797,10 +1798,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.gold,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: colors.gold,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
+    shadowOpacity: 0,
+    shadowRadius: 0,
+    elevation: 0,
   },
   durationOptionText: {
     fontFamily: fonts.bodySemiBold,

@@ -427,11 +427,9 @@ const styles = StyleSheet.create({
   bubbleSelected: {
     borderWidth: 2,
     borderColor: colors.gold,
-    shadowColor: colors.gold,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 6,
-    elevation: 4,
+    shadowOpacity: 0,
+    shadowRadius: 0,
+    elevation: 0,
   },
   focusedBubble: {
     marginBottom: 12,

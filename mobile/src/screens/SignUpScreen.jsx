@@ -203,7 +203,7 @@ export default function SignUpScreen({ navigation }) {
             activeOpacity={0.85}
             disabled={!canContinue}
           >
-              <GoldFill radius={27} disabled={!canContinue} />
+            <GoldFill radius={27} disabled={!canContinue} />
             {loading ? (
               <ActivityIndicator color={colors.onAccent} />
             ) : (
@@ -331,7 +331,7 @@ const styles = StyleSheet.create({
   ctaButton: {
     width: '100%',
     height: 54,
-    backgroundColor: colors.goldWarm,
+    backgroundColor: colors.gold,
     borderRadius: 27,
     alignItems: 'center',
     justifyContent: 'center',

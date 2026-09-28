@@ -570,7 +570,7 @@ export default function CalendarScreen({ navigation }) {
         onPress={() => navigation.navigate('CreateEvent')}
         activeOpacity={0.85}
       >
-          <GoldFill radius={28} />
+        <GoldFill radius={28} />
         <Text style={styles.fabText}>+</Text>
       </TouchableOpacity>
 

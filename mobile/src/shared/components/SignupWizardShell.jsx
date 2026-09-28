@@ -95,7 +95,7 @@ export default function SignupWizardShell({
               disabled={continueDisabled || loading}
               activeOpacity={0.85}
             >
-                <GoldFill radius={27} disabled={(continueDisabled || loading)} />
+              <GoldFill radius={27} disabled={continueDisabled || loading} />
               {loading ? (
                 <ActivityIndicator color={colors.onAccent} />
               ) : (
@@ -189,7 +189,7 @@ const styles = StyleSheet.create({
     width: '100%',
     height: 54,
     borderRadius: 27,
-    backgroundColor: colors.goldWarm,
+    backgroundColor: colors.gold,
     alignItems: 'center',
     justifyContent: 'center',
     ...goldButton.glow,

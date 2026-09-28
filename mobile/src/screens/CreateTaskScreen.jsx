@@ -522,7 +522,7 @@ export default function CreateTaskScreen({ route, navigation }) {
           disabled={!canPost}
           activeOpacity={0.85}
         >
-            <GoldFill radius={radius.pill} disabled={!canPost} />
+          <GoldFill radius={radius.pill} disabled={!canPost} />
           {posting ? (
             <ActivityIndicator size="small" color={colors.onAccent} />
           ) : (

@@ -1,20 +1,89 @@
-import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import React, { useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, Animated, Easing } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useIsFocused } from '@react-navigation/native';
 import FeatureTourShell, { TourIcon } from './FeatureTourShell';
 import { Eyebrow, TourCard, rowDivider } from './tourPrimitives';
+import { useReducedMotion } from './useReducedMotion';
 import { privacy, privacyRows } from './featureTourContent';
 import { colors, fonts, radius, withAlpha } from '../../shared/theme';
 
+// Four rows, alternating in from the left and right — a subtle horizontal
+// translate + fade, staggered with a real gap so they don't all land at once.
+const ROW_COUNT = privacyRows.length;
+const ROW_STAGGER_MS = 340;
+const ROW_ENTER_MS = 620;
+const SETTLE_BUFFER_MS = 1400;
+const PRIVACY_TOTAL_MS = (ROW_COUNT - 1) * ROW_STAGGER_MS + ROW_ENTER_MS + SETTLE_BUFFER_MS;
+const SLIDE_PX = 34;
+
 /**
- * Step 4 of 5 — the answer to the question step 3 ends on. Four claims about
- * who can see what, stated flatly and without hedging, because this is the
- * objection a household has before it commits.
+ * Step 3 of 4 — the answer to the question the day-in-the-life leaves open.
+ * Four claims about who can see what, stated flatly and without hedging,
+ * because this is the objection a household has before it commits.
  */
 export default function FeaturePrivacyScreen({ navigation }) {
+  const isFocused = useIsFocused();
+  const reduceMotion = useReducedMotion();
+
+  const rowAnims = useRef(
+    privacyRows.map((_, i) => ({
+      opacity: new Animated.Value(0),
+      // Even rows drift in from the left, odd rows from the right.
+      translateX: new Animated.Value(i % 2 === 0 ? -SLIDE_PX : SLIDE_PX),
+    })),
+  ).current;
+  const sequenceRef = useRef(null);
+
+  const snapToFinal = () => {
+    sequenceRef.current?.stop?.();
+    rowAnims.forEach((a) => {
+      a.opacity.setValue(1);
+      a.translateX.setValue(0);
+    });
+  };
+
+  useEffect(() => {
+    if (!isFocused) return undefined;
+
+    if (reduceMotion) {
+      snapToFinal();
+      return undefined;
+    }
+
+    rowAnims.forEach((a, i) => {
+      a.opacity.setValue(0);
+      a.translateX.setValue(i % 2 === 0 ? -SLIDE_PX : SLIDE_PX);
+    });
+
+    sequenceRef.current = Animated.stagger(
+      ROW_STAGGER_MS,
+      rowAnims.map((a) =>
+        Animated.parallel([
+          Animated.timing(a.opacity, {
+            toValue: 1,
+            duration: ROW_ENTER_MS,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+          }),
+          Animated.timing(a.translateX, {
+            toValue: 0,
+            duration: ROW_ENTER_MS,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+          }),
+        ]),
+      ),
+    );
+    sequenceRef.current.start();
+
+    return () => sequenceRef.current?.stop?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isFocused, reduceMotion]);
+
   return (
     <FeatureTourShell
-      step={3}
+      step={2}
       navigation={navigation}
       contentPadding={16}
       header={
@@ -36,12 +105,20 @@ export default function FeaturePrivacyScreen({ navigation }) {
           </Text>
         </View>
       }
-      ctaLabel={privacy.cta}
       onContinue={() => navigation.navigate('FeaturePricing')}
+      autoAdvanceMs={PRIVACY_TOTAL_MS}
+      hideControls
     >
       <TourCard style={styles.card}>
         {privacyRows.map((row, i) => (
-          <View key={row.title} style={[styles.row, i > 0 && styles.rowDivided]}>
+          <Animated.View
+            key={row.title}
+            style={[
+              styles.row,
+              i > 0 && styles.rowDivided,
+              { opacity: rowAnims[i].opacity, transform: [{ translateX: rowAnims[i].translateX }] },
+            ]}
+          >
             <View style={styles.rowIcon}>
               <TourIcon paths={row.paths} />
             </View>
@@ -49,7 +126,7 @@ export default function FeaturePrivacyScreen({ navigation }) {
               <Text style={styles.rowTitle}>{row.title}</Text>
               <Text style={styles.rowBody}>{row.body}</Text>
             </View>
-          </View>
+          </Animated.View>
         ))}
       </TourCard>
     </FeatureTourShell>

@@ -226,7 +226,7 @@ export default function GroupMembersScreen({ route }) {
             disabled={busy}
             activeOpacity={0.7}
           >
-              <GoldFill radius={radius.pill} disabled={busy} />
+            <GoldFill radius={radius.pill} disabled={busy} />
             {busy ? (
               <ActivityIndicator size="small" color={colors.onAccent} />
             ) : (
@@ -397,7 +397,7 @@ export default function GroupMembersScreen({ route }) {
                         disabled={busy}
                         activeOpacity={0.7}
                       >
-                          <GoldFill radius={radius.pill} disabled={busy} />
+                        <GoldFill radius={radius.pill} disabled={busy} />
                         {busy ? (
                           <ActivityIndicator size="small" color={colors.onAccent} />
                         ) : (

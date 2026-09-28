@@ -55,7 +55,7 @@ export async function registerForPushNotificationsAsync() {
  * (native-cached, no new permission prompt) once permission was already
  * granted, matching how registration itself re-derives on every launch.
  */
-export async function unregisterPushNotificationsAsync() {
+export async function unregisterPushNotificationsAsync(accessToken) {
   try {
     const { status } = await Notifications.getPermissionsAsync();
     if (status !== 'granted') return;
@@ -63,7 +63,7 @@ export async function unregisterPushNotificationsAsync() {
     const { data: token } = await Notifications.getExpoPushTokenAsync();
     if (!token) return;
 
-    await notificationApi.unregisterToken(token);
+    await notificationApi.unregisterToken(token, accessToken);
   } catch {
     // Best-effort, same as registration.
   }

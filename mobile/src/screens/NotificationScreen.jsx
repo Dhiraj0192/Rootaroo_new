@@ -207,7 +207,7 @@ export default function NotificationScreen({ navigation }) {
       activeOpacity={0.85}
       onPress={() => handleMarkRead(id)}
     >
-        <GoldFill radius={16} />
+      <GoldFill radius={16} />
       <Ionicons name="checkmark-done" size={18} color={colors.navyDeep} />
       <Text style={styles.swipeActionText}>Mark read</Text>
     </TouchableOpacity>
@@ -449,7 +449,7 @@ const styles = StyleSheet.create({
   swipeAction: {
     width: 92,
     borderRadius: 16,
-    backgroundColor: colors.goldGlow,
+    backgroundColor: colors.gold,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 4,

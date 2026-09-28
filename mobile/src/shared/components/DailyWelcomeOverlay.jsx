@@ -24,7 +24,6 @@ import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { KANGAROO_SVG_XML } from "../../assets/kangarooQuoteXml";
 import { colors, fonts, goldButton, radius, spacing, withAlpha } from '../theme';
-import { GoldFill } from './GoldButton';
 
 const ENTER_OFFSET = 260; // px the kangaroo starts off-screen to the left
 
@@ -214,7 +213,6 @@ export default function DailyWelcomeOverlay({
               accessibilityRole="button"
               accessibilityLabel={t("dashboard.dailyWelcome.close")}
             >
-                <GoldFill radius={18} />
               <Ionicons name="close" size={18} color={colors.navyDeep} />
             </TouchableOpacity>
 

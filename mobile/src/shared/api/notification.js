@@ -4,8 +4,14 @@ export const notificationApi = {
   registerToken: (token, platform) =>
     apiClient.post('/notifications/tokens', { token, platform }),
 
-  unregisterToken: (token) =>
-    apiClient.delete(`/notifications/tokens/${encodeURIComponent(token)}`),
+  // `accessToken` is passed explicitly at logout, when the store's copy is
+  // already cleared. `_retry` keeps a 401 here from kicking off a refresh
+  // (and with it, another logout).
+  unregisterToken: (token, accessToken) =>
+    apiClient.delete(`/notifications/tokens/${encodeURIComponent(token)}`, {
+      ...(accessToken ? { headers: { Authorization: `Bearer ${accessToken}` } } : {}),
+      _retry: true,
+    }),
 
   getHistory: (params) =>
     apiClient.get('/notifications/history', { params })

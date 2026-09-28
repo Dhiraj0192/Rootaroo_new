@@ -1,9 +1,11 @@
-import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import React, { useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, Animated, Easing } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useIsFocused } from '@react-navigation/native';
 import Svg, { Path } from 'react-native-svg';
 import FeatureTourShell from './FeatureTourShell';
 import { Eyebrow, TourCard, TourAvatar, rowDivider } from './tourPrimitives';
+import { useReducedMotion } from './useReducedMotion';
 import {
   day,
   dayBeats,
@@ -19,8 +21,51 @@ import {
 } from './featureTourContent';
 import { colors, fonts, radius, withAlpha } from '../../shared/theme';
 
+// The page starts blank and builds in two layers: the header (eyebrow +
+// "One ordinary day") reveals first, on its own — nothing else exists yet —
+// then the eight beats stack in one after another. Each beat is itself
+// two-stage: its heading (time, gold node, title, sub-line) appears first,
+// then — after a real pause, not simultaneously — its preview widget rises
+// in underneath. That's the "first the day lays itself out, then the
+// widget" reading: you get the line, then the thing that backs it up.
+//
+// Every duration below is the one source of truth for both the visual
+// sequence and the loader duration the shell auto-advances on — the loader
+// can never finish before the eighth beat's widget has actually settled,
+// because DAY_TOTAL_MS is built from these same numbers, not a guess.
+const BEAT_COUNT = dayBeats.length;
+const HEADER_ENTER_MS = 560;
+const HEADER_RISE_PX = 16;
+const HEADING_ENTER_MS = 460;
+const HEADING_RISE_PX = 10;
+// How long after a beat's heading starts before its widget begins — wide
+// enough that the heading has clearly landed and been read before the
+// widget shows up underneath it, not a simultaneous double-appear.
+const HEADING_TO_WIDGET_MS = 420;
+const WIDGET_ENTER_MS = 620;
+const RISE_PX = 34;
+const SCALE_FROM = 0.95;
+// How long a beat's own reveal takes end-to-end, heading start to widget
+// fully settled — this is what BEAT_STAGGER_MS is deliberately wide
+// relative to, so one beat is mostly done before the next begins.
+const BEAT_SETTLE_MS = HEADING_TO_WIDGET_MS + WIDGET_ENTER_MS;
+const BEAT_STAGGER_MS = 820;
+const SETTLE_BUFFER_MS = 1700;
+const DAY_TOTAL_MS =
+  HEADER_ENTER_MS + (BEAT_COUNT - 1) * BEAT_STAGGER_MS + BEAT_SETTLE_MS + SETTLE_BUFFER_MS;
+
+// How close a beat must be to the viewport edge before we scroll it back
+// into view — mirrors scrollToStep.js's own margin so this reads as the
+// same "comfortable reading zone" the rest of the app already uses.
+const SCROLL_MARGIN = 110;
+// A beat's card is what needs to be visible, not just its top edge — this
+// short lead lets the card noticeably start rising before the viewport
+// glides up to meet it, so the two motions read as connected rather than
+// the scroll pre-empting the card's own entrance.
+const SCROLL_LEAD_MS = 160;
+
 /**
- * Step 2 of 5 — the narrative heart of the tour. Eight timestamped beats of
+ * Step 2 of 4 — the narrative heart of the tour. Eight timestamped beats of
  * one Tuesday, each pairing a plain-language line ("The milk runs out") with
  * a miniature of the screen that handles it.
  *
@@ -28,44 +73,301 @@ import { colors, fonts, radius, withAlpha } from '../../shared/theme';
  * the product, not the product. Rendering them as real components would drag
  * live data, permissions and navigation into a screen whose only job is to
  * show what the app feels like.
+ *
+ * The timeline itself now builds bottom-to-top, one beat at a time, with the
+ * screen auto-scrolling to keep the arriving beat in view — see the effect
+ * below for how entrance timing, auto-scroll and the shell's loader all stay
+ * in sync without hardcoding any of them against a specific phone size.
  */
 export default function FeatureDayScreen({ navigation }) {
+  const isFocused = useIsFocused();
+  const reduceMotion = useReducedMotion();
+
+  const scrollRef = useRef(null);
+  const scrollOffsetY = useRef(0);
+  const beatRefs = useRef(dayBeats.map(() => React.createRef())).current;
+  const headerAnim = useRef({
+    opacity: new Animated.Value(0),
+    translateY: new Animated.Value(HEADER_RISE_PX),
+  }).current;
+  const anims = useRef(
+    dayBeats.map(() => ({
+      heading: {
+        opacity: new Animated.Value(0),
+        translateY: new Animated.Value(HEADING_RISE_PX),
+      },
+      widget: {
+        opacity: new Animated.Value(0),
+        translateY: new Animated.Value(RISE_PX),
+        scale: new Animated.Value(SCALE_FROM),
+      },
+    })),
+  ).current;
+  const sequenceRef = useRef(null);
+  const scrollTimersRef = useRef([]);
+  const userInteractingRef = useRef(false);
+  const resumeTimerRef = useRef(null);
+
+  const clearScrollTimers = () => {
+    scrollTimersRef.current.forEach(clearTimeout);
+    scrollTimersRef.current = [];
+    if (resumeTimerRef.current) {
+      clearTimeout(resumeTimerRef.current);
+      resumeTimerRef.current = null;
+    }
+  };
+
+  const scrollBeatIntoView = (index) => {
+    if (userInteractingRef.current) return;
+    const target = beatRefs[index]?.current;
+    const scrollNode = scrollRef.current;
+    if (!target || !scrollNode || typeof target.measureInWindow !== 'function') return;
+    target.measureInWindow((tx, ty, tw, th) => {
+      if (!tw || !th || typeof scrollNode.measureInWindow !== 'function') return;
+      scrollNode.measureInWindow((cx, cy, cw, ch) => {
+        const viewportTop = cy;
+        const viewportBottom = cy + ch;
+        let delta = 0;
+        if (ty < viewportTop + SCROLL_MARGIN) {
+          delta = ty - (viewportTop + SCROLL_MARGIN);
+        } else if (ty + th > viewportBottom - SCROLL_MARGIN) {
+          delta = ty + th - (viewportBottom - SCROLL_MARGIN);
+        }
+        if (delta === 0 || userInteractingRef.current) return;
+        const newY = Math.max(scrollOffsetY.current + delta, 0);
+        scrollNode.scrollTo({ y: newY, animated: true });
+      });
+    });
+  };
+
+  const snapToFinal = () => {
+    sequenceRef.current?.stop?.();
+    clearScrollTimers();
+    headerAnim.opacity.setValue(1);
+    headerAnim.translateY.setValue(0);
+    anims.forEach((a) => {
+      a.heading.opacity.setValue(1);
+      a.heading.translateY.setValue(0);
+      a.widget.opacity.setValue(1);
+      a.widget.translateY.setValue(0);
+      a.widget.scale.setValue(1);
+    });
+  };
+
+  useEffect(() => {
+    if (!isFocused) return undefined;
+
+    if (reduceMotion) {
+      snapToFinal();
+      return undefined;
+    }
+
+    headerAnim.opacity.setValue(0);
+    headerAnim.translateY.setValue(HEADER_RISE_PX);
+    anims.forEach((a) => {
+      a.heading.opacity.setValue(0);
+      a.heading.translateY.setValue(HEADING_RISE_PX);
+      a.widget.opacity.setValue(0);
+      a.widget.translateY.setValue(RISE_PX);
+      a.widget.scale.setValue(SCALE_FROM);
+    });
+
+    // The page starts blank: the header reveals on its own first, then the
+    // beats begin their cascade. Each beat's own animation is a parallel
+    // group where the widget timings carry an internal `delay`, so the
+    // heading visibly lands before the widget starts rising underneath it.
+    sequenceRef.current = Animated.sequence([
+      Animated.parallel([
+        Animated.timing(headerAnim.opacity, {
+          toValue: 1,
+          duration: HEADER_ENTER_MS,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.timing(headerAnim.translateY, {
+          toValue: 0,
+          duration: HEADER_ENTER_MS,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]),
+      Animated.stagger(
+        BEAT_STAGGER_MS,
+        anims.map((a) =>
+          Animated.parallel([
+            Animated.timing(a.heading.opacity, {
+              toValue: 1,
+              duration: HEADING_ENTER_MS,
+              easing: Easing.out(Easing.cubic),
+              useNativeDriver: true,
+            }),
+            Animated.timing(a.heading.translateY, {
+              toValue: 0,
+              duration: HEADING_ENTER_MS,
+              easing: Easing.out(Easing.cubic),
+              useNativeDriver: true,
+            }),
+            Animated.timing(a.widget.opacity, {
+              toValue: 1,
+              duration: WIDGET_ENTER_MS,
+              delay: HEADING_TO_WIDGET_MS,
+              easing: Easing.out(Easing.cubic),
+              useNativeDriver: true,
+            }),
+            Animated.timing(a.widget.translateY, {
+              toValue: 0,
+              duration: WIDGET_ENTER_MS,
+              delay: HEADING_TO_WIDGET_MS,
+              easing: Easing.out(Easing.cubic),
+              useNativeDriver: true,
+            }),
+            // A gentle scale-up alongside the widget's rise and fade gives
+            // it a touch more physicality — it settles into its spot
+            // rather than just fading into position.
+            Animated.timing(a.widget.scale, {
+              toValue: 1,
+              duration: WIDGET_ENTER_MS,
+              delay: HEADING_TO_WIDGET_MS,
+              easing: Easing.out(Easing.cubic),
+              useNativeDriver: true,
+            }),
+          ]),
+        ),
+      ),
+    ]);
+    sequenceRef.current.start();
+
+    // Auto-scroll is scheduled off the same constants that drive the
+    // entrance, not measured/guessed — beat i's heading starts at
+    // HEADER_ENTER_MS + i * BEAT_STAGGER_MS, and the scroll follows a beat
+    // past behind it by SCROLL_LEAD_MS so the heading is visibly already
+    // rising before the viewport glides up to meet it.
+    scrollTimersRef.current = dayBeats.map((_, i) =>
+      setTimeout(
+        () => scrollBeatIntoView(i),
+        HEADER_ENTER_MS + i * BEAT_STAGGER_MS + SCROLL_LEAD_MS,
+      ),
+    );
+
+    // A closing flourish once the eighth beat's widget has visibly settled:
+    // glide the rest of the way to the bottom so the whole built timeline —
+    // including the closing line under the last beat — is actually on
+    // screen, rather than trusting per-beat scrolling alone to have landed
+    // exactly there.
+    scrollTimersRef.current.push(
+      setTimeout(() => {
+        if (userInteractingRef.current) return;
+        scrollRef.current?.scrollToEnd?.({ animated: true });
+      }, HEADER_ENTER_MS + (BEAT_COUNT - 1) * BEAT_STAGGER_MS + BEAT_SETTLE_MS + 200),
+    );
+
+    return () => {
+      sequenceRef.current?.stop?.();
+      clearScrollTimers();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isFocused, reduceMotion]);
+
+  const handleScrollBeginDrag = () => {
+    userInteractingRef.current = true;
+    clearScrollTimers();
+  };
+  const handleScrollEndDrag = () => {
+    // A short cooldown before auto-scroll could resume — long enough that
+    // we never fight a user who just let go, and the remaining beats simply
+    // finish settling wherever the user left the viewport.
+    resumeTimerRef.current = setTimeout(() => {
+      userInteractingRef.current = false;
+    }, 600);
+  };
+
   return (
     <FeatureTourShell
       step={1}
       navigation={navigation}
-      footerDivider
       header={
-        <>
+        <Animated.View
+          style={{ opacity: headerAnim.opacity, transform: [{ translateY: headerAnim.translateY }] }}
+        >
           <Eyebrow>{day.eyebrow}</Eyebrow>
           <Text style={styles.title}>{day.title}</Text>
-        </>
+        </Animated.View>
       }
-      ctaLabel={day.cta}
-      onContinue={() => navigation.navigate('FeatureHub')}
+      onContinue={() => navigation.navigate('FeaturePrivacy')}
+      autoAdvanceMs={DAY_TOTAL_MS}
+      hideControls
+      scrollRef={scrollRef}
+      scrollViewProps={{
+        scrollEventThrottle: 16,
+        onScroll: (e) => {
+          scrollOffsetY.current = e.nativeEvent.contentOffset.y;
+        },
+        // Deliberately NOT wiring onMomentumScrollBegin/End here — our own
+        // auto-scroll calls scrollTo({animated:true}), and RN fires momentum
+        // events for a programmatic animated scroll exactly as it would for
+        // a user's flick. Treating those as "user is interacting" was
+        // clearing every remaining scroll timer the instant beat 0's own
+        // auto-scroll animation started, which is why only the first beat
+        // ever scrolled into view. onScrollBeginDrag only ever fires from an
+        // actual touch, so it's the only reliable "user took over" signal.
+        onScrollBeginDrag: handleScrollBeginDrag,
+        onScrollEndDrag: handleScrollEndDrag,
+      }}
     >
       {dayBeats.map((beat, i) => (
-        <Beat key={beat.kind} beat={beat} last={i === dayBeats.length - 1} />
+        <Beat
+          key={beat.kind}
+          beat={beat}
+          last={i === dayBeats.length - 1}
+          anim={anims[i]}
+          beatRef={beatRefs[i]}
+        />
       ))}
     </FeatureTourShell>
   );
 }
 
-/** One timeline row: time gutter, rule with a gold node, then the card. */
-function Beat({ beat, last }) {
+/**
+ * One timeline row: time gutter, rule with a gold node, then the card —
+ * revealed in two stages. The heading (time, node, title, sub-line) fades
+ * and rises in first; the preview widget underneath it follows afterward,
+ * on its own opacity/translateY/scale, so "the day lays itself out" and
+ * then "the widget" read as two distinct beats, not one simultaneous block.
+ */
+function Beat({ beat, last, anim, beatRef }) {
   return (
-    <View style={styles.beat}>
-      <View style={styles.gutter}>
-        <Text style={styles.time}>{beat.time}</Text>
-        <Text style={styles.meridiem}>{beat.meridiem}</Text>
-      </View>
-      <View style={[styles.track, last && styles.trackLast]}>
-        <View style={styles.node} />
-        <Text style={styles.beatTitle}>{beat.title}</Text>
-        <Text style={styles.beatSub}>{beat.sub}</Text>
-        <View style={styles.preview}>{PREVIEWS[beat.kind]()}</View>
-        {last ? <Text style={styles.closing}>{day.closing}</Text> : null}
-      </View>
+    <View ref={beatRef} collapsable={false}>
+      <Animated.View
+        style={[
+          styles.beat,
+          {
+            opacity: anim.heading.opacity,
+            transform: [{ translateY: anim.heading.translateY }],
+          },
+        ]}
+      >
+        <View style={styles.gutter}>
+          <Text style={styles.time}>{beat.time}</Text>
+          <Text style={styles.meridiem}>{beat.meridiem}</Text>
+        </View>
+        <View style={[styles.track, last && styles.trackLast]}>
+          <View style={styles.node} />
+          <Text style={styles.beatTitle}>{beat.title}</Text>
+          <Text style={styles.beatSub}>{beat.sub}</Text>
+          <Animated.View
+            style={[
+              styles.preview,
+              {
+                opacity: anim.widget.opacity,
+                transform: [{ translateY: anim.widget.translateY }, { scale: anim.widget.scale }],
+              },
+            ]}
+          >
+            {PREVIEWS[beat.kind]()}
+          </Animated.View>
+          {last ? <Text style={styles.closing}>{day.closing}</Text> : null}
+        </View>
+      </Animated.View>
     </View>
   );
 }

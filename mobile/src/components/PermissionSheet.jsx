@@ -1,9 +1,9 @@
 import React from 'react';
 import { View, Text, StyleSheet, Modal, Pressable, TouchableOpacity } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, fonts, radius, spacing, withAlpha } from '../shared/theme';
+import { GoldFill } from '../shared/components/GoldButton';
 
 /**
  * THE permission-denied surface. Every runtime permission the app asks for —
@@ -51,12 +51,7 @@ export default function PermissionSheet({ visible, content, onAllow, onDismiss }
             accessibilityRole="button"
             accessibilityLabel={allowLabel}
           >
-            <LinearGradient
-              colors={[colors.goldSoft, colors.gold, colors.goldWarmDark]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={StyleSheet.absoluteFill}
-            />
+            <GoldFill radius={radius.pill} />
             <Text style={styles.allowText}>{allowLabel}</Text>
           </TouchableOpacity>
 
@@ -136,11 +131,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
-    shadowColor: colors.gold,
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.3,
-    shadowRadius: 22,
-    elevation: 6,
+    backgroundColor: colors.gold,
+    shadowOpacity: 0,
+    shadowRadius: 0,
+    elevation: 0,
   },
   allowText: {
     fontSize: 16,

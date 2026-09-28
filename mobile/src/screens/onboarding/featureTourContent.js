@@ -242,7 +242,6 @@ export function derivePricing(plan, size) {
 export const TOUR_ROUTES = [
   'FeatureIntro',
   'FeatureDay',
-  'FeatureHub',
   'FeaturePrivacy',
   'FeaturePricing',
 ];

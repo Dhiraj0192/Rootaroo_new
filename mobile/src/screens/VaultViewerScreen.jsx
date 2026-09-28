@@ -495,7 +495,7 @@ export default function VaultViewerScreen({ navigation, route }) {
               disabled={exporting}
               activeOpacity={0.85}
             >
-                <GoldFill radius={9999} />
+              <GoldFill radius={9999} disabled={exporting} />
               {exporting ? (
                 <ActivityIndicator size="small" color={colors.onAccent} />
               ) : (
@@ -649,7 +649,7 @@ export default function VaultViewerScreen({ navigation, route }) {
                 onPress={confirmRename}
                 activeOpacity={0.85}
               >
-                  <GoldFill radius={10} />
+                <GoldFill radius={10} />
                 <Text style={styles.renameSaveText}>Save</Text>
               </TouchableOpacity>
             </View>

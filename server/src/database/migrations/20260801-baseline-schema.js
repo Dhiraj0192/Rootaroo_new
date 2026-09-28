@@ -168,10 +168,22 @@ const TABLES_IN_DROP_ORDER = [
       "users",
     ];
 
+// MySQL errnos meaning "this already exists": table, column, index/key name,
+// foreign key constraint.
+const ALREADY_EXISTS_ERRNOS = new Set([1050, 1060, 1061, 1826]);
+
 module.exports = {
   async up(queryInterface, Sequelize) {
     for (const statement of BASELINE_DDL) {
-      await queryInterface.sequelize.query(statement);
+      try {
+        await queryInterface.sequelize.query(statement);
+      } catch (err) {
+        // The schema (or part of it) is already there: a dev DB built by the
+        // old sequelize.sync() boot, or an earlier run that died halfway
+        // (MySQL DDL isn't transactional). Skip the pieces that exist, fail
+        // on anything else.
+        if (!ALREADY_EXISTS_ERRNOS.has(err?.original?.errno ?? err?.parent?.errno)) throw err;
+      }
     }
 
     const tableName = queryInterface.sequelize.options.migrationStorageTableName || 'SequelizeMeta';

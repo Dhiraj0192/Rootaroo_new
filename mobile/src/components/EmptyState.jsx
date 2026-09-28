@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { colors, fonts, radius, spacing } from '../shared/theme';
+import { GoldFill } from '../shared/components/GoldButton';
 
 /**
  * Centered empty state (design: 09-States-Errors — Empty Feed/Tasks/Vault).
@@ -14,6 +15,7 @@ export default function EmptyState({ icon, title, subtitle, actionLabel, onActio
       <Text style={[styles.subtitle, dark && styles.subtitleDark]}>{subtitle}</Text>
       {actionLabel && onAction ? (
         <TouchableOpacity style={styles.action} onPress={onAction} activeOpacity={0.85}>
+          <GoldFill radius={radius.pill} />
           <Text style={styles.actionText}>{actionLabel}</Text>
         </TouchableOpacity>
       ) : null}
@@ -65,11 +67,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.gold,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: colors.gold,
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.28,
-    shadowRadius: 20,
-    elevation: 6,
+    shadowOpacity: 0,
+    shadowRadius: 0,
+    elevation: 0,
   },
   actionText: {
     fontSize: 15,

@@ -298,14 +298,9 @@ const styles = StyleSheet.create({
     borderColor: colors.goldWarm,
     borderRadius: radius.card,
     marginHorizontal: 2,
-    shadowColor: colors.goldWarm,
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.18,
-    shadowRadius: 5,
-    elevation: 2,
+    shadowOpacity: 0,
+    shadowRadius: 0,
+    elevation: 0,
   },
   wheelItemText: {
     fontFamily: fonts.body,

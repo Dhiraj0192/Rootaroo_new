@@ -202,7 +202,7 @@ export default function JournalScreen({ navigation }) {
             accessibilityRole="button"
             accessibilityLabel="New journal entry"
           >
-              <GoldFill radius={17} />
+            <GoldFill radius={17} />
             <Ionicons name="add" size={24} color={colors.canvas} />
           </TouchableOpacity>
         </View>
