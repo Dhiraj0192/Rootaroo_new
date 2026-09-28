@@ -9,6 +9,7 @@ import {
   getTaskSummary,
 } from '../service';
 import * as models from '../../../database/models';
+import { Op } from 'sequelize';
 
 const userId = '550e8400-e29b-41d4-a716-446655440001';
 const otherUserId = '660e8400-e29b-41d4-a716-446655440002';
@@ -21,6 +22,7 @@ jest.mock('../../../database/models', () => ({
     findAll: jest.fn(),
     findOne: jest.fn(),
     findByPk: jest.fn(),
+    count: jest.fn(),
   },
   TaskAssignee: {
     create: jest.fn(),
@@ -126,6 +128,21 @@ describe('Task Service', () => {
       expect(result).toHaveProperty('pending');
       expect(result).toHaveProperty('overdue');
       expect(result).toHaveProperty('completedToday');
+    });
+
+    it('only queries open tasks plus tasks completed today when group=status', async () => {
+      (modelsMock.HouseholdMember.findOne as jest.Mock).mockResolvedValue({ householdId });
+      (modelsMock.Task.findAll as jest.Mock).mockResolvedValue([]);
+
+      await getTasks(userId, { group: 'status' });
+
+      const where = (modelsMock.Task.findAll as jest.Mock).mock.calls[0][0].where;
+      const orClauses = where[Op.or];
+      expect(where.householdId).toBe(householdId);
+      expect(orClauses).toHaveLength(2);
+      expect(orClauses[0]).toEqual({ status: { [Op.ne]: 'completed' } });
+      expect(orClauses[1].completedAt).toHaveProperty([Op.gte]);
+      expect(orClauses[1].completedAt).toHaveProperty([Op.lte]);
     });
   });
 
@@ -263,11 +280,11 @@ describe('Task Service', () => {
   describe('getTaskSummary', () => {
     it('returns pending/overdue/completed-today counts', async () => {
       (modelsMock.HouseholdMember.findOne as jest.Mock).mockResolvedValue({ householdId });
-      (modelsMock.Task.findAll as jest.Mock).mockResolvedValue([
-        { status: 'completed', completedAt: new Date(), id: '1' },
-        { status: 'pending', dueDate: new Date(Date.now() - 86400000), id: '2' },
-        { status: 'pending', dueDate: new Date(Date.now() + 86400000), id: '3' },
-      ]);
+      // Call order matches getTaskSummaryForHousehold's Promise.all: overdue, pending, completedToday.
+      (modelsMock.Task.count as jest.Mock)
+        .mockResolvedValueOnce(1) // overdue
+        .mockResolvedValueOnce(1) // pending
+        .mockResolvedValueOnce(1); // completedToday
 
       const result = await getTaskSummary(userId);
 

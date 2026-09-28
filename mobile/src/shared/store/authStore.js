@@ -4,7 +4,30 @@ import {
   clearSignupProgress,
   loadSignupProgress,
 } from './signupProgress';
-import apiClient from '../api/client';
+import apiClient, { requestTokenRefresh } from '../api/client';
+import { warmScreenCache, clearScreenCache, clearSharedRequests } from '../cache/screenCache';
+import { prefetchHome } from '../cache/homePrefetch';
+import { useFeedStore } from './feedStore';
+import { unregisterPushNotificationsAsync } from '../pushNotifications';
+
+// Access tokens live 15 minutes, so almost every cold start finds an
+// expired one. Refreshing during the splash beats letting the first
+// screen's dozen requests all 401, refresh, and retry.
+const TOKEN_EXPIRY_MARGIN_MS = 60 * 1000;
+// Kept short so a dead connection doesn't hold the splash; on a timeout
+// the stored tokens are used and the 401 interceptor refreshes later.
+const RESTORE_REFRESH_TIMEOUT_MS = 8000;
+
+function accessTokenExpiresSoon(token) {
+  try {
+    const b64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    const { exp } = JSON.parse(atob(b64 + '='.repeat((4 - (b64.length % 4)) % 4)));
+    return typeof exp === 'number' && exp * 1000 - Date.now() < TOKEN_EXPIRY_MARGIN_MS;
+  } catch {
+    // Unreadable token: leave it to the interceptor rather than guess.
+    return false;
+  }
+}
 
 export const useAuthStore = create((set, get) => ({
   user: null,
@@ -23,6 +46,7 @@ export const useAuthStore = create((set, get) => ({
 
   setAuth: (user, accessToken, refreshToken) => {
     set({ user, accessToken, refreshToken, isAuthenticated: true, isLoading: false });
+    warmScreenCache(user?.id);
     saveTokens(accessToken, refreshToken, user).catch(() => {});
   },
 
@@ -50,6 +74,10 @@ export const useAuthStore = create((set, get) => ({
   setSignupProgress: (signupProgress) => set({ signupProgress }),
 
   logout: () => {
+    // Unregister this device's push token with the outgoing session's token —
+    // by the time any effect reacts to the sign-out, it's already cleared.
+    const { accessToken } = get();
+    if (accessToken) unregisterPushNotificationsAsync(accessToken);
     set({
       user: null,
       accessToken: null,
@@ -61,6 +89,9 @@ export const useAuthStore = create((set, get) => ({
     });
     clearTokens().catch(() => {});
     clearSignupProgress().catch(() => {});
+    clearSharedRequests();
+    clearScreenCache();
+    useFeedStore.setState({ posts: [], cursor: null, hasMore: true, lastFetchedAt: null });
   },
 
   // Fresh account finishing onboarding fires a one-time confetti burst on
@@ -88,6 +119,7 @@ export const useAuthStore = create((set, get) => ({
   completeSetup: () => {
     const { accessToken, refreshToken, user } = get();
     set({ isAuthenticated: true, isLoading: false, signupProgress: null });
+    warmScreenCache(user?.id);
     clearSignupProgress().catch(() => {});
     if (accessToken && refreshToken && user) {
       saveTokens(accessToken, refreshToken, user).catch(() => {});
@@ -124,15 +156,33 @@ export const useAuthStore = create((set, get) => ({
       }
 
       if (accessToken && refreshToken && user) {
+        let tokens = { accessToken, refreshToken };
+        // Read last session's screen data off disk while the token is refreshed.
+        const cacheWarm = warmScreenCache(user.id);
+        if (accessTokenExpiresSoon(accessToken)) {
+          try {
+            tokens = await requestTokenRefresh(refreshToken, RESTORE_REFRESH_TIMEOUT_MS);
+            saveTokens(tokens.accessToken, tokens.refreshToken, user).catch(() => {});
+          } catch (e) {
+            // Server rejected the refresh token (revoked/expired): same
+            // outcome the interceptor would reach, minus the failed requests.
+            if (e?.response?.status === 401) {
+              get().logout();
+              return;
+            }
+          }
+        }
+        await cacheWarm;
         set({
           user,
-          accessToken,
-          refreshToken,
+          accessToken: tokens.accessToken,
+          refreshToken: tokens.refreshToken,
           isAuthenticated: true,
           isLoading: false,
           householdId: householdId ?? null,
           signupProgress: null,
         });
+        prefetchHome(householdId);
 
         apiClient
           .get('/households')

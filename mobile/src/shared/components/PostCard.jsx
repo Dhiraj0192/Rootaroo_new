@@ -108,14 +108,20 @@ function MediaCarousel({ media, onItemPress }) {
         decelerationRate="fast"
       >
         {media.map((item) => {
-          const uri = resolveUrl(item.thumbnailUrl || item.mediaUrl);
           const isVideo = item.mediaType === 'video';
+          // The video's PLAYABLE source is always the real video file —
+          // never the poster thumbnail, which is a plain JPEG expo-av
+          // can't play. Photos still prefer the thumbnail for the grid.
+          const posterUri = resolveUrl(item.thumbnailUrl);
+          const uri = isVideo ? resolveUrl(item.mediaUrl) : posterUri || resolveUrl(item.mediaUrl);
           return (
             <TouchableOpacity key={item.id} activeOpacity={0.95} onPress={() => onItemPress?.(item)} style={{ width: SCREEN_W, height }}>
               {uri ? (
                 isVideo ? (
                   <Video
                     source={{ uri }}
+                    posterSource={posterUri ? { uri: posterUri } : undefined}
+                    usePoster={!!posterUri}
                     style={styles.mediaFill}
                     resizeMode={ResizeMode.COVER}
                     shouldPlay={false}
@@ -315,8 +321,12 @@ const PostCard = memo(function PostCard({
             </TouchableOpacity>
           </View>
           {viewerMedia && (() => {
-            const uri = resolveUrl(viewerMedia.thumbnailUrl || viewerMedia.mediaUrl);
             const isVideo = viewerMedia.mediaType === 'video';
+            // Same rule as the grid above: video always plays the real
+            // file, never the poster thumbnail.
+            const uri = isVideo
+              ? resolveUrl(viewerMedia.mediaUrl)
+              : resolveUrl(viewerMedia.thumbnailUrl) || resolveUrl(viewerMedia.mediaUrl);
             return (
               <View style={styles.viewerContent}>
                 {uri ? (

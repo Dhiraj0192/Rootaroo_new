@@ -1,4 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
+import { Op } from 'sequelize';
 import {
   Task,
   TaskAssignee,
@@ -184,15 +185,23 @@ export async function getTasks(
   ];
 
   if (options.group === 'status') {
-    const allTasks = await Task.findAll({
-      where: { householdId },
-      include,
-      order: [['createdAt', 'DESC']],
-    });
-
     const now = new Date();
     const start = todayStart();
     const end = todayEnd();
+    // Only what the grouped view can show: open tasks, plus those completed
+    // today. Older completed tasks used to be loaded (with 3 user joins each)
+    // and then discarded below, so the cost grew with household lifetime.
+    const allTasks = await Task.findAll({
+      where: {
+        householdId,
+        [Op.or]: [
+          { status: { [Op.ne]: 'completed' } },
+          { completedAt: { [Op.gte]: start, [Op.lte]: end } },
+        ],
+      },
+      include,
+      order: [['createdAt', 'DESC']],
+    });
     const grouped: GroupedTasksResponse = {
       pending: [],
       overdue: [],
@@ -416,35 +425,39 @@ export async function reopenTask(
   return toTaskResponse(task);
 }
 
-/** FR-069: Dashboard summary counts. */
-export async function getTaskSummary(
-  userId: string,
-): Promise<TaskSummaryResponse> {
-  const householdId = await getUserHousehold(userId);
+/**
+ * FR-069: Dashboard summary counts. Three bounded COUNT queries instead of
+ * fetching every task the household has ever created and counting in JS —
+ * the old approach scaled with household lifetime activity, not with the
+ * (tiny, constant) size of this response.
+ */
+export async function getTaskSummaryForHousehold(householdId: string): Promise<TaskSummaryResponse> {
   const now = new Date();
   const start = todayStart();
   const end = todayEnd();
 
-  const allTasks = await Task.findAll({
-    where: { householdId },
-    attributes: ['id', 'status', 'dueDate', 'completedAt'],
-  });
-
-  let pending = 0;
-  let overdue = 0;
-  let completedToday = 0;
-
-  for (const t of allTasks) {
-    if (t.status === 'completed') {
-      if (t.completedAt && t.completedAt >= start && t.completedAt <= end) {
-        completedToday++;
-      }
-    } else if (t.dueDate && new Date(t.dueDate) < now) {
-      overdue++;
-    } else {
-      pending++;
-    }
-  }
+  const [overdue, pending, completedToday] = await Promise.all([
+    Task.count({
+      where: { householdId, status: { [Op.ne]: 'completed' }, dueDate: { [Op.lt]: now } },
+    }),
+    Task.count({
+      where: {
+        householdId,
+        status: { [Op.ne]: 'completed' },
+        [Op.or]: [{ dueDate: { [Op.is]: null } as any }, { dueDate: { [Op.gte]: now } }],
+      },
+    }),
+    Task.count({
+      where: { householdId, status: 'completed', completedAt: { [Op.gte]: start, [Op.lte]: end } },
+    }),
+  ]);
 
   return { pending, overdue, completedToday };
+}
+
+export async function getTaskSummary(
+  userId: string,
+): Promise<TaskSummaryResponse> {
+  const householdId = await getUserHousehold(userId);
+  return getTaskSummaryForHousehold(householdId);
 }

@@ -166,7 +166,10 @@ export default function PhotoGalleryScreen() {
         <Pressable style={styles.viewer} onPress={() => setViewerIndex(null)}>
           {viewerIndex !== null && photos[viewerIndex] ? (
             <Image
-              source={{ uri: photos[viewerIndex].uri, cacheKey: photos[viewerIndex].id }}
+              source={{
+                uri: photos[viewerIndex].fullUri || photos[viewerIndex].uri,
+                cacheKey: photos[viewerIndex].id,
+              }}
               style={styles.viewerImage}
               contentFit="contain"
               cachePolicy="disk"

@@ -32,9 +32,13 @@ export function useFeedPhotos({ autoLoad = true } = {}) {
     const photos = [];
     posts.forEach((post) => {
       (post.media || []).forEach((m) => {
-        const uri = absoluteUrl(m?.mediaUrl);
+        const fullUri = absoluteUrl(m?.mediaUrl);
+        // Thumbnails are for the grid/carousel; the full-screen viewer
+        // still wants the original so it isn't stretching a 480px image
+        // across the whole device — see PhotoGalleryScreen's Modal.
+        const uri = absoluteUrl(m?.thumbnailUrl) || fullUri;
         if (!uri) return;
-        photos.push({ id: m.id ?? `${post.id}:${uri}`, postId: post.id, uri });
+        photos.push({ id: m.id ?? `${post.id}:${uri}`, postId: post.id, uri, fullUri: fullUri || uri });
       });
     });
     // Refetches hand back a fresh `posts` array even when the photos are

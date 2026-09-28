@@ -19,6 +19,7 @@ jest.mock('../../../database/models', () => ({
     findAll: jest.fn(),
     findOne: jest.fn(),
     findByPk: jest.fn(),
+    count: jest.fn(),
   },
   User: {},
   HouseholdMember: {
@@ -163,11 +164,10 @@ describe('Grocery Service', () => {
   describe('getSummary', () => {
     it('returns pending and bought-today counts', async () => {
       (modelsMock.HouseholdMember.findOne as jest.Mock).mockResolvedValue({ householdId });
-      (modelsMock.GroceryItem.findAll as jest.Mock).mockResolvedValue([
-        { id: '1', isBought: false, boughtAt: null, archivedAt: null },
-        { id: '2', isBought: true, boughtAt: new Date(), archivedAt: null },
-        { id: '3', isBought: false, boughtAt: null, archivedAt: null },
-      ]);
+      // Call order matches getSummaryForHousehold's Promise.all: pending, boughtToday.
+      (modelsMock.GroceryItem.count as jest.Mock)
+        .mockResolvedValueOnce(2) // pending
+        .mockResolvedValueOnce(1); // boughtToday
 
       const result = await getSummary(userId);
 

@@ -1,6 +1,7 @@
 import express from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
+import compression from 'compression';
 import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
 import { RedisStore } from 'rate-limit-redis';
@@ -48,6 +49,11 @@ app.use(cors({
   origin: env.corsOrigins,
   credentials: true,
 }));
+
+// Users are on a high-latency link (Nepal ↔ Railway): feed/chat JSON is
+// dominated by long signed media URLs and compresses ~3-5x, which saves
+// whole round trips during TCP slow start on a fresh connection.
+app.use(compression());
 
 // ── Rate Limiting ──
 // Backed by Redis so limits survive restarts/deploys and are shared across

@@ -456,7 +456,10 @@ export async function markExpenseSettled(
 /** FR-103, FR-104, FR-109: Get expense summary with net balances and ledger */
 export async function getExpenseSummary(userId: string): Promise<ExpenseSummaryResponse> {
   const householdId = await getUserHousehold(userId);
+  return getExpenseSummaryForHousehold(householdId);
+}
 
+export async function getExpenseSummaryForHousehold(householdId: string): Promise<ExpenseSummaryResponse> {
   // Get all household members
   const members = await HouseholdMember.findAll({
     where: { householdId },

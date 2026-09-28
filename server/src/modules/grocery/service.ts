@@ -1,4 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
+import { Op } from 'sequelize';
 import {
   GroceryItem,
   User,
@@ -238,33 +239,34 @@ export async function archiveItem(
 }
 
 /** FR-089: Summary counts for dashboard. */
-export async function getSummary(
-  userId: string,
-): Promise<GrocerySummaryResponse> {
-  const householdId = await getUserHousehold(userId);
+/** Two bounded COUNT queries instead of fetching every grocery item the
+ * household has ever added and counting in JS. */
+export async function getSummaryForHousehold(householdId: string): Promise<GrocerySummaryResponse> {
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
   const todayEnd = new Date();
   todayEnd.setHours(23, 59, 59, 999);
 
-  const all = await GroceryItem.findAll({
-    where: { householdId },
-    attributes: ['id', 'isBought', 'boughtAt', 'archivedAt'],
-  });
-
-  let pending = 0;
-  let boughtToday = 0;
-
-  for (const item of all) {
-    if (item.archivedAt) continue;
-    if (item.isBought) {
-      if (item.boughtAt && item.boughtAt >= todayStart && item.boughtAt <= todayEnd) {
-        boughtToday++;
-      }
-    } else {
-      pending++;
-    }
-  }
+  const [pending, boughtToday] = await Promise.all([
+    GroceryItem.count({
+      where: { householdId, isBought: false, archivedAt: { [Op.is]: null } as any },
+    }),
+    GroceryItem.count({
+      where: {
+        householdId,
+        isBought: true,
+        archivedAt: { [Op.is]: null } as any,
+        boughtAt: { [Op.gte]: todayStart, [Op.lte]: todayEnd },
+      },
+    }),
+  ]);
 
   return { pending, boughtToday };
+}
+
+export async function getSummary(
+  userId: string,
+): Promise<GrocerySummaryResponse> {
+  const householdId = await getUserHousehold(userId);
+  return getSummaryForHousehold(householdId);
 }

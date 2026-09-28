@@ -9,7 +9,7 @@ import * as NavigationBar from 'expo-navigation-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '../shared/store/authStore';
 import { connectSocket, disconnectSocket } from '../shared/socket';
-import { registerForPushNotificationsAsync, unregisterPushNotificationsAsync } from '../shared/pushNotifications';
+import { registerForPushNotificationsAsync } from '../shared/pushNotifications';
 import SplashScreen from '../screens/SplashScreen';
 import WelcomeScreen from '../screens/WelcomeScreen';
 import ChooseMethodScreen from '../screens/ChooseMethodScreen';
@@ -469,6 +469,16 @@ function MainNavigator() {
             tabBarIcon: ({ color, focused }) => <TabChatIcon color={color} focused={focused} />,
           };
         }}
+        listeners={({ navigation: tabNav }) => ({
+          // Nested stacks preserve their pushed screens by default when you
+          // switch tabs and come back — reset to the tab's own root screen
+          // every time it's pressed, whether it was already focused (tap
+          // again while there) or you're returning from another tab.
+          tabPress: (e) => {
+            e.preventDefault();
+            tabNav.navigate('ChatStack', { screen: 'Conversations' });
+          },
+        })}
       />
       <MainTab.Screen
         name="TasksStack"
@@ -477,6 +487,12 @@ function MainNavigator() {
           tabBarLabel: 'Tasks',
           tabBarIcon: ({ color, focused }) => <TabTasksIcon color={color} focused={focused} />,
         }}
+        listeners={({ navigation: tabNav }) => ({
+          tabPress: (e) => {
+            e.preventDefault();
+            tabNav.navigate('TasksStack', { screen: 'TaskList' });
+          },
+        })}
       />
       <MainTab.Screen
         name="MoreStack"
@@ -495,12 +511,8 @@ function MainNavigator() {
         }}
         listeners={({ navigation: tabNav }) => ({
           tabPress: (e) => {
-            const state = tabNav.getState();
-            const moreIndex = state.routes.findIndex((r) => r.name === 'MoreStack');
-            if (state.index === moreIndex) {
-              e.preventDefault();
-              tabNav.navigate('MoreStack', { screen: 'MoreIndex' });
-            }
+            e.preventDefault();
+            tabNav.navigate('MoreStack', { screen: 'MoreIndex' });
           },
         })}
       />
@@ -524,16 +536,21 @@ export default function RootNavigator() {
     return () => clearTimeout(timer);
   }, []);
 
-  // Socket lifecycle
+  // Socket lifecycle — reconnects with the new token on every refresh.
   useEffect(() => {
     if (isAuthenticated && accessToken) {
       connectSocket(accessToken);
-      registerForPushNotificationsAsync();
     } else {
       disconnectSocket();
-      unregisterPushNotificationsAsync();
     }
   }, [isAuthenticated, accessToken]);
+
+  // Push registration follows sign-in only, not token refreshes (it used to
+  // re-register on every refresh). Unregistering happens in logout(), while
+  // the session's token still exists.
+  useEffect(() => {
+    if (isAuthenticated) registerForPushNotificationsAsync();
+  }, [isAuthenticated]);
 
   if (isLoading || !minSplashDone) {
     return <SplashScreen />;

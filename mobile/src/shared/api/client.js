@@ -40,6 +40,18 @@ const apiClient = axios.create({
   validateStatus: (status) => status >= 200 && status < 400, // accept 304
 });
 
+/**
+ * Trades a refresh token for a fresh pair. Bypasses `apiClient` (it can't
+ * carry an Authorization header that's mid-refresh), hence the explicit
+ * timeout. Shared by the 401 interceptor below and by `restoreSession`,
+ * which refreshes up front on a cold start instead of letting every
+ * first-screen request 401 and retry.
+ */
+export async function requestTokenRefresh(refreshToken, timeout = 15000) {
+  const { data } = await axios.post(`${BASE_URL}/auth/refresh`, { refreshToken }, { timeout });
+  return data.data;
+}
+
 // ── Refresh-token mutex ──
 let isRefreshing = false;
 let refreshQueue = [];
@@ -104,13 +116,10 @@ apiClient.interceptors.response.use(
           useAuthStore.getState().logout();
           return Promise.reject(error);
         }
-        // Explicit timeout — this bypasses `apiClient` (it can't carry an
-        // Authorization header that's mid-refresh), so it doesn't get
-        // `apiClient`'s default timeout. Without one, a hung/slow refresh
-        // never settles, `isRefreshing` never clears, and every other
-        // queued request (line 85-96) hangs forever with it.
-        const { data } = await axios.post(`${BASE_URL}/auth/refresh`, { refreshToken }, { timeout: 15000 });
-        const { accessToken, refreshToken: newRefresh } = data.data;
+        // requestTokenRefresh carries its own timeout — without one, a
+        // hung/slow refresh never settles, `isRefreshing` never clears, and
+        // every queued request above hangs forever with it.
+        const { accessToken, refreshToken: newRefresh } = await requestTokenRefresh(refreshToken);
         useAuthStore.getState().setAuth(useAuthStore.getState().user, accessToken, newRefresh);
         if (original.headers) original.headers.Authorization = `Bearer ${accessToken}`;
         onRefreshed(accessToken);

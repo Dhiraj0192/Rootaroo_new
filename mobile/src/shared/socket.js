@@ -18,13 +18,16 @@ function getBaseURL() {
  * Safe to call multiple times — reconnects with a new token if it changes.
  */
 export function connectSocket(token) {
-  // If connected with the same token, reuse existing connection
-  if (socket?.connected && currentToken === token) {
+  // Same token and the socket is connected or still retrying on its own
+  // (`active`) — reuse it rather than opening a second connection.
+  if (socket && currentToken === token && (socket.connected || socket.active)) {
     return socket;
   }
 
-  // If token changed, disconnect first so auth is refreshed
-  if (socket?.connected && currentToken !== token) {
+  // Tear down any previous socket, connected or not. Checking only
+  // `connected` orphaned a socket still retrying with an expired token
+  // (the usual cold start) — it kept reconnecting 10x in the background.
+  if (socket) {
     listenersAttached = false;
     socket.removeAllListeners();
     socket.disconnect();

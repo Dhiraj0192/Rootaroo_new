@@ -6,6 +6,7 @@ import * as todoService from '../../todo/service';
 import * as notificationService from '../../notification/service';
 import { ForbiddenError } from '../../../shared/utils/errors';
 import { Op } from 'sequelize';
+import redis from '../../../config/redis';
 
 const userId = '550e8400-e29b-41d4-a716-446655440001';
 const householdId = '770e8400-e29b-41d4-a716-446655440003';
@@ -32,20 +33,28 @@ jest.mock('../../../database/models', () => ({
 }));
 
 jest.mock('../../task/service', () => ({
-  getTaskSummary: jest.fn(),
+  getTaskSummaryForHousehold: jest.fn(),
 }));
 
 jest.mock('../../grocery/service', () => ({
-  getSummary: jest.fn(),
+  getSummaryForHousehold: jest.fn(),
 }));
 
 jest.mock('../../todo/service', () => ({
-  getSummary: jest.fn(),
+  getSummaryForHousehold: jest.fn(),
 }));
 
 jest.mock('../../notification/service', () => ({
   getUnreadCount: jest.fn(),
   sendToUser: jest.fn(),
+}));
+
+jest.mock('../../../config/redis', () => ({
+  __esModule: true,
+  default: {
+    get: jest.fn().mockResolvedValue(null),
+    setex: jest.fn().mockResolvedValue('OK'),
+  },
 }));
 
 jest.mock('../../../shared/utils/logger');
@@ -75,9 +84,9 @@ describe('Dashboard Service', () => {
         { userId, user: { displayName: 'Alice', avatarUrl: null, avatarEmoji: null } },
         { userId: otherUserId, user: { displayName: 'Bob', avatarUrl: null, avatarEmoji: null } },
       ]);
-      (taskService.getTaskSummary as jest.Mock).mockResolvedValue({ pending: 3, overdue: 1, completedToday: 2 });
-      (groceryService.getSummary as jest.Mock).mockResolvedValue({ pending: 5, boughtToday: 0 });
-      (todoService.getSummary as jest.Mock).mockResolvedValue({ pending: 2, completedToday: 1 });
+      (taskService.getTaskSummaryForHousehold as jest.Mock).mockResolvedValue({ pending: 3, overdue: 1, completedToday: 2 });
+      (groceryService.getSummaryForHousehold as jest.Mock).mockResolvedValue({ pending: 5, boughtToday: 0 });
+      (todoService.getSummaryForHousehold as jest.Mock).mockResolvedValue({ pending: 2, completedToday: 1 });
       (notificationService.getUnreadCount as jest.Mock).mockResolvedValue(4);
 
       const now = new Date();
@@ -122,9 +131,9 @@ describe('Dashboard Service', () => {
       (modelsMock.HouseholdMember.findAll as jest.Mock).mockResolvedValue([
         { userId, user: { displayName: 'Alice', avatarUrl: null, avatarEmoji: null } },
       ]);
-      (taskService.getTaskSummary as jest.Mock).mockResolvedValue({ pending: 0, overdue: 0, completedToday: 2 });
-      (groceryService.getSummary as jest.Mock).mockResolvedValue({ pending: 0, boughtToday: 0 });
-      (todoService.getSummary as jest.Mock).mockResolvedValue({ pending: 0, completedToday: 0 });
+      (taskService.getTaskSummaryForHousehold as jest.Mock).mockResolvedValue({ pending: 0, overdue: 0, completedToday: 2 });
+      (groceryService.getSummaryForHousehold as jest.Mock).mockResolvedValue({ pending: 0, boughtToday: 0 });
+      (todoService.getSummaryForHousehold as jest.Mock).mockResolvedValue({ pending: 0, completedToday: 0 });
       (notificationService.getUnreadCount as jest.Mock).mockResolvedValue(0);
 
       const today = new Date();
@@ -159,9 +168,9 @@ describe('Dashboard Service', () => {
       (modelsMock.HouseholdMember.findAll as jest.Mock).mockResolvedValue([
         { userId, user: { displayName: 'Alice', avatarUrl: null, avatarEmoji: null } },
       ]);
-      (taskService.getTaskSummary as jest.Mock).mockResolvedValue({ pending: 0, overdue: 0, completedToday: 0 });
-      (groceryService.getSummary as jest.Mock).mockResolvedValue({ pending: 0, boughtToday: 0 });
-      (todoService.getSummary as jest.Mock).mockResolvedValue({ pending: 0, completedToday: 0 });
+      (taskService.getTaskSummaryForHousehold as jest.Mock).mockResolvedValue({ pending: 0, overdue: 0, completedToday: 0 });
+      (groceryService.getSummaryForHousehold as jest.Mock).mockResolvedValue({ pending: 0, boughtToday: 0 });
+      (todoService.getSummaryForHousehold as jest.Mock).mockResolvedValue({ pending: 0, completedToday: 0 });
       (notificationService.getUnreadCount as jest.Mock).mockResolvedValue(0);
 
       // No task/todo/grocery completions at all today...
@@ -192,9 +201,9 @@ describe('Dashboard Service', () => {
       (modelsMock.HouseholdMember.findAll as jest.Mock).mockResolvedValue([
         { userId, user: { displayName: 'Alice', avatarUrl: null, avatarEmoji: null } },
       ]);
-      (taskService.getTaskSummary as jest.Mock).mockResolvedValue({ pending: 0, overdue: 0, completedToday: 0 });
-      (groceryService.getSummary as jest.Mock).mockResolvedValue({ pending: 0, boughtToday: 0 });
-      (todoService.getSummary as jest.Mock).mockResolvedValue({ pending: 0, completedToday: 0 });
+      (taskService.getTaskSummaryForHousehold as jest.Mock).mockResolvedValue({ pending: 0, overdue: 0, completedToday: 0 });
+      (groceryService.getSummaryForHousehold as jest.Mock).mockResolvedValue({ pending: 0, boughtToday: 0 });
+      (todoService.getSummaryForHousehold as jest.Mock).mockResolvedValue({ pending: 0, completedToday: 0 });
       (notificationService.getUnreadCount as jest.Mock).mockResolvedValue(0);
 
       (modelsMock.Task.findAll as jest.Mock).mockResolvedValue([]);
@@ -215,9 +224,9 @@ describe('Dashboard Service', () => {
         { userId, user: { displayName: 'Alice', avatarUrl: null, avatarEmoji: null } },
         { userId: otherUserId, user: { displayName: 'Bhim', avatarUrl: null, avatarEmoji: null } },
       ]);
-      (taskService.getTaskSummary as jest.Mock).mockResolvedValue({ pending: 0, overdue: 0, completedToday: 0 });
-      (groceryService.getSummary as jest.Mock).mockResolvedValue({ pending: 0, boughtToday: 0 });
-      (todoService.getSummary as jest.Mock).mockResolvedValue({ pending: 0, completedToday: 0 });
+      (taskService.getTaskSummaryForHousehold as jest.Mock).mockResolvedValue({ pending: 0, overdue: 0, completedToday: 0 });
+      (groceryService.getSummaryForHousehold as jest.Mock).mockResolvedValue({ pending: 0, boughtToday: 0 });
+      (todoService.getSummaryForHousehold as jest.Mock).mockResolvedValue({ pending: 0, completedToday: 0 });
       (notificationService.getUnreadCount as jest.Mock).mockResolvedValue(0);
 
       (modelsMock.Task.findAll as jest.Mock).mockResolvedValue([]);
@@ -260,9 +269,9 @@ describe('Dashboard Service', () => {
       (modelsMock.HouseholdMember.findAll as jest.Mock).mockResolvedValue([
         { userId, user: { displayName: 'Alice', avatarUrl: null, avatarEmoji: null } },
       ]);
-      (taskService.getTaskSummary as jest.Mock).mockResolvedValue({ pending: 0, overdue: 0, completedToday: 0 });
-      (groceryService.getSummary as jest.Mock).mockResolvedValue({ pending: 0, boughtToday: 0 });
-      (todoService.getSummary as jest.Mock).mockResolvedValue({ pending: 0, completedToday: 0 });
+      (taskService.getTaskSummaryForHousehold as jest.Mock).mockResolvedValue({ pending: 0, overdue: 0, completedToday: 0 });
+      (groceryService.getSummaryForHousehold as jest.Mock).mockResolvedValue({ pending: 0, boughtToday: 0 });
+      (todoService.getSummaryForHousehold as jest.Mock).mockResolvedValue({ pending: 0, completedToday: 0 });
       (notificationService.getUnreadCount as jest.Mock).mockResolvedValue(0);
 
       // Household is in Los Angeles.
@@ -302,9 +311,9 @@ describe('Dashboard Service', () => {
       (modelsMock.HouseholdMember.findAll as jest.Mock).mockResolvedValue([
         { userId, user: { displayName: 'Alice', avatarUrl: null, avatarEmoji: null } },
       ]);
-      (taskService.getTaskSummary as jest.Mock).mockResolvedValue({ pending: 0, overdue: 0, completedToday: 0 });
-      (groceryService.getSummary as jest.Mock).mockResolvedValue({ pending: 0, boughtToday: 0 });
-      (todoService.getSummary as jest.Mock).mockResolvedValue({ pending: 0, completedToday: 0 });
+      (taskService.getTaskSummaryForHousehold as jest.Mock).mockResolvedValue({ pending: 0, overdue: 0, completedToday: 0 });
+      (groceryService.getSummaryForHousehold as jest.Mock).mockResolvedValue({ pending: 0, boughtToday: 0 });
+      (todoService.getSummaryForHousehold as jest.Mock).mockResolvedValue({ pending: 0, completedToday: 0 });
       (notificationService.getUnreadCount as jest.Mock).mockResolvedValue(0);
       // Stored timezone is still the UTC default — a legacy household.
       (modelsMock.Household.findByPk as jest.Mock).mockResolvedValue({ timezone: 'UTC' });
@@ -325,9 +334,9 @@ describe('Dashboard Service', () => {
       (modelsMock.HouseholdMember.findAll as jest.Mock).mockResolvedValue([
         { userId, user: { displayName: 'Alice', avatarUrl: null, avatarEmoji: null } },
       ]);
-      (taskService.getTaskSummary as jest.Mock).mockResolvedValue({ pending: 0, overdue: 0, completedToday: 0 });
-      (groceryService.getSummary as jest.Mock).mockResolvedValue({ pending: 0, boughtToday: 0 });
-      (todoService.getSummary as jest.Mock).mockResolvedValue({ pending: 0, completedToday: 0 });
+      (taskService.getTaskSummaryForHousehold as jest.Mock).mockResolvedValue({ pending: 0, overdue: 0, completedToday: 0 });
+      (groceryService.getSummaryForHousehold as jest.Mock).mockResolvedValue({ pending: 0, boughtToday: 0 });
+      (todoService.getSummaryForHousehold as jest.Mock).mockResolvedValue({ pending: 0, completedToday: 0 });
       (notificationService.getUnreadCount as jest.Mock).mockResolvedValue(0);
       (modelsMock.Household.findByPk as jest.Mock).mockResolvedValue({ timezone: 'UTC' });
       (modelsMock.Task.findAll as jest.Mock).mockResolvedValue([]);
@@ -336,6 +345,72 @@ describe('Dashboard Service', () => {
 
       await expect(getDashboard(userId, 'not/a-real-zone')).resolves.toBeDefined();
       expect(modelsMock.Household.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('dashboard cache', () => {
+    function stubFreshComputation() {
+      (modelsMock.HouseholdMember.findOne as jest.Mock).mockResolvedValue({ householdId });
+      (modelsMock.HouseholdMember.findAll as jest.Mock).mockResolvedValue([
+        { userId, user: { displayName: 'Alice', avatarUrl: null, avatarEmoji: null } },
+      ]);
+      (taskService.getTaskSummaryForHousehold as jest.Mock).mockResolvedValue({ pending: 1, overdue: 0, completedToday: 0 });
+      (groceryService.getSummaryForHousehold as jest.Mock).mockResolvedValue({ pending: 2, boughtToday: 0 });
+      (todoService.getSummaryForHousehold as jest.Mock).mockResolvedValue({ pending: 3, completedToday: 0 });
+      (notificationService.getUnreadCount as jest.Mock).mockResolvedValue(0);
+      (modelsMock.Task.findAll as jest.Mock).mockResolvedValue([]);
+      (modelsMock.TodoItem.findAll as jest.Mock).mockResolvedValue([]);
+      (modelsMock.GroceryItem.findAll as jest.Mock).mockResolvedValue([]);
+    }
+
+    it('computes fresh and writes through to Redis on a cache miss', async () => {
+      (redis.get as jest.Mock).mockResolvedValue(null);
+      stubFreshComputation();
+
+      const result = await getDashboard(userId);
+
+      expect(result.tasks).toEqual({ pending: 1, overdue: 0, completedToday: 0 });
+      expect(taskService.getTaskSummaryForHousehold).toHaveBeenCalledWith(householdId);
+      expect(redis.setex).toHaveBeenCalledWith(
+        `dashboard:${householdId}`,
+        expect.any(Number),
+        expect.any(String),
+      );
+    });
+
+    it('skips recomputation on a cache hit, but still refreshes the per-user unread count', async () => {
+      const cached = {
+        tasks: { pending: 9, overdue: 9, completedToday: 9 },
+        groceries: { pending: 9 },
+        todos: { pending: 9, completedToday: 9 },
+        expenseTotals: { totalExpenses: 0, totalAmount: 0 },
+        netBalances: [{ userId, displayName: 'Alice', avatarUrl: null, avatarEmoji: null, paidTotal: 0, shareTotal: 0, netBalance: 42 }],
+        activity: [],
+        streak: { current: 0, best: 0 },
+        leaderboard: [],
+        recentActivity: [],
+      };
+      (redis.get as jest.Mock).mockResolvedValue(JSON.stringify(cached));
+      (modelsMock.HouseholdMember.findOne as jest.Mock).mockResolvedValue({ householdId });
+      (notificationService.getUnreadCount as jest.Mock).mockResolvedValue(7);
+
+      const result = await getDashboard(userId);
+
+      expect(result.tasks).toEqual({ pending: 9, overdue: 9, completedToday: 9 });
+      expect(result.notifications).toEqual({ unreadCount: 7 });
+      expect(result.expenses.myBalance).toBe(42);
+      expect(taskService.getTaskSummaryForHousehold).not.toHaveBeenCalled();
+      expect(redis.setex).not.toHaveBeenCalled();
+    });
+
+    it('falls back to a fresh computation if Redis read fails', async () => {
+      (redis.get as jest.Mock).mockRejectedValue(new Error('connection refused'));
+      stubFreshComputation();
+
+      const result = await getDashboard(userId);
+
+      expect(result.tasks).toEqual({ pending: 1, overdue: 0, completedToday: 0 });
+      expect(taskService.getTaskSummaryForHousehold).toHaveBeenCalled();
     });
   });
 

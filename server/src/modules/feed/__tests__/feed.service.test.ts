@@ -11,6 +11,7 @@ import {
   getComments,
 } from '../service';
 import * as models from '../../../database/models';
+import sequelize from '../../../config/database';
 
 // ── Mocks ──
 
@@ -26,6 +27,15 @@ const otherUserId = '660e8400-e29b-41d4-a716-446655440002';
 const householdId = '770e8400-e29b-41d4-a716-446655440003';
 const postId = '880e8400-e29b-41d4-a716-446655440004';
 const commentId = '990e8400-e29b-41d4-a716-446655440005';
+
+jest.mock('../../../config/database', () => ({
+  __esModule: true,
+  default: {
+    query: jest.fn().mockResolvedValue([]),
+    fn: jest.fn((name: string) => name),
+    col: jest.fn((name: string) => name),
+  },
+}));
 
 jest.mock('../../../database/models', () => {
   const mockSequelize = {
@@ -213,6 +223,34 @@ describe('Feed Service', () => {
       expect(result.posts).toHaveLength(20);
       expect(result.hasMore).toBe(true);
       expect(result.nextCursor).toBe('post-19');
+    });
+
+    it('attaches each post\'s first comment as previewComment from one query', async () => {
+      const querySpy = sequelize.query as unknown as jest.Mock;
+      querySpy.mockClear();
+      (modelsMock.HouseholdMember.findOne as jest.Mock).mockResolvedValue({
+        householdId,
+      });
+      (modelsMock.FeedPost.findAll as jest.Mock).mockResolvedValue([
+        fakePost({ id: 'post-a' }),
+        fakePost({ id: 'post-b' }),
+      ]);
+      (modelsMock.FeedLike.findAll as jest.Mock).mockResolvedValue([]);
+      (modelsMock.FeedComment.findAll as jest.Mock).mockResolvedValue([]);
+      querySpy.mockResolvedValueOnce([
+        { postId: 'post-a', id: 'c1', content: 'first!', authorName: 'Asha' },
+        { postId: 'post-a', id: 'c2', content: 'same instant', authorName: 'Ram' },
+      ]);
+
+      const result = await getFeed(mockUser.id, { limit: 20 });
+
+      expect(querySpy).toHaveBeenCalledTimes(1);
+      expect(result.posts[0].previewComment).toEqual({
+        id: 'c1',
+        content: 'first!',
+        author: { displayName: 'Asha' },
+      });
+      expect(result.posts[1].previewComment).toBeNull();
     });
   });
 

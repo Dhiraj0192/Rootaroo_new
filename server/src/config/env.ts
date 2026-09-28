@@ -73,6 +73,17 @@ export const env = {
     useSsl: process.env.S3_USE_SSL === 'true',
   },
 
+  // CloudFront CDN in front of the S3 bucket. When all three are set, media
+  // links are CloudFront-signed URLs served from edge locations near the
+  // user instead of S3-presigned URLs that always go to the bucket's region.
+  // Unset (local dev, MinIO) falls back to plain S3 presigning. The private
+  // key is a PEM; newlines may be stored escaped as "\n" in the env var.
+  cloudfront: {
+    domain: process.env.CLOUDFRONT_DOMAIN || '',
+    keyPairId: process.env.CLOUDFRONT_KEY_PAIR_ID || '',
+    privateKey: (process.env.CLOUDFRONT_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
+  },
+
   // Resend (transactional email — verification codes, password resets,
   // admin alerts). Gmail SMTP was replaced here: its port 587 is
   // unreachable from Railway's network (connections just time out), and

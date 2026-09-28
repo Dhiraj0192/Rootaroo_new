@@ -20,6 +20,8 @@ import * as todoService from '../todo/service';
 import * as expenseService from '../expense/service';
 import * as notificationService from '../notification/service';
 import logger from '../../shared/utils/logger';
+import redis from '../../config/redis';
+import type { NetBalanceResponse } from '../expense/types';
 import type {
   DashboardResponse,
   DashboardActivity,
@@ -28,6 +30,31 @@ import type {
   RecentActivityKind,
   StreakInfo,
 } from './types';
+
+// Everything in the dashboard response EXCEPT the two genuinely per-user
+// fields (unreadCount, myBalance) is identical for every member of the same
+// household — cache it here, shared across the whole household, rather
+// than recomputing it (several unbounded-ish aggregate queries plus a
+// 60-day engagement scan) on every single member's every dashboard load.
+// netBalances is cached too so myBalance can be looked up per-user from it
+// without re-running the expense ledger computation on a cache hit.
+interface CachedDashboardShared {
+  tasks: DashboardResponse['tasks'];
+  groceries: DashboardResponse['groceries'];
+  todos: DashboardResponse['todos'];
+  expenseTotals: { totalExpenses: number; totalAmount: number };
+  netBalances: NetBalanceResponse[];
+  activity: DashboardActivity[];
+  streak: StreakInfo;
+  leaderboard: LeaderboardEntry[];
+  recentActivity: RecentActivityItem[];
+}
+
+const DASHBOARD_CACHE_TTL_SECONDS = 25;
+
+function dashboardCacheKey(householdId: string): string {
+  return `dashboard:${householdId}`;
+}
 
 const ACTIVITY_DAYS = 7;
 const STREAK_WINDOW_DAYS = 60;
@@ -77,19 +104,16 @@ function isValidTimeZone(tz: string): boolean {
   }
 }
 
-export async function getDashboard(
-  userId: string,
+async function computeSharedDashboard(
+  householdId: string,
   clientTimeZone?: string,
-): Promise<DashboardResponse> {
-  const householdId = await getUserHousehold(userId);
-
-  const [taskSummary, grocerySummary, todoSummary, expenseSummary, unreadCount, members, household] =
+): Promise<CachedDashboardShared> {
+  const [taskSummary, grocerySummary, todoSummary, expenseSummary, members, household] =
     await Promise.all([
-      taskService.getTaskSummary(userId),
-      groceryService.getSummary(userId),
-      todoService.getSummary(userId),
-      expenseService.getExpenseSummary(userId).catch(() => null),
-      notificationService.getUnreadCount(userId),
+      taskService.getTaskSummaryForHousehold(householdId),
+      groceryService.getSummaryForHousehold(householdId),
+      todoService.getSummaryForHousehold(householdId),
+      expenseService.getExpenseSummaryForHousehold(householdId).catch(() => null),
       HouseholdMember.findAll({
         where: { householdId },
         include: [{ model: User, as: 'user' }],
@@ -109,10 +133,6 @@ export async function getDashboard(
     );
   }
 
-  const myBalance = expenseSummary
-    ? expenseSummary.netBalances.find((nb) => nb.userId === userId)?.netBalance || 0
-    : 0;
-
   const { activity, streak, leaderboard, recentActivity } = await computeEngagement(
     householdId,
     members,
@@ -125,25 +145,65 @@ export async function getDashboard(
       overdue: taskSummary.overdue,
       completedToday: taskSummary.completedToday,
     },
-    groceries: {
-      pending: grocerySummary.pending,
-    },
-    todos: {
-      pending: todoSummary.pending,
-      completedToday: todoSummary.completedToday,
-    },
-    expenses: {
+    groceries: { pending: grocerySummary.pending },
+    todos: { pending: todoSummary.pending, completedToday: todoSummary.completedToday },
+    expenseTotals: {
       totalExpenses: expenseSummary?.totalExpenses || 0,
       totalAmount: expenseSummary?.totalAmount || 0,
-      myBalance,
     },
-    notifications: {
-      unreadCount,
-    },
+    netBalances: expenseSummary?.netBalances || [],
     activity,
     streak,
     leaderboard,
     recentActivity,
+  };
+}
+
+export async function getDashboard(
+  userId: string,
+  clientTimeZone?: string,
+): Promise<DashboardResponse> {
+  const householdId = await getUserHousehold(userId);
+  const cacheKey = dashboardCacheKey(householdId);
+
+  // unreadCount is genuinely per-user (not shared across the household) and
+  // cheap (one indexed count) — always compute it fresh, cache or no cache.
+  const [unreadCount, cachedRaw] = await Promise.all([
+    notificationService.getUnreadCount(userId),
+    redis.get(cacheKey).catch((e: Error) => {
+      logger.warn('[Dashboard] Redis read failed:', e.message);
+      return null;
+    }),
+  ]);
+
+  let shared: CachedDashboardShared | null = null;
+  if (cachedRaw) {
+    try {
+      shared = JSON.parse(cachedRaw);
+    } catch {
+      shared = null;
+    }
+  }
+
+  if (!shared) {
+    shared = await computeSharedDashboard(householdId, clientTimeZone);
+    redis
+      .setex(cacheKey, DASHBOARD_CACHE_TTL_SECONDS, JSON.stringify(shared))
+      .catch((e: Error) => logger.warn('[Dashboard] Redis write failed:', e.message));
+  }
+
+  const myBalance = shared.netBalances.find((nb) => nb.userId === userId)?.netBalance || 0;
+
+  return {
+    tasks: shared.tasks,
+    groceries: shared.groceries,
+    todos: shared.todos,
+    expenses: { ...shared.expenseTotals, myBalance },
+    notifications: { unreadCount },
+    activity: shared.activity,
+    streak: shared.streak,
+    leaderboard: shared.leaderboard,
+    recentActivity: shared.recentActivity,
   };
 }
 
