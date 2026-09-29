@@ -55,6 +55,7 @@ import TaskDetailScreen from '../screens/TaskDetailScreen';
 import CreateTaskScreen from '../screens/CreateTaskScreen';
 
 import GroceryListScreen from '../screens/GroceryListScreen';
+import TodoListScreen from '../screens/TodoListScreen';
 import NotificationScreen from '../screens/NotificationScreen';
 import NotificationPreferencesScreen from '../screens/NotificationPreferencesScreen';
 import ExpenseListScreen from '../screens/ExpenseListScreen';
@@ -150,6 +151,7 @@ function MoreNavigator() {
       <MoreNav.Screen name="MoreIndex" component={MoreScreen} />
       <MoreNav.Screen name="HouseholdSettings" component={HouseholdSettingsScreen} />
       <MoreNav.Screen name="GroceryList" component={GroceryListScreen} />
+      <MoreNav.Screen name="TodoList" component={TodoListScreen} />
       <MoreNav.Screen
         name="CreateExpense"
         component={CreateExpenseScreen}

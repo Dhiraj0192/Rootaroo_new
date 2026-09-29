@@ -30,6 +30,7 @@ function fakeItem(overrides: any = {}) {
     householdId,
     title: 'Buy milk',
     dueDate: new Date('2026-07-25'),
+    dueTime: null,
     assignedTo: null,
     isCompleted: false,
     completedAt: null,
@@ -62,6 +63,28 @@ describe('Todo Service', () => {
       expect(result.isCompleted).toBe(false);
     });
 
+    it('stores the due time and returns it as HH:MM', async () => {
+      (modelsMock.HouseholdMember.findOne as jest.Mock).mockResolvedValue({ householdId });
+      (modelsMock.TodoItem.create as jest.Mock).mockResolvedValue(fakeItem());
+      (modelsMock.TodoItem.findByPk as jest.Mock).mockResolvedValue(fakeItem({ dueTime: '08:30:00' }));
+
+      const result = await createItem(userId, { title: 'Buy milk', dueDate: '2026-07-25', dueTime: '08:30' });
+
+      expect((modelsMock.TodoItem.create as jest.Mock).mock.calls[0][0].dueTime).toBe('08:30');
+      expect(result.dueTime).toBe('08:30');
+    });
+
+    it('returns null dueTime when none is set', async () => {
+      (modelsMock.HouseholdMember.findOne as jest.Mock).mockResolvedValue({ householdId });
+      (modelsMock.TodoItem.create as jest.Mock).mockResolvedValue(fakeItem());
+      (modelsMock.TodoItem.findByPk as jest.Mock).mockResolvedValue(fakeItem());
+
+      const result = await createItem(userId, { title: 'Buy milk' });
+
+      expect((modelsMock.TodoItem.create as jest.Mock).mock.calls[0][0].dueTime).toBeNull();
+      expect(result.dueTime).toBeNull();
+    });
+
     it('throws if no household', async () => {
       (modelsMock.HouseholdMember.findOne as jest.Mock).mockResolvedValue(null);
       await expect(createItem(userId, { title: 'Test' })).rejects.toThrow('belong to a household');
@@ -92,6 +115,27 @@ describe('Todo Service', () => {
       await updateItem(itemId, userId, 'admin', { title: 'Updated' });
       expect(item.title).toBe('Updated');
       expect(item.save).toHaveBeenCalled();
+    });
+
+    it('sets and clears the due time', async () => {
+      (modelsMock.HouseholdMember.findOne as jest.Mock).mockResolvedValue({ householdId });
+      const item = fakeItem();
+      (modelsMock.TodoItem.findOne as jest.Mock).mockResolvedValue(item);
+
+      await updateItem(itemId, userId, 'admin', { dueTime: '16:30' });
+      expect(item.dueTime).toBe('16:30');
+
+      await updateItem(itemId, userId, 'admin', { dueTime: null });
+      expect(item.dueTime).toBeNull();
+    });
+
+    it('leaves the due time alone when not sent', async () => {
+      (modelsMock.HouseholdMember.findOne as jest.Mock).mockResolvedValue({ householdId });
+      const item = fakeItem({ dueTime: '09:00:00' });
+      (modelsMock.TodoItem.findOne as jest.Mock).mockResolvedValue(item);
+
+      await updateItem(itemId, userId, 'admin', { title: 'Renamed' });
+      expect(item.dueTime).toBe('09:00:00');
     });
   });
 
