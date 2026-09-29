@@ -5,15 +5,13 @@ import {
   StyleSheet,
   TouchableOpacity,
   ActivityIndicator,
-  KeyboardAvoidingView,
   Platform,
-  ScrollView,
   StatusBar,
 } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, fonts, goldButton } from '../../shared/theme';
-import { KEYBOARD_BEHAVIOR } from './KeyboardAware';
+import { KeyboardFooterScreen } from './KeyboardAware';
 import { GoldFill } from './GoldButton';
 
 /**
@@ -39,74 +37,68 @@ export default function SignupWizardShell({
   return (
     <View style={styles.root}>
       <StatusBar barStyle="light-content" backgroundColor={colors.bgApp} />
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={KEYBOARD_BEHAVIOR}
-      >
-        <ScrollView
-          contentContainerStyle={[
-            styles.scroll,
-            {
-              paddingTop: insets.top + (Platform.OS === 'ios' ? 8 : 16),
-              paddingBottom: Math.max(insets.bottom, 16) + 12,
-            },
-          ]}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
-          {/* Top bar: back chevron + 7-segment progress */}
-          <View style={styles.topbar}>
-            {onBack ? (
-              <TouchableOpacity
-                onPress={onBack}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                style={styles.backBtn}
-              >
-                <Svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                  <Path
-                    d="M15 5l-7 7 7 7"
-                    stroke={colors.textPrimary}
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </Svg>
-              </TouchableOpacity>
+      {/* Continue lives in a fixed footer outside the scroller, so it rests
+          in the same spot before and after the keyboard (see
+          KeyboardFooterScreen). */}
+      <KeyboardFooterScreen
+        contentContainerStyle={[
+          styles.scroll,
+          { paddingTop: insets.top + (Platform.OS === 'ios' ? 8 : 16) },
+        ]}
+        footerStyle={styles.footer}
+        footer={
+          <TouchableOpacity
+            style={[styles.cta, (continueDisabled || loading) && styles.ctaOff]}
+            onPress={onContinue}
+            disabled={continueDisabled || loading}
+            activeOpacity={0.85}
+          >
+            <GoldFill radius={27} disabled={continueDisabled || loading} />
+            {loading ? (
+              <ActivityIndicator color={colors.onAccent} />
             ) : (
-              <View style={styles.backBtn} />
+              <Text style={[styles.ctaText, (continueDisabled || loading) && styles.ctaTextOff]}>
+                {continueLabel}
+              </Text>
             )}
-            <View style={styles.progress}>
-              {Array.from({ length: totalSteps }).map((_, i) => (
-                <View key={i} style={[styles.seg, i < step && styles.segOn]} />
-              ))}
-            </View>
-          </View>
-
-          <View style={{paddingHorizontal: 10}}><Text style={styles.heading}>{title}</Text>
-          {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
-
-          <View style={styles.body}>{children}</View>
-
-          </View>
-          <View style={styles.footer}>
+          </TouchableOpacity>
+        }
+      >
+        {/* Top bar: back chevron + 7-segment progress */}
+        <View style={styles.topbar}>
+          {onBack ? (
             <TouchableOpacity
-              style={[styles.cta, (continueDisabled || loading) && styles.ctaOff]}
-              onPress={onContinue}
-              disabled={continueDisabled || loading}
-              activeOpacity={0.85}
+              onPress={onBack}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              style={styles.backBtn}
             >
-              <GoldFill radius={27} disabled={continueDisabled || loading} />
-              {loading ? (
-                <ActivityIndicator color={colors.onAccent} />
-              ) : (
-                <Text style={[styles.ctaText, (continueDisabled || loading) && styles.ctaTextOff]}>
-                  {continueLabel}
-                </Text>
-              )}
+              <Svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                <Path
+                  d="M15 5l-7 7 7 7"
+                  stroke={colors.textPrimary}
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </Svg>
             </TouchableOpacity>
+          ) : (
+            <View style={styles.backBtn} />
+          )}
+          <View style={styles.progress}>
+            {Array.from({ length: totalSteps }).map((_, i) => (
+              <View key={i} style={[styles.seg, i < step && styles.segOn]} />
+            ))}
           </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
+        </View>
+
+        <View style={{paddingHorizontal: 10}}><Text style={styles.heading}>{title}</Text>
+        {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+
+        <View style={styles.body}>{children}</View>
+
+        </View>
+      </KeyboardFooterScreen>
     </View>
   );
 }
@@ -114,11 +106,9 @@ export default function SignupWizardShell({
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bgApp },
 
-  flex: { flex: 1 },
-
   scroll: {
-    flexGrow: 1,
     paddingHorizontal: 24,
+    paddingBottom: 16,
   },
 
   topbar: {
@@ -180,8 +170,8 @@ const styles = StyleSheet.create({
   },
 
   footer: {
-    marginTop: 'auto',
-    paddingTop: 24,
+    paddingHorizontal: 24,
+    paddingTop: 12,
   },
 
   cta: {

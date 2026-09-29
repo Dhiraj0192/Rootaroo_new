@@ -6,17 +6,16 @@ import {
   StatusBar,
   TextInput,
   TouchableOpacity,
-  KeyboardAvoidingView,
-  ScrollView,
   ActivityIndicator,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { showAlert } from '../shared/services/themedAlert';
 import Svg, { Path } from 'react-native-svg';
 import { authApi, storePendingAuthResponse } from '../shared/api/auth';
 import { startEmailSignupProgress } from '../shared/navigation/postAuthNavigation';
 import { colors, fonts, goldButton, radius } from '../shared/theme';
 import { GoldFill } from '../shared/components/GoldButton';
-import { KEYBOARD_BEHAVIOR } from '../shared/components/KeyboardAware';
+import { KeyboardFooterScreen } from '../shared/components/KeyboardAware';
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /* Back chevron — matches rootaro_signup_validation.html (20x20, stroke 2, ink) */
@@ -50,6 +49,7 @@ function FieldError({ text }) {
   );
 }
 export default function SignUpScreen({ navigation }) {
+  const insets = useSafeAreaInsets();
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
@@ -102,101 +102,12 @@ export default function SignUpScreen({ navigation }) {
     <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor={colors.bgApp} />
 
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={KEYBOARD_BEHAVIOR}
-      >
-        <ScrollView
-          contentContainerStyle={styles.scroll}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
-          {/* Header: back chevron only (matches ref) */}
-          <View style={styles.header}>
-            <TouchableOpacity
-              onPress={() => navigation.goBack()}
-              hitSlop={{
-                top: 10,
-                bottom: 10,
-                left: 20,
-                right: 20,
-              }}
-              style={styles.backBtn}
-            >
-              <BackChevron />
-            </TouchableOpacity>
-          </View>
-
-          {/* Title + subtitle */}
-          <Text style={styles.title}>Set up your login</Text>
-          <Text style={styles.subtitle}>We'll use this to keep your Rootaroo account secure.</Text>
-
-          {/* Fields */}
-          <View style={styles.form}>
-            <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Email</Text>
-              <TextInput
-                style={[styles.input, emailBorder]}
-                value={email}
-                onChangeText={setEmail}
-                placeholder="sara@email.com"
-                placeholderTextColor={colors.placeholderWarm}
-                autoCapitalize="none"
-                keyboardType="email-address"
-                autoCorrect={false}
-                onFocus={() => setFocusedField('email')}
-                onBlur={() => setFocusedField(null)}
-              />
-              {emailError ? <FieldError text={emailError} /> : null}
-            </View>
-
-            <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Phone</Text>
-              <TextInput
-                style={[styles.input, phoneBorder]}
-                value={phone}
-                onChangeText={setPhone}
-                placeholder="(555) 010-0192"
-                placeholderTextColor={colors.placeholderWarm}
-                keyboardType="phone-pad"
-                onFocus={() => setFocusedField('phone')}
-                onBlur={() => setFocusedField(null)}
-              />
-            </View>
-
-            <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Password</Text>
-              <View style={[styles.inputRow, pwBorder]}>
-                <TextInput
-                  style={styles.inputRowInner}
-                  value={password}
-                  onChangeText={setPassword}
-                  placeholder="••••••••"
-                  placeholderTextColor={colors.placeholderWarm}
-                  secureTextEntry={!showPw}
-                  onFocus={() => setFocusedField('password')}
-                  onBlur={() => setFocusedField(null)}
-                />
-                <TouchableOpacity
-                  style={styles.eyeBtn}
-                  onPress={() => setShowPw(!showPw)}
-                  hitSlop={{
-                    top: 8,
-                    bottom: 8,
-                    left: 8,
-                    right: 8,
-                  }}
-                >
-                  <Text style={styles.eyeText}>{showPw ? 'Hide' : 'Show'}</Text>
-                </TouchableOpacity>
-              </View>
-              {passwordError ? <FieldError text={passwordError} /> : null}
-            </View>
-          </View>
-        </ScrollView>
-
-        {/* Fixed CTA — disabled gray until valid, then ink pill (matches ref) */}
-        <View style={styles.ctaArea}>
+      {/* Fixed CTA outside the scroller — rests in the same spot before and
+          after the keyboard (see KeyboardFooterScreen). */}
+      <KeyboardFooterScreen
+        contentContainerStyle={[styles.scroll, { paddingTop: insets.top + 8 }]}
+        footerStyle={styles.ctaArea}
+        footer={
           <TouchableOpacity
             style={[styles.ctaButton, !canContinue && styles.ctaButtonDisabled]}
             onPress={handleContinue}
@@ -210,8 +121,91 @@ export default function SignUpScreen({ navigation }) {
               <Text style={[styles.ctaText, !canContinue && styles.ctaTextDisabled]}>Continue</Text>
             )}
           </TouchableOpacity>
+        }
+      >
+        {/* Header: back chevron only (matches ref) */}
+        <View style={styles.header}>
+          <TouchableOpacity
+            onPress={() => navigation.goBack()}
+            hitSlop={{
+              top: 10,
+              bottom: 10,
+              left: 20,
+              right: 20,
+            }}
+            style={styles.backBtn}
+          >
+            <BackChevron />
+          </TouchableOpacity>
         </View>
-      </KeyboardAvoidingView>
+
+        {/* Title + subtitle */}
+        <Text style={styles.title}>Set up your login</Text>
+        <Text style={styles.subtitle}>We'll use this to keep your Rootaroo account secure.</Text>
+
+        {/* Fields */}
+        <View style={styles.form}>
+          <View style={styles.fieldGroup}>
+            <Text style={styles.label}>Email</Text>
+            <TextInput
+              style={[styles.input, emailBorder]}
+              value={email}
+              onChangeText={setEmail}
+              placeholder="sara@email.com"
+              placeholderTextColor={colors.placeholderWarm}
+              autoCapitalize="none"
+              keyboardType="email-address"
+              autoCorrect={false}
+              onFocus={() => setFocusedField('email')}
+              onBlur={() => setFocusedField(null)}
+            />
+            {emailError ? <FieldError text={emailError} /> : null}
+          </View>
+
+          <View style={styles.fieldGroup}>
+            <Text style={styles.label}>Phone</Text>
+            <TextInput
+              style={[styles.input, phoneBorder]}
+              value={phone}
+              onChangeText={setPhone}
+              placeholder="(555) 010-0192"
+              placeholderTextColor={colors.placeholderWarm}
+              keyboardType="phone-pad"
+              onFocus={() => setFocusedField('phone')}
+              onBlur={() => setFocusedField(null)}
+            />
+          </View>
+
+          <View style={styles.fieldGroup}>
+            <Text style={styles.label}>Password</Text>
+            <View style={[styles.inputRow, pwBorder]}>
+              <TextInput
+                style={styles.inputRowInner}
+                value={password}
+                onChangeText={setPassword}
+                placeholder="••••••••"
+                placeholderTextColor={colors.placeholderWarm}
+                secureTextEntry={!showPw}
+                onFocus={() => setFocusedField('password')}
+                onBlur={() => setFocusedField(null)}
+              />
+              <TouchableOpacity
+                style={styles.eyeBtn}
+                onPress={() => setShowPw(!showPw)}
+                hitSlop={{
+                  top: 8,
+                  bottom: 8,
+                  left: 8,
+                  right: 8,
+                }}
+              >
+                <Text style={styles.eyeText}>{showPw ? 'Hide' : 'Show'}</Text>
+              </TouchableOpacity>
+            </View>
+            {passwordError ? <FieldError text={passwordError} /> : null}
+          </View>
+        </View>
+      </KeyboardFooterScreen>
     </View>
   );
 }
@@ -220,11 +214,7 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.bgApp,
   },
-  flex: {
-    flex: 1,
-  },
   scroll: {
-    flexGrow: 1,
     paddingHorizontal: 24,
     paddingBottom: 24,
   },
@@ -326,7 +316,7 @@ const styles = StyleSheet.create({
   },
   ctaArea: {
     paddingHorizontal: 24,
-    paddingBottom: 32,
+    paddingTop: 12,
   },
   ctaButton: {
     width: '100%',

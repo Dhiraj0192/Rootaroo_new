@@ -6,9 +6,6 @@ import {
   TextInput,
   TouchableOpacity,
   StatusBar,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
   ActivityIndicator,
   FlatList,
   Modal,
@@ -19,7 +16,8 @@ import Svg, { Path } from 'react-native-svg';
 import { authApi } from '../shared/api/auth';
 import { colors, fonts, goldButton, radius, withAlpha } from '../shared/theme';
 import { GoldFill } from '../shared/components/GoldButton';
-import { KEYBOARD_BEHAVIOR } from '../shared/components/KeyboardAware';
+import { KeyboardFooterScreen } from '../shared/components/KeyboardAware';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 const COUNTRY_CODES = [
   {
     code: '+91',
@@ -118,6 +116,7 @@ const COUNTRY_CODES = [
   },
 ];
 export default function PhoneSignUpScreen({ navigation }) {
+  const insets = useSafeAreaInsets();
   const [selectedCountry, setSelectedCountry] = useState(
     COUNTRY_CODES.find((c) => c.code === '+1' && c.name === 'United States') ?? COUNTRY_CODES[0],
   );
@@ -152,15 +151,46 @@ export default function PhoneSignUpScreen({ navigation }) {
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor={colors.bgApp} />
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={KEYBOARD_BEHAVIOR}
+      {/* CTA + links in a fixed footer outside the scroller — rests in the
+          same spot before and after the keyboard (see KeyboardFooterScreen). */}
+      <KeyboardFooterScreen
+        contentContainerStyle={[styles.scroll, { paddingTop: insets.top + 16 }]}
+        footerStyle={styles.footer}
+        footer={
+          <>
+          <TouchableOpacity
+            style={[styles.primaryBtn, loading && styles.primaryBtnDisabled]}
+            onPress={handleSendOtp}
+            activeOpacity={0.85}
+            disabled={loading}
+          >
+            <GoldFill radius={27} disabled={loading} />
+            {loading ? (
+              <ActivityIndicator color={colors.onAccent} />
+            ) : (
+              <Text style={styles.primaryText}>Send OTP</Text>
+            )}
+          </TouchableOpacity>
+
+          <Text style={styles.note}>Standard SMS rates may apply.</Text>
+
+          <View style={styles.bottomLink}>
+            <Text style={styles.linkMuted}>Already a member? </Text>
+            <TouchableOpacity
+              onPress={() => navigation.navigate('SignIn')}
+              hitSlop={{
+                top: 8,
+                bottom: 8,
+                left: 4,
+                right: 4,
+              }}
+            >
+              <Text style={styles.linkBold}>Sign in</Text>
+            </TouchableOpacity>
+          </View>
+          </>
+        }
       >
-        <ScrollView
-          contentContainerStyle={styles.scroll}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
           {/* Top bar: back chevron + 7-segment progress */}
           <View style={styles.topbar}>
             <TouchableOpacity
@@ -238,41 +268,7 @@ export default function PhoneSignUpScreen({ navigation }) {
             )}
           </View>
 
-          {/* CTA + links pinned to bottom */}
-          <View style={styles.footer}>
-            <TouchableOpacity
-              style={[styles.primaryBtn, loading && styles.primaryBtnDisabled]}
-              onPress={handleSendOtp}
-              activeOpacity={0.85}
-              disabled={loading}
-            >
-              <GoldFill radius={27} disabled={loading} />
-              {loading ? (
-                <ActivityIndicator color={colors.onAccent} />
-              ) : (
-                <Text style={styles.primaryText}>Send OTP</Text>
-              )}
-            </TouchableOpacity>
-
-            <Text style={styles.note}>Standard SMS rates may apply.</Text>
-
-            <View style={styles.bottomLink}>
-              <Text style={styles.linkMuted}>Already a member? </Text>
-              <TouchableOpacity
-                onPress={() => navigation.navigate('SignIn')}
-                hitSlop={{
-                  top: 8,
-                  bottom: 8,
-                  left: 4,
-                  right: 4,
-                }}
-              >
-                <Text style={styles.linkBold}>Sign in</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardFooterScreen>
 
       {/* Country picker — bottom sheet modal */}
       <Modal
@@ -352,18 +348,13 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.bgApp,
   },
-  flex: {
-    flex: 1,
-  },
   scroll: {
-    flexGrow: 1,
-    paddingTop: Platform.OS === 'ios' ? 52 : 36,
     paddingHorizontal: 24,
-    paddingBottom: 36,
+    paddingBottom: 24,
   },
   footer: {
-    marginTop: 'auto',
-    paddingTop: 24,
+    paddingHorizontal: 24,
+    paddingTop: 12,
   },
   // Top bar — back chevron + 7-segment progress (wizard style)
   topbar: {

@@ -1,13 +1,15 @@
-import React from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Keyboard,
+  LayoutAnimation,
   Platform,
   ScrollView,
   StyleSheet,
   TouchableWithoutFeedback,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 /**
  * ═══════════════════════════════════════════════════════════════════
@@ -108,6 +110,77 @@ export function KeyboardAwareScrollView({
         {children}
       </ScrollView>
     </KeyboardAvoider>
+  );
+}
+
+/**
+ * <KeyboardFooterScreen> — a scrolling page with a fixed bottom action
+ * (Continue / Verify / Save) that must sit in the SAME place every time the
+ * keyboard isn't up, and ride just above it when it is.
+ *
+ * Why not KeyboardAvoidingView: in 'height' mode it measures the screen
+ * once, and under edge-to-edge (no window resize) the height it restores
+ * after the keyboard closes isn't the one it started with — so a footer
+ * pinned under it lands somewhere new after the first keystroke. Here the
+ * footer is outside the scroller and only ever moves by the keyboard's
+ * *measured* overlap with this view, which is right whether or not the
+ * window resizes, and goes back to exactly 0 when the keyboard hides.
+ */
+const FOOTER_REST_GAP = 28; // above the nav bar / home indicator
+const FOOTER_KEYBOARD_GAP = 12; // above the keyboard
+
+export function KeyboardFooterScreen({
+  children,
+  footer,
+  style,
+  contentContainerStyle,
+  footerStyle,
+  ...scrollProps
+}) {
+  const insets = useSafeAreaInsets();
+  const rootRef = useRef(null);
+  const [overlap, setOverlap] = useState(0);
+
+  const apply = useCallback((next) => {
+    setOverlap((prev) => {
+      if (Math.abs(prev - next) < 1) return prev;
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const onShow = (e) => {
+      const keyboardTop = e?.endCoordinates?.screenY;
+      if (!rootRef.current || typeof keyboardTop !== 'number') return;
+      rootRef.current.measureInWindow((_x, y, _w, h) => {
+        apply(Math.max(0, y + h - keyboardTop));
+      });
+    };
+    const subs = [
+      Keyboard.addListener(showEvent, onShow),
+      Keyboard.addListener(hideEvent, () => apply(0)),
+    ];
+    return () => subs.forEach((sub) => sub.remove());
+  }, [apply]);
+
+  const footerPad = overlap > 0 ? overlap + FOOTER_KEYBOARD_GAP : insets.bottom + FOOTER_REST_GAP;
+
+  return (
+    <View ref={rootRef} style={[styles.flex, style]} collapsable={false}>
+      <ScrollView
+        style={styles.flex}
+        contentContainerStyle={[styles.grow, contentContainerStyle]}
+        showsVerticalScrollIndicator={false}
+        {...keyboardScrollProps}
+        {...scrollProps}
+      >
+        {children}
+      </ScrollView>
+      {footer ? <View style={[footerStyle, { paddingBottom: footerPad }]}>{footer}</View> : null}
+    </View>
   );
 }
 
