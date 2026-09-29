@@ -42,6 +42,8 @@ function toTodoResponse(item: TodoItem): TodoResponse {
         ? item.dueDate
         : item.dueDate.toISOString().split('T')[0]
       : null,
+    // MySQL TIME comes back as "HH:MM:SS".
+    dueTime: item.dueTime ? item.dueTime.slice(0, 5) : null,
     assignedTo: toAssignee(item.get('assignee') as User | undefined),
     isCompleted: item.isCompleted,
     completedAt: item.completedAt ? item.completedAt.toISOString() : null,
@@ -60,6 +62,7 @@ export async function createItem(
     householdId,
     title: body.title,
     dueDate: body.dueDate ? new Date(body.dueDate) : null,
+    dueTime: body.dueTime || null,
     assignedTo: body.assignedTo || null,
     isCompleted: false,
   });
@@ -133,6 +136,7 @@ export async function updateItem(
   if (body.dueDate !== undefined) {
     item.dueDate = body.dueDate ? new Date(body.dueDate) : null;
   }
+  if (body.dueTime !== undefined) item.dueTime = body.dueTime;
   if (body.assignedTo !== undefined) item.assignedTo = body.assignedTo;
 
   await item.save();

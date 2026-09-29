@@ -71,10 +71,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: GLASS_BORDER,
     padding: 22,
-    shadowColor: colors.navyDark,
-    shadowOffset: { width: 0, height: 18 },
-    shadowOpacity: 0.4,
-    shadowRadius: 40,
-    elevation: 6,
+    // No shadow/elevation: Android draws it through the see-through fill as
+    // a faint inner box.
   },
 });

@@ -135,6 +135,10 @@ export default function MoreScreen({ navigation }) {
           onPress: go('GroceryList'),
         },
         {
+          label: 'To-do List',
+          onPress: go('TodoList'),
+        },
+        {
           label: 'Bills & Splits',
           onPress: go('ExpenseList'),
         },

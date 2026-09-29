@@ -1415,33 +1415,63 @@ export default function DashboardScreen() {
                   </TouchableOpacity>
                 </View>
 
-                {/* ── Grocery ── */}
-                <TouchableOpacity
-                  style={styles.card20}
-                  onPress={() =>
-                    nav.navigate("MoreStack", {
-                      screen: "GroceryList",
-                    })
-                  }
-                  activeOpacity={0.7}
-                >
-                  <CardSheen radius={20} />
-                  <WidgetLabel
-                    style={{
-                      marginBottom: 12,
-                    }}
+                {/* ── Grocery + To-do two-up ── */}
+                <View style={styles.twoUp}>
+                  <TouchableOpacity
+                    style={styles.halfCard}
+                    onPress={() =>
+                      nav.navigate("MoreStack", {
+                        screen: "GroceryList",
+                      })
+                    }
+                    activeOpacity={0.7}
                   >
-                    GROCERY
-                  </WidgetLabel>
-                  <Text style={styles.halfNum}>
-                    {data.groceries.pending} left
-                  </Text>
-                  <Text style={styles.halfMeta}>
-                    {data.groceries.pending > 0
-                      ? `${data.groceries.pending} item${data.groceries.pending > 1 ? "s" : ""} on the list`
-                      : "list is clear"}
-                  </Text>
-                </TouchableOpacity>
+                    <CardSheen radius={20} />
+                    <WidgetLabel
+                      style={{
+                        marginBottom: 12,
+                      }}
+                    >
+                      GROCERY
+                    </WidgetLabel>
+                    <Text style={styles.halfNum} numberOfLines={1} adjustsFontSizeToFit>
+                      {data.groceries.pending} left
+                    </Text>
+                    <Text style={styles.halfMeta} numberOfLines={1}>
+                      {data.groceries.pending > 0
+                        ? `${data.groceries.pending} item${data.groceries.pending > 1 ? "s" : ""} on the list`
+                        : "list is clear"}
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.halfCard}
+                    onPress={() =>
+                      nav.navigate("MoreStack", {
+                        screen: "TodoList",
+                      })
+                    }
+                    activeOpacity={0.7}
+                  >
+                    <CardSheen radius={20} />
+                    <WidgetLabel
+                      style={{
+                        marginBottom: 12,
+                      }}
+                    >
+                      TO-DO
+                    </WidgetLabel>
+                    <Text style={styles.halfNum} numberOfLines={1} adjustsFontSizeToFit>
+                      {data.todos.pending} to do
+                    </Text>
+                    <Text style={styles.halfMeta} numberOfLines={1}>
+                      {data.todos.completedToday > 0
+                        ? `${data.todos.completedToday} done today`
+                        : data.todos.pending === 0
+                          ? "all clear"
+                          : "none done today"}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
 
                 {/* ── Feed + Nudge two-up ── */}
                 <View style={styles.twoUp}>
@@ -1988,37 +2018,15 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.textOnDarkMuted,
   },
-  /* Glass cards */
+  /* Glass cards. No shadow/elevation on purpose: the fill is see-through,
+     and Android draws an elevation shadow through it as a faint inner box
+     (the streak card never had one, which is why only it looked clean). */
   card: {
     backgroundColor: GLASS_FILL,
     borderWidth: 1,
     borderColor: GLASS_BORDER,
     padding: 22,
     marginBottom: 20,
-    shadowColor: colors.navyDark,
-    shadowOffset: {
-      width: 0,
-      height: 18,
-    },
-    shadowOpacity: 0.4,
-    shadowRadius: 40,
-    elevation: 6,
-  },
-  card20: {
-    backgroundColor: GLASS_FILL,
-    borderWidth: 1,
-    borderColor: GLASS_BORDER,
-    borderRadius: 20,
-    padding: 18,
-    marginBottom: 20,
-    shadowColor: colors.navyDark,
-    shadowOffset: {
-      width: 0,
-      height: 18,
-    },
-    shadowOpacity: 0.4,
-    shadowRadius: 40,
-    elevation: 6,
   },
   widgetLabel: {
     fontSize: 11,
@@ -2484,14 +2492,6 @@ const styles = StyleSheet.create({
     borderColor: GLASS_BORDER,
     borderRadius: 20,
     padding: 18,
-    shadowColor: colors.navyDark,
-    shadowOffset: {
-      width: 0,
-      height: 18,
-    },
-    shadowOpacity: 0.4,
-    shadowRadius: 40,
-    elevation: 6,
   },
   halfNum: {
     fontSize: 24,
@@ -2626,14 +2626,6 @@ const styles = StyleSheet.create({
     backgroundColor: withAlpha(colors.goldGlow, 0.07),
     borderWidth: 1,
     borderColor: withAlpha(colors.goldGlow, 0.22),
-    shadowColor: colors.navyDark,
-    shadowOffset: {
-      width: 0,
-      height: 18,
-    },
-    shadowOpacity: 0.4,
-    shadowRadius: 40,
-    elevation: 6,
   },
   vaultLabel: {
     fontSize: 11,

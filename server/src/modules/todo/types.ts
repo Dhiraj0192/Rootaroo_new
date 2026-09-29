@@ -1,12 +1,14 @@
 export interface CreateTodoBody {
   title: string;
   dueDate?: string;
+  dueTime?: string;
   assignedTo?: string;
 }
 
 export interface UpdateTodoBody {
   title?: string;
   dueDate?: string | null;
+  dueTime?: string | null;
   assignedTo?: string | null;
 }
 
@@ -14,6 +16,8 @@ export interface TodoResponse {
   id: string;
   title: string;
   dueDate: string | null;
+  /** "HH:MM", or null for any time that day. */
+  dueTime: string | null;
   assignedTo: TodoAssignee | null;
   isCompleted: boolean;
   completedAt: string | null;

@@ -6,6 +6,7 @@ class TodoItem extends Model {
   declare householdId: string;
   declare title: string;
   declare dueDate: Date | null;
+  declare dueTime: string | null;
   declare assignedTo: string | null;
   declare isCompleted: boolean;
   declare completedAt: Date | null;
@@ -34,6 +35,11 @@ TodoItem.init(
       type: DataTypes.DATEONLY,
       allowNull: true,
       field: 'due_date',
+    },
+    dueTime: {
+      type: DataTypes.TIME,
+      allowNull: true,
+      field: 'due_time',
     },
     assignedTo: {
       type: DataTypes.UUID,

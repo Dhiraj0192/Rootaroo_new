@@ -24,8 +24,21 @@ const AVATAR_PRESETS = [
     id: 'ava_02',
     source: require('../../assets/images/avatars/avatar2-removebg-preview.png'),
   },
+  // ava_03–05: DiceBear "avataaars" style — Avataaars by Pablo Stanley,
+  // free for personal and commercial use (https://avataaars.com).
+  {
+    id: 'ava_03',
+    source: require('../../assets/images/avatars/avatar3.png'),
+  },
+  {
+    id: 'ava_04',
+    source: require('../../assets/images/avatars/avatar4.png'),
+  },
+  {
+    id: 'ava_05',
+    source: require('../../assets/images/avatars/avatar5.png'),
+  },
 ];
-const FAMILY_EMOJIS = ['🏡', '❤️', '🌿', '🐶', '🌻', '🌙', '☀️', '🍂'];
 function localUriFromSource(source) {
   const resolved = Image.resolveAssetSource(source);
   if (!resolved?.uri) throw new Error('Could not load avatar image');
@@ -271,24 +284,6 @@ export default function SignupStepAvatarScreen({ navigation }) {
           </TouchableOpacity>
         ))}
       </View>
-
-      {/* Family emoji */}
-      <Text style={styles.sectionLabel}>Choose an emoji that represents your family</Text>
-      {/* <View style={styles.emojiPreview}>
-        <Text style={styles.emojiPreviewText}>{familyEmoji}</Text>
-      </View> */}
-      {/* <View style={styles.emojiGrid}>
-        {FAMILY_EMOJIS.map((e) => (
-          <TouchableOpacity
-            key={e}
-            style={[styles.emojiChoice, familyEmoji === e && styles.emojiChoiceOn]}
-            onPress={() => setFamilyEmoji(e)}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.emojiText}>{e}</Text>
-          </TouchableOpacity>
-        ))}
-      </View> */}
     </SignupWizardShell>
   );
 }
@@ -351,13 +346,14 @@ const styles = StyleSheet.create({
   },
   avatarRow: {
     flexDirection: 'row',
-    gap: 10,
+    flexWrap: 'wrap',
+    gap: 8,
     marginBottom: 6,
   },
   avatarChoice: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
     overflow: 'hidden',
     borderWidth: 1.5,
     borderColor: colors.fieldBorder,
@@ -370,43 +366,5 @@ const styles = StyleSheet.create({
   avatarChoiceImg: {
     width: '100%',
     height: '100%',
-  },
-  emojiPreview: {
-    alignSelf: 'flex-start',
-    width: 64,
-    height: 64,
-    borderRadius: 16,
-    backgroundColor: colors.goldTint || colors.goldTint,
-    borderWidth: 1.5,
-    borderColor: colors.fieldBorder,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 12,
-  },
-  emojiPreviewText: {
-    fontSize: 32,
-  },
-  emojiGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
-  emojiChoice: {
-    width: 52,
-    height: 52,
-    borderRadius: radius.card,
-    backgroundColor: colors.surface,
-    borderWidth: 1.5,
-    borderColor: colors.fieldBorder,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  emojiChoiceOn: {
-    borderColor: colors.goldWarm,
-    borderWidth: 2.5,
-    backgroundColor: colors.goldTint || colors.goldTint,
-  },
-  emojiText: {
-    fontSize: 24,
   },
 });
