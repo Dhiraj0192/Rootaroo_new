@@ -18,12 +18,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuthStore } from '../shared/store/authStore';
 import { authApi } from '../shared/api/auth';
 import { householdApi } from '../shared/api/household';
-import { feedApi } from '../shared/api/feed';
 import apiClient from '../shared/api/client';
 import { colors, fonts, goldButton, radius, withAlpha } from '../shared/theme';
 import { GoldFill } from '../shared/components/GoldButton';
 import { cacheKeyFromUrl } from '../components/Avatar';
-import PostCard from '../shared/components/PostCard';
 import { KEYBOARD_BEHAVIOR } from '../shared/components/KeyboardAware';
 import { useTabBarDockHeight } from '../shared/hooks/useTabBarDockHeight';
 const AVATAR_SIZE = 88;
@@ -66,8 +64,6 @@ export default function EditProfileScreen({ navigation }) {
   const [isHouseholdAdmin, setIsHouseholdAdmin] = useState(false);
   const [coverPhotoUrl, setCoverPhotoUrl] = useState(null);
   const [uploadingCover, setUploadingCover] = useState(false);
-  const [myPosts, setMyPosts] = useState([]);
-  const [postsLoading, setPostsLoading] = useState(true);
   const canSave = name.trim().length > 0 && !saving && !uploadingAvatar;
   useEffect(() => {
     if (!householdId) return;
@@ -79,35 +75,6 @@ export default function EditProfileScreen({ navigation }) {
       })
       .catch(() => {});
   }, [householdId]);
-  useEffect(() => {
-    if (!user?.id) return;
-    setPostsLoading(true);
-    feedApi
-      .list({ authorId: user.id, limit: 50 })
-      .then((data) => setMyPosts(data.posts || []))
-      .catch(() => setMyPosts([]))
-      .finally(() => setPostsLoading(false));
-  }, [user?.id]);
-  const handleDeletePost = useCallback((postId) => {
-    showAlert('Delete post', 'This cannot be undone.', [
-      {
-        text: 'Cancel',
-        style: 'cancel',
-      },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            await feedApi.delete(postId);
-            setMyPosts((prev) => prev.filter((p) => p.id !== postId));
-          } catch {
-            showAlert('Error', 'Could not delete post');
-          }
-        },
-      },
-    ]);
-  }, []);
   const pickCoverPhoto = useCallback(async () => {
     if (!householdId) return;
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -416,28 +383,6 @@ export default function EditProfileScreen({ navigation }) {
           editable={false}
         />
 
-        {/* ── My posts (Facebook profile-style feed) ── */}
-        <Text style={[styles.fieldLabel, styles.postsLabel]}>My posts</Text>
-        {postsLoading ? (
-          <ActivityIndicator color={colors.gold} style={styles.postsLoading} />
-        ) : myPosts.length === 0 ? (
-          <Text style={styles.postsEmptyText}>You haven't posted anything yet.</Text>
-        ) : (
-          <View style={styles.postsList}>
-            {myPosts.map((post) => (
-              <View key={post.id} style={styles.postCardWrap}>
-                <PostCard
-                  post={post}
-                  onOpen={() => navigation.navigate('PostDetail', { postId: post.id })}
-                  onLike={() => {}}
-                  canDelete
-                  onOptions={() => handleDeletePost(post.id)}
-                />
-              </View>
-            ))}
-          </View>
-        )}
-
         {/* ── Delete account ── */}
         <TouchableOpacity
           style={styles.deleteRow}
@@ -602,30 +547,6 @@ const styles = StyleSheet.create({
     fontFamily: fonts.body,
     color: colors.textMuted,
   },
-  // My posts (Facebook profile-style feed)
-  postsLabel: {
-    marginTop: 26,
-    marginBottom: 10,
-  },
-  postsLoading: {
-    marginVertical: 20,
-  },
-  postsEmptyText: {
-    fontSize: 13,
-    fontFamily: fonts.body,
-    color: colors.textMuted,
-    marginBottom: 20,
-  },
-  postsList: {
-    marginHorizontal: -24,
-    marginBottom: 20,
-    gap: 10,
-  },
-  postCardWrap: {
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-  },
   // Household cover photo banner (Facebook-style)
   coverContainer: {
     position: 'relative',
@@ -679,6 +600,7 @@ const styles = StyleSheet.create({
   deleteRow: {
     alignItems: 'center',
     paddingVertical: 12,
+    marginTop: 26,
   },
   deleteRowText: {
     fontSize: 13,
