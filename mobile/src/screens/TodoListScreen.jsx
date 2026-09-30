@@ -156,8 +156,10 @@ export default function TodoListScreen({ navigation }) {
 
   const canToggle = (item) =>
     !item.assignedTo || item.assignedTo.id === user?.id || isAdmin;
-  // Mirrors the server: only whoever created it, or an admin, can delete.
+  // Mirrors the server: only whoever created it, or an admin, can edit or
+  // delete — and a completed to-do can't be edited at all.
   const canDelete = (item) => isAdmin || item.createdBy?.id === user?.id;
+  const canEdit = (item) => canDelete(item) && !item.isCompleted;
 
   const toggle = useCallback(
     async (item) => {
@@ -304,7 +306,7 @@ export default function TodoListScreen({ navigation }) {
         </View>
         <TouchableOpacity
           style={[styles.card, done && styles.cardDone]}
-          onPress={() => openSheet(item)}
+          onPress={canEdit(item) ? () => openSheet(item) : undefined}
           onLongPress={canDelete(item) ? () => setConfirmDelete(item) : undefined}
           delayLongPress={400}
           activeOpacity={0.8}

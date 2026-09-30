@@ -161,6 +161,33 @@ describe('Todo Service', () => {
       await updateItem(itemId, userId, 'admin', { title: 'Renamed' });
       expect(item.dueTime).toBe('09:00:00');
     });
+
+    it('lets the creator edit', async () => {
+      (modelsMock.HouseholdMember.findOne as jest.Mock).mockResolvedValue({ householdId });
+      const item = fakeItem({ assignedTo: 'someone-else', createdBy: userId });
+      (modelsMock.TodoItem.findOne as jest.Mock).mockResolvedValue(item);
+
+      await updateItem(itemId, userId, 'member', { title: 'Renamed' });
+      expect(item.title).toBe('Renamed');
+    });
+
+    it('refuses the assignee when they did not create it', async () => {
+      (modelsMock.HouseholdMember.findOne as jest.Mock).mockResolvedValue({ householdId });
+      const item = fakeItem({ assignedTo: userId, createdBy: 'someone-else' });
+      (modelsMock.TodoItem.findOne as jest.Mock).mockResolvedValue(item);
+
+      await expect(updateItem(itemId, userId, 'member', { title: 'X' })).rejects.toThrow('creator');
+      expect(item.save).not.toHaveBeenCalled();
+    });
+
+    it('refuses edits to a completed to-do, even for an admin', async () => {
+      (modelsMock.HouseholdMember.findOne as jest.Mock).mockResolvedValue({ householdId });
+      const item = fakeItem({ isCompleted: true, completedAt: new Date(), createdBy: userId });
+      (modelsMock.TodoItem.findOne as jest.Mock).mockResolvedValue(item);
+
+      await expect(updateItem(itemId, userId, 'admin', { title: 'X' })).rejects.toThrow('Completed');
+      expect(item.save).not.toHaveBeenCalled();
+    });
   });
 
   describe('deleteItem', () => {

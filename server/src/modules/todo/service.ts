@@ -19,11 +19,10 @@ import type {
   TodoFilter,
 } from './types';
 
-/** Edit/delete rights: an unassigned to-do is anyone's; an assigned one
- * belongs to its assignee, the person who created it, and admins. */
-function canManage(item: TodoItem, userId: string, userRole: string): boolean {
-  if (userRole === 'admin' || !item.assignedTo) return true;
-  return item.assignedTo === userId || item.createdBy === userId;
+/** Edit/delete rights: only whoever created the to-do, or an admin. Older
+ * to-dos with no recorded creator are therefore admin-only. */
+function isCreatorOrAdmin(item: TodoItem, userId: string, userRole: string): boolean {
+  return userRole === 'admin' || item.createdBy === userId;
 }
 
 // Every to-do we hand back carries both its assignee and its creator.
@@ -142,8 +141,12 @@ export async function updateItem(
   });
   if (!item) throw new NotFoundError('To-do item');
 
-  if (!canManage(item, userId, userRole)) {
-    throw new ForbiddenError('Only the assignee, the creator or an admin can edit this to-do');
+  if (!isCreatorOrAdmin(item, userId, userRole)) {
+    throw new ForbiddenError('Only the creator or an admin can edit this to-do');
+  }
+  // A finished to-do is a record of what was done — reopen it to change it.
+  if (item.isCompleted) {
+    throw new ForbiddenError('Completed to-dos can’t be edited');
   }
 
   if (body.title !== undefined) item.title = body.title;
@@ -166,8 +169,7 @@ export async function deleteItem(
   const item = await TodoItem.findOne({ where: { id: itemId, householdId } });
   if (!item) throw new NotFoundError('To-do item');
 
-  // Deleting is stricter than editing: only whoever created it, or an admin.
-  if (userRole !== 'admin' && item.createdBy !== userId) {
+  if (!isCreatorOrAdmin(item, userId, userRole)) {
     throw new ForbiddenError('Only the creator or an admin can delete this to-do');
   }
 
