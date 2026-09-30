@@ -19,6 +19,12 @@ import type {
   TodoFilter,
 } from './types';
 
+// Every to-do we hand back carries both its assignee and its creator.
+const TODO_INCLUDES = [
+  { model: User, as: 'assignee' },
+  { model: User, as: 'creator' },
+];
+
 function toAssignee(user: User | undefined | null): TodoAssignee | null {
   if (!user) return null;
   return {
@@ -45,6 +51,7 @@ function toTodoResponse(item: TodoItem): TodoResponse {
     // MySQL TIME comes back as "HH:MM:SS".
     dueTime: item.dueTime ? item.dueTime.slice(0, 5) : null,
     assignedTo: toAssignee(item.get('assignee') as User | undefined),
+    createdBy: toAssignee(item.get('creator') as User | undefined),
     isCompleted: item.isCompleted,
     completedAt: item.completedAt ? item.completedAt.toISOString() : null,
     createdAt: item.createdAt.toISOString(),
@@ -64,11 +71,12 @@ export async function createItem(
     dueDate: body.dueDate ? new Date(body.dueDate) : null,
     dueTime: body.dueTime || null,
     assignedTo: body.assignedTo || null,
+    createdBy: userId,
     isCompleted: false,
   });
 
   const full = await TodoItem.findByPk(item.id, {
-    include: [{ model: User, as: 'assignee' }],
+    include: TODO_INCLUDES,
   });
   if (!full) throw new Error('Failed to load');
 
@@ -98,7 +106,7 @@ export async function getItems(
 
   const all = await TodoItem.findAll({
     where,
-    include: [{ model: User, as: 'assignee' }],
+    include: TODO_INCLUDES,
     order: [['createdAt', 'DESC']],
   });
 
@@ -123,7 +131,7 @@ export async function updateItem(
   const householdId = await getUserHousehold(userId);
   const item = await TodoItem.findOne({
     where: { id: itemId, householdId },
-    include: [{ model: User, as: 'assignee' }],
+    include: TODO_INCLUDES,
   });
   if (!item) throw new NotFoundError('To-do item');
 
@@ -168,7 +176,7 @@ export async function toggleComplete(
   const householdId = await getUserHousehold(userId);
   const item = await TodoItem.findOne({
     where: { id: itemId, householdId },
-    include: [{ model: User, as: 'assignee' }],
+    include: TODO_INCLUDES,
   });
   if (!item) throw new NotFoundError('To-do item');
 

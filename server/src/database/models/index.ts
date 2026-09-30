@@ -286,6 +286,7 @@ export function setupAssociations(): void {
   GroceryItem.belongsTo(User, { foreignKey: 'assigned_to', as: 'assignee' });
   GroceryItem.belongsTo(User, { foreignKey: 'bought_by', as: 'buyer' });
   TodoItem.belongsTo(User, { foreignKey: 'assigned_to', as: 'assignee' });
+  TodoItem.belongsTo(User, { foreignKey: 'created_by', as: 'creator' });
 }
 
 export {

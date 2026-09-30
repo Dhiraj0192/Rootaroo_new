@@ -32,6 +32,7 @@ function fakeItem(overrides: any = {}) {
     dueDate: new Date('2026-07-25'),
     dueTime: null,
     assignedTo: null,
+    createdBy: null,
     isCompleted: false,
     completedAt: null,
     createdAt: new Date('2026-07-10'),
@@ -83,6 +84,29 @@ describe('Todo Service', () => {
 
       expect((modelsMock.TodoItem.create as jest.Mock).mock.calls[0][0].dueTime).toBeNull();
       expect(result.dueTime).toBeNull();
+    });
+
+    it('records the creator and returns them as createdBy', async () => {
+      (modelsMock.HouseholdMember.findOne as jest.Mock).mockResolvedValue({ householdId });
+      (modelsMock.TodoItem.create as jest.Mock).mockResolvedValue(fakeItem());
+      const creator = { id: userId, displayName: 'Asha Rai', avatarUrl: null, avatarEmoji: null };
+      (modelsMock.TodoItem.findByPk as jest.Mock).mockResolvedValue(
+        fakeItem({ createdBy: userId, get: jest.fn((key: string) => (key === 'creator' ? creator : null)) }),
+      );
+
+      const result = await createItem(userId, { title: 'Buy milk' });
+
+      expect((modelsMock.TodoItem.create as jest.Mock).mock.calls[0][0].createdBy).toBe(userId);
+      expect(result.createdBy).toEqual(creator);
+    });
+
+    it('returns null createdBy for to-dos with no recorded creator', async () => {
+      (modelsMock.HouseholdMember.findOne as jest.Mock).mockResolvedValue({ householdId });
+      (modelsMock.TodoItem.findAll as jest.Mock).mockResolvedValue([fakeItem()]);
+
+      const result = await getItems(userId);
+
+      expect(result.pending[0].createdBy).toBeNull();
     });
 
     it('throws if no household', async () => {

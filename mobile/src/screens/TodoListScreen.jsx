@@ -46,6 +46,16 @@ function belongsOn(item, key, todayKey) {
   return !item.isCompleted || (item.completedAt && dayKey(new Date(item.completedAt)) === todayKey);
 }
 
+/** "You" for your own to-dos, else the creator's name; null when unknown
+ * (to-dos created before the creator was recorded). */
+function assignedByLabel(item, currentUserId, form) {
+  const creator = item.createdBy;
+  if (!creator) return null;
+  if (creator.id === currentUserId) return 'You';
+  const name = creator.displayName || '';
+  return (form === 'short' ? name.split(' ')[0] : name) || null;
+}
+
 // "Anytime" first, then by time of day.
 function byTimeOfDay(a, b) {
   if (!a.dueTime && !b.dueTime) return 0;
@@ -73,8 +83,6 @@ export default function TodoListScreen({ navigation }) {
   const [loading, setLoading] = useState(() => !readCache('todos'));
   const [refreshing, setRefreshing] = useState(false);
   const [selected, setSelected] = useState(today);
-  const [quickTitle, setQuickTitle] = useState('');
-  const [quickSaving, setQuickSaving] = useState(false);
 
   // Add / edit sheet
   const [showSheet, setShowSheet] = useState(false);
@@ -188,33 +196,15 @@ export default function TodoListScreen({ navigation }) {
   const openSheet = useCallback(
     async (item) => {
       setEditItem(item || null);
-      setTitle(item ? item.title : quickTitle.trim());
+      setTitle(item ? item.title : '');
       setDueDate(item ? item.dueDate || '' : selectedKey);
       setDueTime(item?.dueTime || '');
       setAssignee(item?.assignedTo?.id ?? null);
       setShowSheet(true);
       loadMembers();
     },
-    [quickTitle, selectedKey, loadMembers],
+    [selectedKey, loadMembers],
   );
-
-  const quickAdd = useCallback(async () => {
-    const trimmed = quickTitle.trim();
-    if (!trimmed) {
-      openSheet(null);
-      return;
-    }
-    setQuickSaving(true);
-    try {
-      await todoApi.create({ title: trimmed, dueDate: selectedKey });
-      setQuickTitle('');
-      await load();
-    } catch (e) {
-      showAlert('Error', e?.response?.data?.error || 'Could not add to-do');
-    } finally {
-      setQuickSaving(false);
-    }
-  }, [quickTitle, selectedKey, load, openSheet]);
 
   const save = useCallback(async () => {
     const trimmed = title.trim();
@@ -238,7 +228,6 @@ export default function TodoListScreen({ navigation }) {
           dueTime: dueTime || undefined,
           assignedTo: assignee || undefined,
         });
-        setQuickTitle('');
       }
       setShowSheet(false);
       await load();
@@ -301,6 +290,7 @@ export default function TodoListScreen({ navigation }) {
     const done = item.isCompleted;
     const toggleable = canToggle(item);
     const who = item.assignedTo?.displayName?.split(' ')[0] || 'Everyone';
+    const assignedBy = assignedByLabel(item, user?.id, 'short');
     const isLast = index === dayItems.length - 1;
     return (
       <View style={styles.row}>
@@ -333,6 +323,11 @@ export default function TodoListScreen({ navigation }) {
             <Text style={styles.cardMeta} numberOfLines={1}>
               {who}
             </Text>
+            {assignedBy ? (
+              <Text style={styles.cardMeta} numberOfLines={1}>
+                Assigned by: {assignedBy}
+              </Text>
+            ) : null}
           </View>
         </TouchableOpacity>
       </View>
@@ -402,7 +397,9 @@ export default function TodoListScreen({ navigation }) {
         renderItem={renderRow}
         style={styles.timeline}
         contentContainerStyle={
-          dayItems.length === 0 ? styles.emptyWrap : styles.timelineContent
+          dayItems.length === 0
+            ? styles.emptyWrap
+            : [styles.timelineContent, { paddingBottom: dockHeight + FAB_SIZE + 32 }]
         }
         refreshControl={
           <RefreshControl
@@ -418,42 +415,24 @@ export default function TodoListScreen({ navigation }) {
         ListEmptyComponent={
           <View style={styles.empty}>
             <Text style={styles.emptyTitle}>Nothing planned for {dayLabel}</Text>
-            {canAdd ? <Text style={styles.emptySub}>Add a task below</Text> : null}
+            {canAdd ? <Text style={styles.emptySub}>Tap + to add one</Text> : null}
           </View>
         }
         showsVerticalScrollIndicator={false}
       />
 
-      {/* ── Add bar ── */}
+      {/* ── Add button ── */}
       {canAdd ? (
-        <View style={[styles.addBar, { marginBottom: dockHeight + 12 }]}>
-          <TextInput
-            style={styles.addInput}
-            placeholder={`Add a task for ${dayLabel}…`}
-            placeholderTextColor={colors.textMuted}
-            value={quickTitle}
-            onChangeText={setQuickTitle}
-            onSubmitEditing={quickAdd}
-            returnKeyType="done"
-            maxLength={200}
-          />
-          <TouchableOpacity
-            style={styles.addBtn}
-            onPress={quickAdd}
-            disabled={quickSaving}
-            activeOpacity={0.85}
-          >
-            <GoldFill radius={12} disabled={quickSaving} />
-            {quickSaving ? (
-              <ActivityIndicator size="small" color={colors.canvas} />
-            ) : (
-              <Text style={styles.addBtnText}>+</Text>
-            )}
-          </TouchableOpacity>
-        </View>
-      ) : (
-        <View style={{ height: dockHeight }} />
-      )}
+        <TouchableOpacity
+          style={[styles.fab, { bottom: dockHeight + 16 }]}
+          onPress={() => openSheet(null)}
+          activeOpacity={0.85}
+          accessibilityLabel={`Add a to-do for ${dayLabel}`}
+        >
+          <GoldFill radius={FAB_SIZE / 2} />
+          <Text style={styles.fabText}>+</Text>
+        </TouchableOpacity>
+      ) : null}
 
       {/* ── Add / edit sheet ── */}
       <BottomSheet visible={showSheet} onClose={() => setShowSheet(false)}>
@@ -473,6 +452,11 @@ export default function TodoListScreen({ navigation }) {
               onChangeText={setTitle}
               maxLength={200}
             />
+            {editItem && assignedByLabel(editItem, user?.id, 'full') ? (
+              <Text style={styles.assignedByNote}>
+                Assigned by: {assignedByLabel(editItem, user?.id, 'full')}
+              </Text>
+            ) : null}
           </Field>
 
           <Field label="Day">
@@ -604,6 +588,7 @@ function Chip({ label, active, dashed, onPress }) {
 }
 
 const TIME_COL = 56;
+const FAB_SIZE = 56;
 const RAIL_COL = 26;
 const NODE = 10;
 
@@ -834,42 +819,30 @@ const styles = StyleSheet.create({
     fontFamily: fonts.body,
     color: colors.textMuted,
   },
-  // Add bar
-  addBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginHorizontal: SCREEN_GUTTER,
-    paddingLeft: 18,
-    paddingRight: 8,
-    paddingVertical: 8,
-    borderRadius: 18,
-    backgroundColor: colors.surfaceRaised,
-    borderWidth: 1,
-    borderColor: colors.borderCool,
-  },
-  addInput: {
-    flex: 1,
-    fontSize: 13,
-    fontFamily: fonts.body,
-    color: colors.ink,
-    paddingVertical: 10,
-  },
-  addBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
+  // Floating add button
+  fab: {
+    position: 'absolute',
+    right: SCREEN_GUTTER,
+    width: FAB_SIZE,
+    height: FAB_SIZE,
+    borderRadius: FAB_SIZE / 2,
     backgroundColor: colors.gold,
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
     ...goldButton.glow,
   },
-  addBtnText: {
-    fontSize: 22,
+  fabText: {
+    fontSize: 28,
     fontWeight: '500',
     color: colors.canvas,
-    lineHeight: 24,
+    lineHeight: 30,
+  },
+  assignedByNote: {
+    marginTop: 8,
+    fontSize: 12,
+    fontFamily: fonts.body,
+    color: colors.textSecondary,
   },
   // Sheet form
   input: {

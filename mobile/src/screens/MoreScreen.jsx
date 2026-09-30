@@ -263,9 +263,6 @@ export default function MoreScreen({ navigation }) {
           <Text style={styles.signOutText}>Sign out</Text>
         </TouchableOpacity>
       </ScrollView>
-
-      {/* ── Version footer (SCREEN 39) ── */}
-      <Text style={[styles.versionText, { paddingBottom: dockHeight }]}>Rootaroo 2.4.1</Text>
     </View>
     </SpotlightTourProvider>
   );
@@ -369,13 +366,5 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: fonts.body,
     color: colors.danger,
-  },
-  // Version footer (SCREEN 39)
-  versionText: {
-    textAlign: 'center',
-    paddingBottom: 12,
-    fontSize: 11,
-    fontFamily: fonts.mono,
-    color: colors.textMuted,
   },
 });

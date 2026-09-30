@@ -8,6 +8,7 @@ class TodoItem extends Model {
   declare dueDate: Date | null;
   declare dueTime: string | null;
   declare assignedTo: string | null;
+  declare createdBy: string | null;
   declare isCompleted: boolean;
   declare completedAt: Date | null;
   declare createdAt: CreationOptional<Date>;
@@ -45,6 +46,11 @@ TodoItem.init(
       type: DataTypes.UUID,
       allowNull: true,
       field: 'assigned_to',
+    },
+    createdBy: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      field: 'created_by',
     },
     isCompleted: {
       type: DataTypes.BOOLEAN,
