@@ -172,6 +172,33 @@ describe('Todo Service', () => {
       await deleteItem(itemId, userId, 'admin');
       expect(item.destroy).toHaveBeenCalled();
     });
+
+    it('lets the creator delete a to-do assigned to someone else', async () => {
+      (modelsMock.HouseholdMember.findOne as jest.Mock).mockResolvedValue({ householdId });
+      const item = fakeItem({ assignedTo: 'someone-else', createdBy: userId });
+      (modelsMock.TodoItem.findOne as jest.Mock).mockResolvedValue(item);
+
+      await deleteItem(itemId, userId, 'member');
+      expect(item.destroy).toHaveBeenCalled();
+    });
+
+    it('lets any member delete an unassigned to-do', async () => {
+      (modelsMock.HouseholdMember.findOne as jest.Mock).mockResolvedValue({ householdId });
+      const item = fakeItem({ assignedTo: null, createdBy: 'someone-else' });
+      (modelsMock.TodoItem.findOne as jest.Mock).mockResolvedValue(item);
+
+      await deleteItem(itemId, userId, 'member');
+      expect(item.destroy).toHaveBeenCalled();
+    });
+
+    it('refuses a member who is neither assignee nor creator', async () => {
+      (modelsMock.HouseholdMember.findOne as jest.Mock).mockResolvedValue({ householdId });
+      const item = fakeItem({ assignedTo: 'someone-else', createdBy: 'another-one' });
+      (modelsMock.TodoItem.findOne as jest.Mock).mockResolvedValue(item);
+
+      await expect(deleteItem(itemId, userId, 'member')).rejects.toThrow('creator');
+      expect(item.destroy).not.toHaveBeenCalled();
+    });
   });
 
   describe('toggleComplete', () => {

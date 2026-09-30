@@ -17,6 +17,7 @@ import {
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import { Ionicons } from '@expo/vector-icons';
 import { format, addDays, addWeeks, startOfWeek } from 'date-fns';
 import { showAlert } from '../shared/services/themedAlert';
 import { todoApi } from '../shared/api/todo';
@@ -46,14 +47,14 @@ function belongsOn(item, key, todayKey) {
   return !item.isCompleted || (item.completedAt && dayKey(new Date(item.completedAt)) === todayKey);
 }
 
-/** "You" for your own to-dos, else the creator's name; null when unknown
+/** "You" for your own to-dos, else the creator's name; "—" when unknown
  * (to-dos created before the creator was recorded). */
 function assignedByLabel(item, currentUserId, form) {
   const creator = item.createdBy;
-  if (!creator) return null;
+  if (!creator) return '—';
   if (creator.id === currentUserId) return 'You';
   const name = creator.displayName || '';
-  return (form === 'short' ? name.split(' ')[0] : name) || null;
+  return (form === 'short' ? name.split(' ')[0] : name) || '—';
 }
 
 // "Anytime" first, then by time of day.
@@ -155,7 +156,13 @@ export default function TodoListScreen({ navigation }) {
 
   const canToggle = (item) =>
     !item.assignedTo || item.assignedTo.id === user?.id || isAdmin;
-  const canDelete = (item) => item.assignedTo?.id === user?.id || isAdmin;
+  // Mirrors the server: unassigned to-dos are anyone's; assigned ones belong
+  // to the assignee, whoever created them, and admins.
+  const canDelete = (item) =>
+    isAdmin ||
+    !item.assignedTo ||
+    item.assignedTo.id === user?.id ||
+    item.createdBy?.id === user?.id;
 
   const toggle = useCallback(
     async (item) => {
@@ -289,7 +296,6 @@ export default function TodoListScreen({ navigation }) {
   const renderRow = ({ item, index }) => {
     const done = item.isCompleted;
     const toggleable = canToggle(item);
-    const who = item.assignedTo?.displayName?.split(' ')[0] || 'Everyone';
     const assignedBy = assignedByLabel(item, user?.id, 'short');
     const isLast = index === dayItems.length - 1;
     return (
@@ -321,14 +327,19 @@ export default function TodoListScreen({ navigation }) {
               {item.title}
             </Text>
             <Text style={styles.cardMeta} numberOfLines={1}>
-              {who}
+              Assigned By: {assignedBy}
             </Text>
-            {assignedBy ? (
-              <Text style={styles.cardMeta} numberOfLines={1}>
-                Assigned by: {assignedBy}
-              </Text>
-            ) : null}
           </View>
+          {canDelete(item) ? (
+            <TouchableOpacity
+              style={styles.deleteBtn}
+              onPress={() => setConfirmDelete(item)}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              accessibilityLabel={`Delete ${item.title}`}
+            >
+              <Ionicons name="trash-outline" size={18} color={colors.textMuted} />
+            </TouchableOpacity>
+          ) : null}
         </TouchableOpacity>
       </View>
     );
@@ -452,9 +463,9 @@ export default function TodoListScreen({ navigation }) {
               onChangeText={setTitle}
               maxLength={200}
             />
-            {editItem && assignedByLabel(editItem, user?.id, 'full') ? (
+            {editItem ? (
               <Text style={styles.assignedByNote}>
-                Assigned by: {assignedByLabel(editItem, user?.id, 'full')}
+                Assigned By: {assignedByLabel(editItem, user?.id, 'full')}
               </Text>
             ) : null}
           </Field>
@@ -778,6 +789,10 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     color: colors.canvas,
     lineHeight: 13,
+  },
+  deleteBtn: {
+    alignSelf: 'center',
+    padding: 2,
   },
   cardBody: {
     flex: 1,
