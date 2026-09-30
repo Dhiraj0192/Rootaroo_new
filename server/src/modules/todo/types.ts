@@ -19,6 +19,8 @@ export interface TodoResponse {
   /** "HH:MM", or null for any time that day. */
   dueTime: string | null;
   assignedTo: TodoAssignee | null;
+  /** Who created it ("Assigned by"); null for to-dos made before this was recorded. */
+  createdBy: TodoAssignee | null;
   isCompleted: boolean;
   completedAt: string | null;
   createdAt: string;
