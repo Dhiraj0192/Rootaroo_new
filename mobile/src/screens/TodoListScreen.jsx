@@ -156,13 +156,8 @@ export default function TodoListScreen({ navigation }) {
 
   const canToggle = (item) =>
     !item.assignedTo || item.assignedTo.id === user?.id || isAdmin;
-  // Mirrors the server: unassigned to-dos are anyone's; assigned ones belong
-  // to the assignee, whoever created them, and admins.
-  const canDelete = (item) =>
-    isAdmin ||
-    !item.assignedTo ||
-    item.assignedTo.id === user?.id ||
-    item.createdBy?.id === user?.id;
+  // Mirrors the server: only whoever created it, or an admin, can delete.
+  const canDelete = (item) => isAdmin || item.createdBy?.id === user?.id;
 
   const toggle = useCallback(
     async (item) => {

@@ -182,22 +182,30 @@ describe('Todo Service', () => {
       expect(item.destroy).toHaveBeenCalled();
     });
 
-    it('lets any member delete an unassigned to-do', async () => {
+    it('refuses the assignee when they did not create it', async () => {
       (modelsMock.HouseholdMember.findOne as jest.Mock).mockResolvedValue({ householdId });
-      const item = fakeItem({ assignedTo: null, createdBy: 'someone-else' });
-      (modelsMock.TodoItem.findOne as jest.Mock).mockResolvedValue(item);
-
-      await deleteItem(itemId, userId, 'member');
-      expect(item.destroy).toHaveBeenCalled();
-    });
-
-    it('refuses a member who is neither assignee nor creator', async () => {
-      (modelsMock.HouseholdMember.findOne as jest.Mock).mockResolvedValue({ householdId });
-      const item = fakeItem({ assignedTo: 'someone-else', createdBy: 'another-one' });
+      const item = fakeItem({ assignedTo: userId, createdBy: 'someone-else' });
       (modelsMock.TodoItem.findOne as jest.Mock).mockResolvedValue(item);
 
       await expect(deleteItem(itemId, userId, 'member')).rejects.toThrow('creator');
       expect(item.destroy).not.toHaveBeenCalled();
+    });
+
+    it('refuses other members on an unassigned to-do', async () => {
+      (modelsMock.HouseholdMember.findOne as jest.Mock).mockResolvedValue({ householdId });
+      const item = fakeItem({ assignedTo: null, createdBy: 'someone-else' });
+      (modelsMock.TodoItem.findOne as jest.Mock).mockResolvedValue(item);
+
+      await expect(deleteItem(itemId, userId, 'member')).rejects.toThrow('creator');
+      expect(item.destroy).not.toHaveBeenCalled();
+    });
+
+    it('refuses non-admins on older to-dos with no recorded creator', async () => {
+      (modelsMock.HouseholdMember.findOne as jest.Mock).mockResolvedValue({ householdId });
+      const item = fakeItem({ assignedTo: null, createdBy: null });
+      (modelsMock.TodoItem.findOne as jest.Mock).mockResolvedValue(item);
+
+      await expect(deleteItem(itemId, userId, 'member')).rejects.toThrow('creator');
     });
   });
 

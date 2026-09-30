@@ -166,8 +166,9 @@ export async function deleteItem(
   const item = await TodoItem.findOne({ where: { id: itemId, householdId } });
   if (!item) throw new NotFoundError('To-do item');
 
-  if (!canManage(item, userId, userRole)) {
-    throw new ForbiddenError('Only the assignee, the creator or an admin can delete this to-do');
+  // Deleting is stricter than editing: only whoever created it, or an admin.
+  if (userRole !== 'admin' && item.createdBy !== userId) {
+    throw new ForbiddenError('Only the creator or an admin can delete this to-do');
   }
 
   await item.destroy();
