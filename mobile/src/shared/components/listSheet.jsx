@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -8,14 +8,15 @@ import {
   FlatList,
   Animated,
   Easing,
-  KeyboardAvoidingView,
+  Keyboard,
+  LayoutAnimation,
+  Platform,
   Pressable,
   useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, fonts, withAlpha } from '../theme';
 import Avatar from '../../components/Avatar';
-import { KEYBOARD_BEHAVIOR } from './KeyboardAware';
 
 // Bottom-sheet pieces shared by the Grocery and To-do list screens.
 
@@ -27,6 +28,12 @@ const CLOSE_MS = 200;
  * slides back down before unmounting. (`<Modal animationType="slide">`
  * moves the whole window — backdrop included — as one rigid block.)
  * Sized to its content, capped at 85% of the screen.
+ *
+ * Keyboard: no KeyboardAvoidingView. Its padding wasn't always cleared
+ * around show/hide (iOS left the sheet floating ~130px up with the tab bar
+ * showing through, undimmed). Instead the sheet's dock is padded by the
+ * keyboard's *measured* overlap, which is exactly 0 once it hides, and the
+ * backdrop is its own full-screen layer so it always dims everything.
  */
 export function BottomSheet({ visible, onClose, children, style }) {
   const insets = useSafeAreaInsets();
@@ -34,6 +41,37 @@ export function BottomSheet({ visible, onClose, children, style }) {
   const [mounted, setMounted] = useState(visible);
   const translateY = useRef(new Animated.Value(height)).current;
   const backdrop = useRef(new Animated.Value(0)).current;
+  const rootRef = useRef(null);
+  const [keyboardOverlap, setKeyboardOverlap] = useState(0);
+
+  const applyOverlap = useCallback((next) => {
+    setKeyboardOverlap((prev) => {
+      if (Math.abs(prev - next) < 1) return prev;
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!mounted) return undefined;
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const subs = [
+      Keyboard.addListener(showEvent, (e) => {
+        const keyboardTop = e?.endCoordinates?.screenY;
+        if (typeof keyboardTop !== 'number') return;
+        if (!rootRef.current) {
+          applyOverlap(Math.max(0, height - keyboardTop));
+          return;
+        }
+        rootRef.current.measureInWindow((_x, y, _w, h) => {
+          applyOverlap(Math.max(0, y + h - keyboardTop));
+        });
+      }),
+      Keyboard.addListener(hideEvent, () => applyOverlap(0)),
+    ];
+    return () => subs.forEach((sub) => sub.remove());
+  }, [mounted, height, applyOverlap]);
 
   useEffect(() => {
     if (visible) {
@@ -69,7 +107,10 @@ export function BottomSheet({ visible, onClose, children, style }) {
           easing: Easing.in(Easing.quad),
           useNativeDriver: true,
         }),
-      ]).start(() => setMounted(false));
+      ]).start(() => {
+        setMounted(false);
+        setKeyboardOverlap(0);
+      });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
@@ -80,29 +121,36 @@ export function BottomSheet({ visible, onClose, children, style }) {
       visible
       transparent
       animationType="none"
-      /* RN Modals render in their own native window, which on Android does
-         not receive keyboard insets unless these are set — without them the
-         avoider below computes a zero offset and the sheet never lifts. */
+      // Draw under the Android status/nav bars so the backdrop covers them.
       statusBarTranslucent
       navigationBarTranslucent
       onRequestClose={onClose}
     >
-      {/* The avoider is the full-screen root: `height` shrinks this container
-          so the flex-end sheet slides up above the keyboard. */}
-      <KeyboardAvoidingView style={sheet.overlay} behavior={KEYBOARD_BEHAVIOR}>
+      <View ref={rootRef} style={sheet.root} collapsable={false}>
         <Animated.View style={[sheet.backdrop, { opacity: backdrop }]}>
           <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         </Animated.View>
-        <Animated.View
-          style={[
-            sheet.box,
-            { paddingBottom: insets.bottom + 20, transform: [{ translateY }] },
-            style,
-          ]}
-        >
-          {children}
-        </Animated.View>
-      </KeyboardAvoidingView>
+        <View style={[sheet.dock, { paddingBottom: keyboardOverlap }]} pointerEvents="box-none">
+          <Animated.View
+            style={[
+              sheet.box,
+              {
+                // With the keyboard up the rest of the sheet scrolls rather
+                // than running off the top of the screen.
+                maxHeight:
+                  keyboardOverlap > 0
+                    ? height - keyboardOverlap - insets.top - 12
+                    : '85%',
+                paddingBottom: keyboardOverlap > 0 ? 16 : insets.bottom + 20,
+                transform: [{ translateY }],
+              },
+              style,
+            ]}
+          >
+            {children}
+          </Animated.View>
+        </View>
+      </View>
     </Modal>
   );
 }
@@ -174,8 +222,11 @@ const fieldStyles = StyleSheet.create({
 });
 
 export const sheet = StyleSheet.create({
-  overlay: {
+  root: {
     flex: 1,
+  },
+  dock: {
+    ...StyleSheet.absoluteFillObject,
     justifyContent: 'flex-end',
   },
   backdrop: {

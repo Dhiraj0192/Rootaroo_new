@@ -1362,11 +1362,40 @@ export default function DashboardScreen() {
 
                 {/* ── Tasks + Balance two-up ── */}
                 <View style={styles.twoUp}>
-                  <AttachStep index={3} fill style={{ flex: 1 }}>
+                  <View style={styles.col}>
+                    <AttachStep index={3} fill style={{ flex: 1 }}>
+                      <TouchableOpacity
+                        ref={tasksRef}
+                        style={styles.halfCard}
+                        onPress={() => nav.navigate("TasksStack")}
+                        activeOpacity={0.7}
+                      >
+                        <CardSheen radius={20} />
+                        <WidgetLabel
+                          style={{
+                            marginBottom: 12,
+                          }}
+                        >
+                          TASKS
+                        </WidgetLabel>
+                        <Text style={styles.halfNum}>{data.tasks.pending}</Text>
+                        <Text style={styles.halfMeta}>
+                          {data.tasks.pending === 0 ? "all clear" : "due today"}
+                          {data.tasks.overdue > 0
+                            ? ` · ${data.tasks.overdue} overdue`
+                            : ""}
+                        </Text>
+                      </TouchableOpacity>
+                    </AttachStep>
+                  </View>
+                  <View style={styles.col}>
                     <TouchableOpacity
-                      ref={tasksRef}
                       style={styles.halfCard}
-                      onPress={() => nav.navigate("TasksStack")}
+                      onPress={() =>
+                        nav.navigate("MoreStack", {
+                          screen: "ExpenseList",
+                        })
+                      }
                       activeOpacity={0.7}
                     >
                       <CardSheen radius={20} />
@@ -1375,183 +1404,166 @@ export default function DashboardScreen() {
                           marginBottom: 12,
                         }}
                       >
-                        TASKS
+                        BALANCE
                       </WidgetLabel>
-                      <Text style={styles.halfNum}>{data.tasks.pending}</Text>
-                      <Text style={styles.halfMeta}>
-                        {data.tasks.pending === 0 ? "all clear" : "due today"}
-                        {data.tasks.overdue > 0
-                          ? ` · ${data.tasks.overdue} overdue`
-                          : ""}
+                      <Text
+                        style={[styles.halfNum, styles.balanceNum]}
+                        numberOfLines={1}
+                      >
+                        {oweText || "Settled up"}
+                      </Text>
+                      <Text style={styles.halfMeta} numberOfLines={1}>
+                        {oweName || (oweText ? "" : "nothing owed")}
                       </Text>
                     </TouchableOpacity>
-                  </AttachStep>
-                  <TouchableOpacity
-                    style={styles.halfCard}
-                    onPress={() =>
-                      nav.navigate("MoreStack", {
-                        screen: "ExpenseList",
-                      })
-                    }
-                    activeOpacity={0.7}
-                  >
-                    <CardSheen radius={20} />
-                    <WidgetLabel
-                      style={{
-                        marginBottom: 12,
-                      }}
-                    >
-                      BALANCE
-                    </WidgetLabel>
-                    <Text
-                      style={[styles.halfNum, styles.balanceNum]}
-                      numberOfLines={1}
-                    >
-                      {oweText || "Settled up"}
-                    </Text>
-                    <Text style={styles.halfMeta} numberOfLines={1}>
-                      {oweName || (oweText ? "" : "nothing owed")}
-                    </Text>
-                  </TouchableOpacity>
+                  </View>
                 </View>
 
                 {/* ── Grocery + To-do two-up ── */}
                 <View style={styles.twoUp}>
-                  <TouchableOpacity
-                    style={styles.halfCard}
-                    onPress={() =>
-                      nav.navigate("MoreStack", {
-                        screen: "GroceryList",
-                      })
-                    }
-                    activeOpacity={0.7}
-                  >
-                    <CardSheen radius={20} />
-                    <WidgetLabel
-                      style={{
-                        marginBottom: 12,
-                      }}
+                  <View style={styles.col}>
+                    <TouchableOpacity
+                      style={styles.halfCard}
+                      onPress={() =>
+                        nav.navigate("MoreStack", {
+                          screen: "GroceryList",
+                        })
+                      }
+                      activeOpacity={0.7}
                     >
-                      GROCERY
-                    </WidgetLabel>
-                    <Text style={styles.halfNum} numberOfLines={1} adjustsFontSizeToFit>
-                      {data.groceries.pending} left
-                    </Text>
-                    <Text style={styles.halfMeta} numberOfLines={1}>
-                      {data.groceries.pending > 0
-                        ? `${data.groceries.pending} item${data.groceries.pending > 1 ? "s" : ""} on the list`
-                        : "list is clear"}
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.halfCard}
-                    onPress={() =>
-                      nav.navigate("MoreStack", {
-                        screen: "TodoList",
-                      })
-                    }
-                    activeOpacity={0.7}
-                  >
-                    <CardSheen radius={20} />
-                    <WidgetLabel
-                      style={{
-                        marginBottom: 12,
-                      }}
+                      <CardSheen radius={20} />
+                      <WidgetLabel
+                        style={{
+                          marginBottom: 12,
+                        }}
+                      >
+                        GROCERY
+                      </WidgetLabel>
+                      <Text style={styles.halfNum} numberOfLines={1} adjustsFontSizeToFit>
+                        {data.groceries.pending} left
+                      </Text>
+                      <Text style={styles.halfMeta} numberOfLines={1}>
+                        {data.groceries.pending > 0
+                          ? `${data.groceries.pending} item${data.groceries.pending > 1 ? "s" : ""} on the list`
+                          : "list is clear"}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                  <View style={styles.col}>
+                    <TouchableOpacity
+                      style={styles.halfCard}
+                      onPress={() =>
+                        nav.navigate("MoreStack", {
+                          screen: "TodoList",
+                        })
+                      }
+                      activeOpacity={0.7}
                     >
-                      TO-DO
-                    </WidgetLabel>
-                    <Text style={styles.halfNum} numberOfLines={1} adjustsFontSizeToFit>
-                      {data.todos.pending} to do
-                    </Text>
-                    <Text style={styles.halfMeta} numberOfLines={1}>
-                      {data.todos.completedToday > 0
-                        ? `${data.todos.completedToday} done today`
-                        : data.todos.pending === 0
-                          ? "all clear"
-                          : "none done today"}
-                    </Text>
-                  </TouchableOpacity>
+                      <CardSheen radius={20} />
+                      <WidgetLabel
+                        style={{
+                          marginBottom: 12,
+                        }}
+                      >
+                        TO-DO
+                      </WidgetLabel>
+                      <Text style={styles.halfNum} numberOfLines={1} adjustsFontSizeToFit>
+                        {data.todos.pending} to do
+                      </Text>
+                      <Text style={styles.halfMeta} numberOfLines={1}>
+                        {data.todos.completedToday > 0
+                          ? `${data.todos.completedToday} done today`
+                          : data.todos.pending === 0
+                            ? "all clear"
+                            : "none done today"}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
 
                 {/* ── Feed + Nudge two-up ── */}
                 <View style={styles.twoUp}>
-                  <TouchableOpacity
-                    style={styles.feedCard}
-                    onPress={() => nav.navigate("PhotoGallery")}
-                    activeOpacity={0.85}
-                  >
-                    {feedPhotos.length > 0 ? (
-                      <>
-                        {feedSlots[0] ? (
-                          <Animated.Image
-                            source={{ uri: feedSlots[0] }}
-                            style={[
-                              styles.feedImage,
-                              { opacity: feedFadeInverse },
-                            ]}
-                            resizeMode="cover"
-                          />
-                        ) : null}
-                        {feedSlots[1] ? (
-                          <Animated.Image
-                            source={{ uri: feedSlots[1] }}
-                            style={[styles.feedImage, { opacity: feedFade }]}
-                            resizeMode="cover"
-                          />
-                        ) : null}
-                      </>
-                    ) : (
-                      <View style={[styles.feedImage, styles.feedPlaceholder]}>
-                        <Text
-                          style={{
-                            fontSize: 26,
-                            opacity: 0.5,
-                          }}
-                        >
-                          📸
+                  <View style={styles.col}>
+                    <TouchableOpacity
+                      style={styles.feedCard}
+                      onPress={() => nav.navigate("PhotoGallery")}
+                      activeOpacity={0.85}
+                    >
+                      {feedPhotos.length > 0 ? (
+                        <>
+                          {feedSlots[0] ? (
+                            <Animated.Image
+                              source={{ uri: feedSlots[0] }}
+                              style={[
+                                styles.feedImage,
+                                { opacity: feedFadeInverse },
+                              ]}
+                              resizeMode="cover"
+                            />
+                          ) : null}
+                          {feedSlots[1] ? (
+                            <Animated.Image
+                              source={{ uri: feedSlots[1] }}
+                              style={[styles.feedImage, { opacity: feedFade }]}
+                              resizeMode="cover"
+                            />
+                          ) : null}
+                        </>
+                      ) : (
+                        <View style={[styles.feedImage, styles.feedPlaceholder]}>
+                          <Text
+                            style={{
+                              fontSize: 26,
+                              opacity: 0.5,
+                            }}
+                          >
+                            📸
+                          </Text>
+                          <Text style={styles.feedCaption} numberOfLines={1}>
+                            Share a moment
+                          </Text>
+                        </View>
+                      )}
+                      {feedPhotos.length > 0 ? (
+                        <LinearGradient
+                          colors={[
+                            withAlpha(colors.navyDark, 0),
+                            withAlpha(colors.navyDark, 0.45),
+                          ]}
+                          style={styles.feedGradient}
+                          pointerEvents="none"
+                        />
+                      ) : null}
+                    </TouchableOpacity>
+                  </View>
+                  <View style={styles.col}>
+                    <TouchableOpacity
+                      style={[
+                        styles.card,
+                        styles.nudgeCard,
+                        {
+                          borderRadius: 20,
+                        },
+                      ]}
+                      onPress={() => handleQuickNotify("Nudge")}
+                      activeOpacity={0.7}
+                    >
+                      <CardSheen radius={20} />
+                      <WidgetLabel>NUDGE</WidgetLabel>
+                      <View
+                        style={{
+                          marginTop: 10,
+                        }}
+                      >
+                        <Text style={styles.nudgeCardTitle} numberOfLines={1}>
+                          Send a quick reminder
                         </Text>
-                        <Text style={styles.feedCaption} numberOfLines={1}>
-                          Share a moment
+                        <Text style={styles.nudgeCardMeta} numberOfLines={1}>
+                          Tap to nudge someone
                         </Text>
                       </View>
-                    )}
-                    {feedPhotos.length > 0 ? (
-                      <LinearGradient
-                        colors={[
-                          withAlpha(colors.navyDark, 0),
-                          withAlpha(colors.navyDark, 0.45),
-                        ]}
-                        style={styles.feedGradient}
-                        pointerEvents="none"
-                      />
-                    ) : null}
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[
-                      styles.card,
-                      styles.nudgeCard,
-                      {
-                        borderRadius: 20,
-                      },
-                    ]}
-                    onPress={() => handleQuickNotify("Nudge")}
-                    activeOpacity={0.7}
-                  >
-                    <CardSheen radius={20} />
-                    <WidgetLabel>NUDGE</WidgetLabel>
-                    <View
-                      style={{
-                        marginTop: 10,
-                      }}
-                    >
-                      <Text style={styles.nudgeCardTitle} numberOfLines={1}>
-                        Send a quick reminder
-                      </Text>
-                      <Text style={styles.nudgeCardMeta} numberOfLines={1}>
-                        Tap to nudge someone
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
+                    </TouchableOpacity>
+                  </View>
                 </View>
 
                 {/* ── Quick Actions ── */}
@@ -2485,6 +2497,13 @@ const styles = StyleSheet.create({
     gap: 14,
     marginBottom: 20,
   },
+  // Equal columns for every two-up row, so all rows split at the same x
+  // no matter how wide a tile's text is.
+  col: {
+    flex: 1,
+    flexBasis: 0,
+    minWidth: 0,
+  },
   halfCard: {
     flex: 1,
     backgroundColor: GLASS_FILL,
@@ -2510,7 +2529,7 @@ const styles = StyleSheet.create({
     color: colors.textOnDarkMuted,
   },
   feedCard: {
-    flex: 1.2,
+    flex: 1,
     position: "relative",
     borderRadius: 20,
     overflow: "hidden",
