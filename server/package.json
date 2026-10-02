@@ -13,6 +13,7 @@
     "lint": "eslint src/ --ext .ts",
     "lint:fix": "eslint src/ --ext .ts --fix",
     "type-check": "tsc --noEmit",
+    "billing:bootstrap": "tsx src/modules/billing/scripts/stripe-bootstrap.ts",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:int": "jest -c jest.int.config.js --runInBand",
