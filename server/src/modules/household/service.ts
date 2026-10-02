@@ -7,6 +7,8 @@ import { ConflictError, NotFoundError, ForbiddenError, AppError } from '../../sh
 import { getSignedUrl, deleteObject } from '../../shared/utils/s3';
 import { sendAdminAlertEmail } from '../../shared/utils/mailer';
 import { getIO } from '../../shared/utils/socket';
+import { withDeadlockRetry } from '../../shared/utils/dbRetry';
+import { assertSeatAvailable, clearEntitlementCache } from '../billing/entitlement';
 import logger from '../../shared/utils/logger';
 import * as notificationService from '../../shared/services/notifications';
 import type {
@@ -179,7 +181,7 @@ export async function joinViaCode(userId: string, body: JoinHouseholdBody): Prom
   // has no DB-level unique constraint backing it, so the existence check
   // and the insert must happen inside a single SERIALIZABLE transaction
   // or two concurrent joins could both pass the check (F-13).
-  const { household } = await sequelize.transaction(
+  const { household } = await withDeadlockRetry(() => sequelize.transaction(
     { isolationLevel: Transaction.ISOLATION_LEVELS.SERIALIZABLE },
     async (transaction) => {
       const existing = await HouseholdMember.findOne({ where: { userId }, transaction });
@@ -225,6 +227,10 @@ export async function joinViaCode(userId: string, body: JoinHouseholdBody): Prom
         throw new ConflictError('You are already a member of this household.');
       }
 
+      // §7.3: seats come from billing_subscriptions inside this transaction,
+      // with the household row locked FOR UPDATE (hard cap 10 for everyone).
+      await assertSeatAvailable(household.id, transaction);
+
       // Join
       await HouseholdMember.create({
         id: uuidv4(),
@@ -243,7 +249,9 @@ export async function joinViaCode(userId: string, body: JoinHouseholdBody): Prom
 
       return { household, invitation };
     },
-  );
+  ));
+
+  await clearEntitlementCache(household.id);
 
   // Enrichment, not part of the invariant being protected â€” fine outside
   // the transaction.
@@ -320,6 +328,7 @@ export async function removeMember(
 
   await target.destroy();
   await removeFromHouseholdConversation(householdId, targetUserId);
+  await clearEntitlementCache(householdId);
 }
 
 /**
@@ -337,6 +346,7 @@ export async function leaveHousehold(userId: string, householdId: string): Promi
   await membership.destroy();
   await User.update({ role: 'member' }, { where: { id: userId } });
   await removeFromHouseholdConversation(householdId, userId);
+  await clearEntitlementCache(householdId);
 }
 
 export async function transferAdmin(

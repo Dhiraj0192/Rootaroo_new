@@ -46,6 +46,13 @@ jest.mock('../../../shared/services/notifications', () => ({
 }));
 import { notifyUser } from '../../../shared/services/notifications';
 
+jest.mock('../../billing/entitlement', () => ({
+  assertSeatAvailable: jest.fn().mockResolvedValue(undefined),
+  clearEntitlementCache: jest.fn().mockResolvedValue(undefined),
+}));
+import { assertSeatAvailable, clearEntitlementCache } from '../../billing/entitlement';
+import { PaymentRequiredError } from '../../billing/errors';
+
 const userId = '550e8400-e29b-41d4-a716-446655440001';
 const otherUserId = '660e8400-e29b-41d4-a716-446655440002';
 const householdId = '550e8400-e29b-41d4-a716-446655440003';
@@ -148,6 +155,28 @@ describe('Household Service — Invitations', () => {
   });
 
   describe('joinViaCode', () => {
+    function arrangeValidInvite() {
+      (models.HouseholdMember.findOne as jest.Mock).mockResolvedValueOnce(null);
+      (models.Invitation.findOne as jest.Mock).mockResolvedValue(fakeInvitation());
+      (models.HouseholdMember.count as jest.Mock).mockResolvedValue(2);
+      (models.HouseholdMember.create as jest.Mock).mockResolvedValue({});
+    }
+
+    it('checks seats inside the join transaction and clears the entitlement cache', async () => {
+      arrangeValidInvite();
+      await joinViaCode(otherUserId, { code: 'INVITE99' });
+      expect(assertSeatAvailable).toHaveBeenCalledWith(householdId, expect.anything());
+      expect(clearEntitlementCache).toHaveBeenCalledWith(householdId);
+    });
+
+    it('propagates 402 SEAT_LIMIT and creates no membership', async () => {
+      (models.HouseholdMember.create as jest.Mock).mockClear();
+      arrangeValidInvite();
+      (assertSeatAvailable as jest.Mock).mockRejectedValueOnce(new PaymentRequiredError('SEAT_LIMIT', 'full'));
+      await expect(joinViaCode(otherUserId, { code: 'INVITE99' })).rejects.toMatchObject({ statusCode: 402, code: 'SEAT_LIMIT' });
+      expect(models.HouseholdMember.create).not.toHaveBeenCalled();
+    });
+
     it('should add user as member and mark invitation accepted', async () => {
       const inv = fakeInvitation();
       (models.HouseholdMember.findOne as jest.Mock)
