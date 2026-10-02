@@ -1,0 +1,10 @@
+/** Integration tests: real MySQL (rootaroo_test). Run with `npm run test:int`. */
+module.exports = {
+  preset: 'ts-jest',
+  testEnvironment: 'node',
+  roots: ['<rootDir>/src'],
+  testMatch: ['**/__int__/**/*.int.test.ts'],
+  setupFiles: ['<rootDir>/src/test/int/env.ts'],
+  globalSetup: '<rootDir>/src/test/int/globalSetup.ts',
+  testTimeout: 30000,
+};
