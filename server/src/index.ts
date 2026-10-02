@@ -19,6 +19,7 @@ import {
 import { registerChatSocket } from './socket/chatSocket';
 import logger from './shared/utils/logger';
 import { assertBillingConfigAtStartup } from './modules/billing/config';
+import { startCatalogBustSubscriber } from './modules/billing/catalog';
 
 // Optional infra (Redis cache/rate-limit store, etc.) must never take the
 // whole API down. ioredis and its consumers (e.g. rate-limit-redis) can
@@ -59,6 +60,7 @@ setIO(io);
 async function start(): Promise<void> {
   try {
     assertBillingConfigAtStartup();
+    startCatalogBustSubscriber();
     // Connect to MySQL
     await testDatabaseConnection();
 
