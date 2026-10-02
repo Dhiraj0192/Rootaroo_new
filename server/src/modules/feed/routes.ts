@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { authenticate } from '../../shared/middleware/auth';
+import { requireEntitlement } from '../billing/entitlement';
 import { validate } from '../../shared/middleware/validate';
 import * as ctrl from './controller';
 import { uploadFeedMedia } from '../../shared/middleware/upload';
@@ -14,6 +15,7 @@ const router = Router();
 
 // All feed routes require authentication
 router.use(authenticate);
+router.use(requireEntitlement);
 
 // Post CRUD
 router.post('/', validate(createPostSchema), ctrl.create);                            // FR-040/041/042/043

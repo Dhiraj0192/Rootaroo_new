@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { authenticate } from '../../shared/middleware/auth';
+import { requireEntitlement } from '../billing/entitlement';
 import { validate } from '../../shared/middleware/validate';
 import * as ctrl from './controller';
 import { deviceTokenSchema, updatePreferencesSchema } from './validation';
@@ -13,9 +14,9 @@ router.post('/tokens', validate(deviceTokenSchema), ctrl.registerToken);
 router.delete('/tokens/:token', ctrl.unregisterToken);
 
 // Notification history
-router.get('/history', ctrl.getHistory);
-router.post('/history/:id/read', ctrl.markAsRead);
-router.post('/history/read-all', ctrl.markAllAsRead);
+router.get('/history', requireEntitlement, ctrl.getHistory);
+router.post('/history/:id/read', requireEntitlement, ctrl.markAsRead);
+router.post('/history/read-all', requireEntitlement, ctrl.markAllAsRead);
 router.get('/unread-count', ctrl.getUnreadCount);
 
 // Preferences

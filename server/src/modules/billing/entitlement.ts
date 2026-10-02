@@ -1,6 +1,9 @@
-import { Op } from 'sequelize';
-import { Household, BillingSubscription } from '../../database/models';
+import { Request, Response, NextFunction, RequestHandler } from 'express';
+import { Op, Transaction } from 'sequelize';
+import { Household, BillingSubscription, HouseholdMember } from '../../database/models';
+import { AuthenticatedRequest } from '../../shared/middleware/auth';
 import { NotFoundError } from '../../shared/utils/errors';
+import { NoHouseholdError, PaymentRequiredError } from './errors';
 import { cacheDel, cacheGetJson, cacheSetJson, entitlementKey } from './cache';
 import { SEATS_INCLUDED, SEATS_MAX } from './catalog';
 import { livemodeOf, resolveMode } from './mode';
@@ -96,4 +99,47 @@ export async function isEntitledBatch(householdIds: string[], now: Date = new Da
     if (computeEntitlement({ cohort: h.billingCohort, mode, subscriptions: mine, now }).allowed) allowed.add(h.id);
   }
   return allowed;
+}
+
+export interface BillingRequest extends AuthenticatedRequest {
+  billing?: { householdId: string; entitlement: Entitlement; role: 'admin' | 'member' | 'child' };
+}
+
+async function requireEntitlementAsync(req: Request, next: NextFunction): Promise<void> {
+  const userId = (req as AuthenticatedRequest).user!.userId;
+  const membership = await HouseholdMember.findOne({ where: { userId }, attributes: ['householdId', 'role'] });
+  if (!membership) throw new NoHouseholdError();
+  const entitlement = await getEntitlement(membership.householdId);
+  if (!entitlement.allowed) {
+    throw new PaymentRequiredError('SUBSCRIPTION_REQUIRED', 'A Rootaroo subscription is required', {
+      reason: entitlement.reason, isAdmin: membership.role === 'admin',
+    });
+  }
+  (req as BillingRequest).billing = { householdId: membership.householdId, entitlement, role: membership.role };
+  next();
+}
+
+/** Mounted inside each guarded router, after `authenticate` (§7.2). */
+export const requireEntitlement: RequestHandler = (req: Request, _res: Response, next: NextFunction) => {
+  requireEntitlementAsync(req, next).catch(next);
+};
+
+export async function seatsAllowedInTransaction(householdId: string, transaction: Transaction): Promise<number> {
+  const household = await Household.findByPk(householdId, { transaction, lock: Transaction.LOCK.UPDATE, paranoid: false });
+  if (!household) throw new NotFoundError('Household');
+  const mode = resolveMode(household);
+  const rows = await BillingSubscription.findAll({
+    where: { householdId, livemode: livemodeOf(mode), status: { [Op.in]: [...ALLOWED_STATUSES] } },
+    transaction,
+  });
+  const ent = computeEntitlement({ cohort: household.billingCohort, mode, subscriptions: rows.map(toSnapshot), now: new Date() });
+  return Math.min(ent.seatsAllowed, SEATS_MAX);
+}
+
+export async function assertSeatAvailable(householdId: string, transaction: Transaction): Promise<void> {
+  const seatsAllowed = await seatsAllowedInTransaction(householdId, transaction);
+  const memberCount = await HouseholdMember.count({ where: { householdId }, transaction });
+  if (memberCount >= seatsAllowed) {
+    throw new PaymentRequiredError('SEAT_LIMIT', `This household's plan allows ${seatsAllowed} members`, { seatsAllowed, memberCount });
+  }
 }

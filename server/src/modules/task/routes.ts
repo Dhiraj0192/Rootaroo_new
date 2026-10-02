@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { authenticate } from '../../shared/middleware/auth';
+import { requireEntitlement } from '../billing/entitlement';
 import { requireRole } from '../../shared/middleware/rbac';
 import { validate } from '../../shared/middleware/validate';
 import * as ctrl from './controller';
@@ -12,6 +13,7 @@ import {
 const router = Router();
 
 router.use(authenticate);
+router.use(requireEntitlement);
 
 router.post('/', requireRole('member'), validate(createTaskSchema), ctrl.create);    // FR-060/061
 router.get('/', validate(taskQuerySchema), ctrl.list);                                // FR-065

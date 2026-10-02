@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { authenticate } from '../../shared/middleware/auth';
+import { requireEntitlement } from '../billing/entitlement';
 import { validate } from '../../shared/middleware/validate';
 import * as ctrl from './controller';
 import { createGrocerySchema, updateGrocerySchema } from './validation';
@@ -7,6 +8,7 @@ import { createGrocerySchema, updateGrocerySchema } from './validation';
 const router = Router();
 
 router.use(authenticate);
+router.use(requireEntitlement);
 
 router.post('/', validate(createGrocerySchema), ctrl.create);   // FR-080
 router.get('/', ctrl.list);                                      // FR-087
