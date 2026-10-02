@@ -364,14 +364,14 @@ export async function exportHouseholdIcs(userId: string): Promise<string> {
   const lines: string[] = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
-    'PRODID:-//Rootaru//Family Calendar//EN',
+    'PRODID:-//Rootaroo//Family Calendar//EN',
     'CALSCALE:GREGORIAN',
   ];
 
   for (const ev of events) {
     const dtStart = toIcsDateTime(String(ev.eventDate), ev.startTime);
     const dtEnd = toIcsDateTime(String(ev.eventDate), ev.endTime ?? ev.startTime);
-    const uid = `${ev.id}@rootaru`;
+    const uid = `${ev.id}@rootaroo`;
     const summary = escapeIcs(ev.title);
     const description = ev.description ? escapeIcs(ev.description) : '';
 

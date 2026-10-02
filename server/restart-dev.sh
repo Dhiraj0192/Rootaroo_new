@@ -5,7 +5,7 @@ cd "$(dirname "$0")"
 
 echo "Stopping old API on :3000 (if any)..."
 fuser -k 3000/tcp 2>/dev/null || true
-pkill -f 'rootaru/server.*tsx src/index.ts' 2>/dev/null || true
+pkill -f 'rootaroo/server.*tsx src/index.ts' 2>/dev/null || true
 sleep 1
 
 export DB_SOCKET="${DB_SOCKET:-/opt/lampp/var/mysql/mysql.sock}"

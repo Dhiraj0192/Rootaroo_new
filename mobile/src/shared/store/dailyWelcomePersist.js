@@ -4,7 +4,7 @@ import * as SecureStore from 'expo-secure-store';
 // per-member UI-state date, not credentials, and has its own lifecycle
 // (survives logout of a *different* member, must not be wiped by
 // clearTokens()).
-const KEY_PREFIX = 'rootaru_daily_welcome_';
+const KEY_PREFIX = 'rootaroo_daily_welcome_';
 
 // SecureStore keys must be alphanumeric/./-/_ only — memberId is a uuid so
 // this is already safe, but guard against any stray character anyway.

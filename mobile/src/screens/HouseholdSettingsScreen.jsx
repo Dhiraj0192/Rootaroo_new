@@ -78,7 +78,7 @@ export default function HouseholdSettingsScreen({ navigation }) {
   const currentUserRole = myRole || user?.role || 'member';
   const isAdmin = currentUserRole === 'admin';
   const isChild = currentUserRole === 'child';
-  const joinLink = inviteCode ? `rootaru://join?code=${inviteCode}` : null;
+  const joinLink = inviteCode ? `rootaroo://join?code=${inviteCode}` : null;
   const memberCountLabel = `${members.length} member${members.length === 1 ? '' : 's'}`;
   const joinedOn = (iso) =>
     iso ? new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : null;

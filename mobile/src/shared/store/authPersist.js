@@ -1,10 +1,10 @@
 import * as SecureStore from 'expo-secure-store';
 
 const KEYS = {
-  ACCESS_TOKEN: 'rootaru_access_token',
-  REFRESH_TOKEN: 'rootaru_refresh_token',
-  USER: 'rootaru_user',
-  HOUSEHOLD_ID: 'rootaru_household_id',
+  ACCESS_TOKEN: 'rootaroo_access_token',
+  REFRESH_TOKEN: 'rootaroo_refresh_token',
+  USER: 'rootaroo_user',
+  HOUSEHOLD_ID: 'rootaroo_household_id',
 };
 
 export async function saveTokens(accessToken, refreshToken, user) {

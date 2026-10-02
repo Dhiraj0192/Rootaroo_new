@@ -38,7 +38,7 @@ export default function InviteMembersScreen({ navigation }) {
       .finally(() => setLoading(false));
   }, [householdId]);
   const displayCode = loading ? '···-···' : inviteCode || 'MND-482';
-  const joinLink = inviteCode ? `rootaru://join?code=${inviteCode}` : null;
+  const joinLink = inviteCode ? `rootaroo://join?code=${inviteCode}` : null;
   const handleCopy = async () => {
     await Clipboard.setStringAsync(displayCode);
     setCopied(true);

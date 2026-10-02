@@ -101,7 +101,7 @@ describe('Household Service — Invitations', () => {
 
       expect(result.code).toBeTruthy();
       expect(result.code.length).toBe(8);
-      expect(result.shareLink).toContain('rootaru://join?code=');
+      expect(result.shareLink).toContain('rootaroo://join?code=');
       expect(result.expiresAt).toBeTruthy();
       expect(models.Invitation.create).toHaveBeenCalledWith(
         expect.objectContaining({ householdId, invitedBy: userId }),

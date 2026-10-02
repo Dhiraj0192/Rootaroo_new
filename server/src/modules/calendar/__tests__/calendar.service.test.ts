@@ -257,6 +257,13 @@ describe('exportHouseholdIcs (FR-185)', () => {
     const ics = await exportHouseholdIcs(userId);
     expect(ics).toContain('RRULE:FREQ=WEEKLY');
   });
+
+  it('uses the rootaroo UID domain and product id (branding)', async () => {
+    (modelsMock.CalendarEvent.findAll as jest.Mock).mockResolvedValue([fakeEvent({ id: 'ev-1' })]);
+    const ics = await exportHouseholdIcs(userId);
+    expect(ics).toContain('UID:ev-1@rootaroo');
+    expect(ics).toContain('PRODID:-//Rootaroo//Family Calendar//EN');
+  });
 });
 
 describe('notifyUpcomingEvents (FR-186)', () => {

@@ -146,7 +146,7 @@ export async function generateInvitation(
     id: invitation.id,
     code,
     expiresAt: expiresAt.toISOString(),
-    shareLink: `rootaru://join?code=${code}`,
+    shareLink: `rootaroo://join?code=${code}`,
   };
 }
 

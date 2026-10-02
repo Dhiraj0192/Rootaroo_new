@@ -594,7 +594,7 @@
     <h4><span class="wnum">6</span>HouseholdSetupScreen.jsx — wizard step 5 of 8</h4>
     <p class="subtitle">Create a new household, or join an existing one by code or QR scan</p>
     <div class="widget-row"><span class="k">Create branch</span><span class="v">Household name field → <code>householdApi.create(name)</code> → <code>POST /households/</code> (creator becomes admin, per the Household workflow above). Then navigates onward to <code>SignupStepAddress</code> — address collection only happens for someone setting up a brand-new household.</span></div>
-    <div class="widget-row"><span class="k">Join branch</span><span class="v">Invite-code field, or a QR scanner modal that parses a <code>rootaru://join?code=XXXX</code> deep link. → <code>householdApi.join(code)</code> → <code>POST /households/join</code>. Then calls <code>navigateAfterHouseholdSetup</code> directly — the Address screen is skipped entirely for someone joining a household that already has one.</span></div>
+    <div class="widget-row"><span class="k">Join branch</span><span class="v">Invite-code field, or a QR scanner modal that parses a <code>rootaroo://join?code=XXXX</code> deep link. → <code>householdApi.join(code)</code> → <code>POST /households/join</code>. Then calls <code>navigateAfterHouseholdSetup</code> directly — the Address screen is skipped entirely for someone joining a household that already has one.</span></div>
   </div>
 
   <div class="widget-card">
@@ -616,7 +616,7 @@
   <div class="widget-card">
     <h4><span class="wnum">9</span>InviteMembersScreen.jsx — wizard step 8 of 8, final screen</h4>
     <p class="subtitle">Show the household's invite code, let the new user bring others in, then actually enter the app</p>
-    <div class="widget-row"><span class="k">Shows</span><span class="v">The household's invite code as text and as a QR code (encoding the same <code>rootaru://join?code=XXXX</code> deep link <code>HouseholdSetupScreen</code>'s scanner reads), copy-to-clipboard and native-share buttons, and the current member list.</span></div>
+    <div class="widget-row"><span class="k">Shows</span><span class="v">The household's invite code as text and as a QR code (encoding the same <code>rootaroo://join?code=XXXX</code> deep link <code>HouseholdSetupScreen</code>'s scanner reads), copy-to-clipboard and native-share buttons, and the current member list.</span></div>
     <div class="widget-row"><span class="k">Requests</span><span class="v"><code>GET /households/:id</code> (for the invite code) and <code>GET /households/:id/members</code> — both read-only, no writes on this screen.</span></div>
     <div class="widget-row"><span class="k">Finish — no server call</span><span class="v">Tapping the final Continue calls <code>finish()</code>, which is entirely client-side: marks the local signup-progress record <code>step: 'done', setupComplete: true</code>, triggers a celebration animation in the auth store, then calls <code>completeSetup()</code> — this is the exact moment the app's navigator flips from the auth/wizard stack over to the main authenticated app. Nothing is sent to the server at this step; every piece of state it needed was already saved along the way.</span></div>
   </div>
@@ -1693,7 +1693,7 @@
   </div>
 
   <div class="flow">
-    <div class="flow-step ext"><span class="actor">Cloudinary</span><p>Each file is routed by MIME type into <code>rootaru/feed/videos</code> or <code>rootaru/feed/images</code>, uploaded in parallel.</p></div>
+    <div class="flow-step ext"><span class="actor">Cloudinary</span><p>Each file is routed by MIME type into <code>rootaroo/feed/videos</code> or <code>rootaroo/feed/images</code>, uploaded in parallel.</p></div>
     <div class="flow-step"><span class="actor">Response</span><p><code>201</code> → array of <code>{ fileName, url, size, mimetype }</code>, one per uploaded file — ready to drop straight into the <code>media</code> array of a subsequent create-post call.</p></div>
   </div>
 </section>

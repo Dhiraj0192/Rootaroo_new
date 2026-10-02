@@ -59,7 +59,7 @@ export async function exportIcs(req: Request, res: Response, next: NextFunction)
   try {
     const ics = await calendarService.exportHouseholdIcs(getUserId(req));
     res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
-    res.setHeader('Content-Disposition', 'attachment; filename="rootaru-calendar.ics"');
+    res.setHeader('Content-Disposition', 'attachment; filename="rootaroo-calendar.ics"');
     res.status(200).send(ics);
   } catch (e) {
     next(e);
