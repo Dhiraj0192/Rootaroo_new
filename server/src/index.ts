@@ -19,6 +19,7 @@ import {
 import { registerChatSocket } from './socket/chatSocket';
 import logger from './shared/utils/logger';
 import { assertBillingConfigAtStartup } from './modules/billing/config';
+import { assertNoUploadsInProduction } from './shared/middleware/uploads';
 import { startCatalogBustSubscriber } from './modules/billing/catalog';
 
 // Optional infra (Redis cache/rate-limit store, etc.) must never take the
@@ -61,6 +62,7 @@ async function start(): Promise<void> {
   try {
     assertBillingConfigAtStartup();
     startCatalogBustSubscriber();
+    assertNoUploadsInProduction(app, env.nodeEnv);
     // Connect to MySQL
     await testDatabaseConnection();
 

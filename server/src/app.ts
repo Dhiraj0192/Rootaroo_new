@@ -22,6 +22,7 @@ import vaultRouter from './modules/vault/routes';
 import chatRouter from './modules/chat/routes';
 import eventRouter from './modules/calendar/routes';
 import calendarFeedRouter from './modules/calendar/feedRoutes';
+import { shouldServeUploads } from './shared/middleware/uploads';
 import billingRouter from './modules/billing/routes';
 import checkInRouter from './modules/checkin/routes';
 import pingRouter from './modules/ping/routes';
@@ -129,7 +130,9 @@ app.get('/health', (_req, res) => {
 });
 
 // ── Static files (uploaded media) ──
-app.use('/uploads', express.static(path.resolve(env.uploadDir || './uploads')));
+if (shouldServeUploads(env.nodeEnv)) {
+  app.use('/uploads', express.static(path.resolve(env.uploadDir || './uploads')));
+}
 
 // ── API Routes ──
 app.use('/api/v1/auth', authRouter);

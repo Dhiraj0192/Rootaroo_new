@@ -1,3 +1,5 @@
+jest.mock('../../billing/entitlement', () => ({ isEntitledBatch: jest.fn(async (ids: string[]) => new Set(ids)) }));
+import { isEntitledBatch } from '../../billing/entitlement';
 jest.mock('../../billing/socketGate', () => ({ emitToHousehold: jest.fn().mockResolvedValue(undefined) }));
 import {
   createEvent,
@@ -19,6 +21,7 @@ import {
   connectAppleCalendar,
   disconnectAppleCalendar,
   syncAppleUserCalendar,
+  emptyCalendarIcs,
 } from '../service';
 import { ForbiddenError } from '../../../shared/utils/errors';
 
@@ -553,6 +556,18 @@ describe('Outlook Calendar sync (one-way ICS feed)', () => {
       expect(modelsMock.CalendarSyncState.destroy).toHaveBeenCalledWith({
         where: { userId: syncUserId, provider: 'outlook' },
       });
+    });
+  });
+
+  describe('Outlook ICS feed paywall (B10)', () => {
+    it('returns a valid empty calendar for a blocked household', async () => {
+      (modelsMock.CalendarSyncState.findOne as jest.Mock).mockResolvedValue({ userId: 'user-1' });
+      (modelsMock.HouseholdMember.findOne as jest.Mock).mockResolvedValue({ householdId: 'hh-1' });
+      (isEntitledBatch as jest.Mock).mockResolvedValueOnce(new Set());
+      const ics = await getOutlookFeedIcs('tok');
+      expect(ics).toBe(emptyCalendarIcs());
+      expect(ics).toContain('BEGIN:VCALENDAR');
+      expect(ics).not.toContain('BEGIN:VEVENT');
     });
   });
 
