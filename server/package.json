@@ -21,7 +21,7 @@
     "db:seed": "npx sequelize-cli db:seed:all",
     "db:seed:undo": "npx sequelize-cli db:seed:undo:all",
     "format": "prettier --write src/",
-    "prepare": "husky"
+    "prepare": "cd .. && husky server/.husky"
   },
   "author": "Sohan Luitel / Dhiraj Yadav / Siddhant Bhatta / Nischal",
   "license": "UNLICENSED",
