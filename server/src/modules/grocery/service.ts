@@ -7,7 +7,7 @@ import {
 import { NotFoundError, ForbiddenError } from '../../shared/utils/errors';
 import { getUserHousehold as getUserHouseholdCore } from '../../shared/utils/household';
 import logger from '../../shared/utils/logger';
-import { getIO } from '../../shared/utils/socket';
+import { emitToHousehold } from '../billing/socketGate';
 import type {
   CreateGroceryBody,
   UpdateGroceryBody,
@@ -200,7 +200,7 @@ export async function toggleBought(
   // Only broadcast on the bought edge — un-marking isn't streak-relevant.
   if (becameBought) {
     try {
-      getIO().to(`household:${householdId}`).emit('grocery:bought', response);
+      void emitToHousehold(householdId, 'grocery:bought', response);
     } catch (e) {
       logger.warn('[WS] Grocery-bought broadcast failed:', (e as Error).message);
     }

@@ -7,7 +7,7 @@ import {
 import { NotFoundError, ForbiddenError } from '../../shared/utils/errors';
 import { getUserHousehold as getUserHouseholdCore } from '../../shared/utils/household';
 import logger from '../../shared/utils/logger';
-import { getIO } from '../../shared/utils/socket';
+import { emitToHousehold } from '../billing/socketGate';
 import * as notificationService from '../notification/service';
 import type {
   CreateTodoBody,
@@ -208,7 +208,7 @@ export async function toggleComplete(
   // Only broadcast on the completing edge — reopening isn't streak-relevant.
   if (becameCompleted) {
     try {
-      getIO().to(`household:${householdId}`).emit('todo:completed', response);
+      void emitToHousehold(householdId, 'todo:completed', response);
     } catch (e) {
       logger.warn('[WS] Todo-completed broadcast failed:', (e as Error).message);
     }

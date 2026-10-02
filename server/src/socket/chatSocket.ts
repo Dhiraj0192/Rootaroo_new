@@ -4,6 +4,7 @@ import {
   requireHouseholdAccess,
 } from '../shared/middleware/socketAuth';
 import logger from '../shared/utils/logger';
+import { isSocketEntitled } from '../modules/billing/socketGate';
 
 /**
  * Registers chat-related socket event handlers.
@@ -15,18 +16,20 @@ import logger from '../shared/utils/logger';
 export function registerChatSocket(io: SocketIOServer): void {
   io.on('connection', (socket: AuthenticatedSocket) => {
     // ── Typing indicator ──
-    socket.on('chat:typing', (data: { householdId: string }) => {
+    socket.on('chat:typing', async (data: { householdId: string }) => {
       if (!data?.householdId || typeof data.householdId !== 'string') return;
       if (!requireHouseholdAccess(socket, data.householdId)) return;
+      if (!(await isSocketEntitled(socket))) return;
 
       socket.to(`household:${data.householdId}`).emit('chat:typing', {
         userId: socket.data.userId,
       });
     });
 
-    socket.on('chat:stop-typing', (data: { householdId: string }) => {
+    socket.on('chat:stop-typing', async (data: { householdId: string }) => {
       if (!data?.householdId || typeof data.householdId !== 'string') return;
       if (!requireHouseholdAccess(socket, data.householdId)) return;
+      if (!(await isSocketEntitled(socket))) return;
 
       socket.to(`household:${data.householdId}`).emit('chat:stop-typing', {
         userId: socket.data.userId,
@@ -36,10 +39,11 @@ export function registerChatSocket(io: SocketIOServer): void {
     // ── Message read receipt ──
     socket.on(
       'chat:read',
-      (data: { householdId: string; messageId: string }) => {
+      async (data: { householdId: string; messageId: string }) => {
         if (!data?.householdId || typeof data.householdId !== 'string') return;
         if (!data?.messageId || typeof data.messageId !== 'string') return;
         if (!requireHouseholdAccess(socket, data.householdId)) return;
+        if (!(await isSocketEntitled(socket))) return;
 
         socket.to(`household:${data.householdId}`).emit('chat:read', {
           userId: socket.data.userId,
@@ -49,9 +53,10 @@ export function registerChatSocket(io: SocketIOServer): void {
     );
 
     // ── Presence / online status ──
-    socket.on('presence:online', (data: { householdId: string }) => {
+    socket.on('presence:online', async (data: { householdId: string }) => {
       if (!data?.householdId || typeof data.householdId !== 'string') return;
       if (!requireHouseholdAccess(socket, data.householdId)) return;
+      if (!(await isSocketEntitled(socket))) return;
 
       socket.to(`household:${data.householdId}`).emit('presence:online', {
         userId: socket.data.userId,

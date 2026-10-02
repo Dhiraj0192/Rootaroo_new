@@ -8,7 +8,7 @@ import {
 import { NotFoundError, ForbiddenError } from '../../shared/utils/errors';
 import { isCurrentHouseholdAdmin, getUserHousehold as getUserHouseholdCore } from '../../shared/utils/household';
 import logger from '../../shared/utils/logger';
-import { getIO } from '../../shared/utils/socket';
+import { emitToHousehold } from '../billing/socketGate';
 import * as notificationService from '../notification/service';
 import type {
   CreateTaskBody,
@@ -386,7 +386,7 @@ export async function completeTask(
   // Live-update other household members' dashboards (streak/leaderboard) —
   // same fire-and-forget pattern as feed's new-post broadcast.
   try {
-    getIO().to(`household:${householdId}`).emit('task:completed', response);
+    void emitToHousehold(householdId, 'task:completed', response);
   } catch (e) {
     logger.warn('[WS] Task-completed broadcast failed:', (e as Error).message);
   }

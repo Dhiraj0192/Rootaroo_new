@@ -22,7 +22,7 @@ import {
   deleteAppleEvent,
 } from '../../shared/utils/appleCalendar';
 import logger from '../../shared/utils/logger';
-import { getIO } from '../../shared/utils/socket';
+import { emitToHousehold } from '../billing/socketGate';
 import type {
   CalendarEventResponse,
   CreateEventBody,
@@ -151,7 +151,7 @@ export async function createEvent(
   const response = toResponse(withInvitees);
 
   try {
-    getIO().to(`household:${householdId}`).emit('calendar:event-created', response);
+    void emitToHousehold(householdId, 'calendar:event-created', response);
   } catch (e) {
     logger.warn('[WS] Calendar event broadcast failed:', (e as Error).message);
   }

@@ -16,7 +16,7 @@ import { isCurrentHouseholdAdmin, getUserHousehold as getUserHouseholdCore } fro
 import { CommentReaction } from '../../database/models';
 import logger from '../../shared/utils/logger';
 import * as notificationService from '../notification/service';
-import { getIO } from '../../shared/utils/socket';
+import { emitToHousehold } from '../billing/socketGate';
 import type {
   CreatePostBody,
   CreateCommentBody,
@@ -272,7 +272,7 @@ export async function createPost(
 
   // FR-046: Broadcast new post to household via WebSocket
   try {
-    getIO().to(`household:${householdId}`).emit('feed:new-post', result);
+    void emitToHousehold(householdId, 'feed:new-post', result);
   } catch (e) {
     logger.warn('[WS] Feed broadcast failed:', (e as Error).message);
   }
