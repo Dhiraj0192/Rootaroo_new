@@ -76,7 +76,7 @@ New server module `server/src/modules/billing/`:
 
 | File | Responsibility |
 |---|---|
-| `config.ts` | Loads keys for each mode, checks them at startup (§4.2), and builds one `Stripe` client per mode. Pins API version `2026-09-30.endive` and SDK `stripe@22.x`. Exposes the env tag. |
+| `config.ts` | Loads keys for each mode, checks them at startup (§4.2), and builds one `Stripe` client per mode. Pins API version `2026-09-30.endive` and SDK `stripe@23.x`. Exposes the env tag. |
 | `mode.ts` | `resolveMode(household)`; `modeFromLivemode(bool)` |
 | `catalog.ts` | Price sets loaded by lookup key and cached per mode (10 min, cleared through Redis pub/sub); `GET /billing/plans` |
 | `entitlement.ts` | `getEntitlement()`, the `requireEntitlement` middleware, `isEntitledBatch()` for jobs, seat checks |

@@ -6,13 +6,13 @@
 
 **Architecture:** A new server module `server/src/modules/billing/` owns all billing state. Stripe is the source of truth: a single function, `upsertSubscription`, fetches fresh Stripe state under a named lock and is the only writer of subscription rows. Webhooks are verified, persisted and acknowledged immediately, then processed by an in-process worker with a sweep job. Entitlement is computed from local rows (mode-matched, Redis-cached for 60 s) and enforced by `requireEntitlement` in every guarded router, by socket gates, ICS and job filters. The mobile app reads `/billing/status` into a Zustand store and swaps `MainTabs` for a paywall stack when blocked.
 
-**Tech Stack:** Node 22, Express 4, TypeScript 5 (strict), Sequelize 6 + MySQL 8, ioredis, node-cron, Zod, winston, Jest 29 + ts-jest + supertest, `stripe@22.x` (API `2026-09-30.endive`), Stripe CLI; Expo SDK 54 / React Native 0.81 / Zustand 5 / axios / `expo-web-browser`; Phase 2–3: `@apple/app-store-server-library`, `@googleapis/androidpublisher`, `jose`.
+**Tech Stack:** Node 22, Express 4, TypeScript 5 (strict), Sequelize 6 + MySQL 8, ioredis, node-cron, Zod, winston, Jest 29 + ts-jest + supertest, `stripe@23.x` (API `2026-09-30.endive`), Stripe CLI; Expo SDK 54 / React Native 0.81 / Zustand 5 / axios / `expo-web-browser`; Phase 2–3: `@apple/app-store-server-library`, `@googleapis/androidpublisher`, `jose`.
 
 **Spec:** `docs/superpowers/specs/2026-10-02-billing-stripe-iap-design.md` (v2). The spec is the source of truth; when this plan and the spec disagree, stop and ask the orchestrator. Section references like "§8.1" point into the spec.
 
 ## Global Constraints
 
-- Stripe SDK: `stripe@22.x`; every client is `new Stripe(key, { apiVersion: '2026-09-30.endive' })`. Never use the global key pattern.
+- Stripe SDK: `stripe@23.x`; every client is `new Stripe(key, { apiVersion: '2026-09-30.endive' })`. Never use the global key pattern.
 - Never pass `payment_method_types`. `allow_promotion_codes: false`. `automatic_tax` stays off. Prices are `tax_behavior: 'exclusive'`.
 - Currency USD; all amounts are integer cents; all ledger amounts are positive (direction comes from `type`).
 - Lookup keys: `rootaroo_hh{N}_month` / `rootaroo_hh{N}_year`, N = 5..10. Monthly = 899 + 199 × (N − 5); yearly = 7999 + 2388 × (N − 5). Launch `price_set` = `2026-10`.
@@ -124,7 +124,7 @@ Mobile, new: `mobile/src/shared/api/billing.js`, `mobile/src/shared/store/billin
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `stripe` 22.x in `server/node_modules`; Stripe CLI on PATH; a recorded baseline of pre-existing test/type/lint results.
+- Produces: `stripe` 23.x in `server/node_modules`; Stripe CLI on PATH; a recorded baseline of pre-existing test/type/lint results.
 
 - [ ] **Step 1: Install dependencies**
 
@@ -151,7 +151,7 @@ cd server && npm install stripe@^22
 node -e "console.log(require('stripe/package.json').version)"
 grep -rl "2026-09-30.endive" node_modules/stripe/types | head -n 1
 ```
-Expected: version prints `22.x.y`; grep prints a file path. If grep prints nothing, run `npm install stripe@22` (latest 22 minor) and retry; if still nothing, STOP and report to the orchestrator (the pinned API version must exist in the SDK types).
+Expected: version prints `23.x.y`; grep prints a file path. If grep prints nothing, run `npm install stripe@23` (latest 23 minor) and retry; if still nothing, STOP and report to the orchestrator (the pinned API version must exist in the SDK types).
 
 - [ ] **Step 4: Install and verify the Stripe CLI**
 
@@ -678,7 +678,7 @@ git config core.hooksPath
 Acceptance:
 - Unit suite result equals the Task 0.1 baseline plus the new `scanSecrets` suite passing.
 - `npm run test:int` passes; `rootaroo_dev` and `rootaroo_test` are migrated.
-- `stripe --version` prints; `stripe` 22.x installed with `2026-09-30.endive` in its types.
+- `stripe --version` prints; `stripe` 23.x installed with `2026-09-30.endive` in its types.
 - `core.hooksPath` is `server/.husky/_` and the Task 0.3 Step 6 probe was blocked.
 - `server/.env` exists, is gitignored and is not staged (`git status --porcelain server/.env` prints nothing).
 - Redis status recorded in `docs/superpowers/evidence/w0-baseline.md`.
@@ -6581,7 +6581,7 @@ export async function createCheckout(userId: string, body: CheckoutBody, client:
   return withLock(checkoutLockName(ctx.household.id, ctx.mode), 60_000, () => createCheckoutLocked(ctx, body, now), { waitMs: 10_000 });
 }
 ```
-If `tsc` reports `origin_context` or `integration_identifier` missing from `Stripe.Checkout.SessionCreateParams`, the SDK predates them: upgrade within 22.x; do not cast them away.
+If `tsc` reports `origin_context` or `integration_identifier` missing from `Stripe.Checkout.SessionCreateParams`, the SDK predates them: upgrade within 23.x; do not cast them away.
 
 `controller.ts` add:
 ```ts

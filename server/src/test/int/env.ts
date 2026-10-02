@@ -1,4 +1,8 @@
 // Runs before any module import in every integration test file.
+// server/.env.impl (gitignored, throwaway DB credentials) overrides server/.env when present; dotenv never overrides set vars.
+import path from 'path';
+import dotenv from 'dotenv';
+dotenv.config({ path: path.resolve(__dirname, '../../../.env.impl') });
 process.env.NODE_ENV = 'test';
 process.env.DB_NAME = process.env.DB_NAME_TEST || 'rootaroo_test';
 if (!process.env.DB_NAME.endsWith('_test')) {
