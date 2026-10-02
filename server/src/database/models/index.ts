@@ -41,6 +41,16 @@ import Conversation from './Conversation';
 import ConversationParticipant from './ConversationParticipant';
 import JournalEntry from './JournalEntry';
 import JournalMedia from './JournalMedia';
+import BillingCustomer from './BillingCustomer';
+import BillingSubscription from './BillingSubscription';
+import BillingCheckoutSession from './BillingCheckoutSession';
+import BillingEvent from './BillingEvent';
+import BillingTransaction from './BillingTransaction';
+import BillingRoutingRule from './BillingRoutingRule';
+import BillingPriceNotice from './BillingPriceNotice';
+import BillingReconciliationRun from './BillingReconciliationRun';
+import BillingReconciliationItem from './BillingReconciliationItem';
+import AdminAuditLog from './AdminAuditLog';
 
 const models = {
   User,
@@ -83,6 +93,16 @@ const models = {
   DeviceToken,
   JournalEntry,
   JournalMedia,
+  BillingCustomer,
+  BillingSubscription,
+  BillingCheckoutSession,
+  BillingEvent,
+  BillingTransaction,
+  BillingRoutingRule,
+  BillingPriceNotice,
+  BillingReconciliationRun,
+  BillingReconciliationItem,
+  AdminAuditLog,
 };
 
 export function setupAssociations(): void {
@@ -287,6 +307,12 @@ export function setupAssociations(): void {
   GroceryItem.belongsTo(User, { foreignKey: 'bought_by', as: 'buyer' });
   TodoItem.belongsTo(User, { foreignKey: 'assigned_to', as: 'assignee' });
   TodoItem.belongsTo(User, { foreignKey: 'created_by', as: 'creator' });
+  // -- Billing --
+  BillingCustomer.belongsTo(Household, { foreignKey: 'householdId', as: 'household', constraints: false });
+  BillingSubscription.belongsTo(Household, { foreignKey: 'householdId', as: 'household', constraints: false });
+  BillingTransaction.belongsTo(Household, { foreignKey: 'householdId', as: 'household', constraints: false });
+  BillingTransaction.belongsTo(BillingSubscription, { foreignKey: 'subscriptionId', as: 'subscription', constraints: false });
+  BillingPriceNotice.belongsTo(BillingSubscription, { foreignKey: 'subscriptionId', as: 'subscription', constraints: false });
 }
 
 export {
@@ -332,6 +358,16 @@ export {
   DeviceToken,
   JournalEntry,
   JournalMedia,
+  BillingCustomer,
+  BillingSubscription,
+  BillingCheckoutSession,
+  BillingEvent,
+  BillingTransaction,
+  BillingRoutingRule,
+  BillingPriceNotice,
+  BillingReconciliationRun,
+  BillingReconciliationItem,
+  AdminAuditLog,
 };
 
 export default models;
