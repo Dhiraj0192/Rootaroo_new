@@ -22,6 +22,7 @@ import vaultRouter from './modules/vault/routes';
 import chatRouter from './modules/chat/routes';
 import eventRouter from './modules/calendar/routes';
 import calendarFeedRouter from './modules/calendar/feedRoutes';
+import billingRouter from './modules/billing/routes';
 import checkInRouter from './modules/checkin/routes';
 import pingRouter from './modules/ping/routes';
 import placeRouter from './modules/place/routes';
@@ -148,6 +149,7 @@ app.use('/api/v1/checkins', checkInRouter);
 app.use('/api/v1/pings', pingRouter);
 app.use('/api/v1/places', placeRouter);
 app.use('/api/v1/journal', journalRouter);
+app.use('/api/v1/billing', billingRouter);
 app.use('/api/v1/admin', adminRouter);
 app.use('/api/v1/weather', weatherRouter);
 
