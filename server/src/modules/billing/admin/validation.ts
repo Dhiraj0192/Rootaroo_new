@@ -41,3 +41,14 @@ export const subscriptionsQuerySchema: ValidationSchemas = {
     limit: limitSchema,
   }),
 };
+
+export const runsQuerySchema: ValidationSchemas = { query: z.object({ mode: modeSchema, cursor: cursorSchema, limit: limitSchema }) };
+export const itemsQuerySchema: ValidationSchemas = {
+  query: z.object({ mode: modeSchema, status: z.enum(['auto_fixed', 'needs_review', 'resolved', 'ignored']).optional(), cursor: cursorSchema, limit: limitSchema }),
+};
+export const runBodySchema: ValidationSchemas = { body: z.object({ mode: z.enum(['test', 'live']) }) };
+export const resolveSchema: ValidationSchemas = {
+  params: z.object({ id: z.string().uuid() }),
+  body: z.object({ resolution: z.enum(['resolved', 'ignored']), note: z.string().min(1).max(1000) }),
+};
+export const replayParamsSchema: ValidationSchemas = { params: z.object({ id: z.string().min(1).max(255) }) };

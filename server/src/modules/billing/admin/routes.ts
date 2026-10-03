@@ -2,7 +2,10 @@ import { Router } from 'express';
 import { validate } from '../../../shared/middleware/validate';
 import { auditLog, requireBillingAdminKey } from './auth';
 import * as ctrl from './controller';
-import { idParamSchema, subscriptionsQuerySchema, summaryQuerySchema, transactionsQuerySchema } from './validation';
+import {
+  idParamSchema, itemsQuerySchema, replayParamsSchema, resolveSchema, runBodySchema, runsQuerySchema,
+  subscriptionsQuerySchema, summaryQuerySchema, transactionsQuerySchema,
+} from './validation';
 
 const router = Router();
 
@@ -112,5 +115,72 @@ router.get('/transactions/:id', validate(idParamSchema), ctrl.transaction);
 router.get('/summary', validate(summaryQuerySchema), ctrl.summary);
 router.get('/subscriptions', validate(subscriptionsQuerySchema), ctrl.subscriptions);
 router.get('/households/:id', validate(idParamSchema), ctrl.household);
+
+/**
+ * @openapi
+ * /billing-admin/reconciliation/runs:
+ *   get:
+ *     tags: [BillingAdmin]
+ *     summary: Reconciliation runs (newest first)
+ *     security: [{ billingAdminKey: [] }]
+ *     parameters:
+ *       - { in: query, name: mode, schema: { type: string, enum: [test, live], default: live } }
+ *       - { in: query, name: cursor, schema: { type: string } }
+ *       - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+ *     responses:
+ *       200: { description: "{ success, data, nextCursor }" }
+ *       400: { description: Invalid parameters }
+ * /billing-admin/reconciliation/items:
+ *   get:
+ *     tags: [BillingAdmin]
+ *     summary: Review queue items; filter status=needs_review|auto_fixed|resolved|ignored
+ *     security: [{ billingAdminKey: [] }]
+ *     parameters:
+ *       - { in: query, name: mode, schema: { type: string, enum: [test, live], default: live } }
+ *       - { in: query, name: status, schema: { type: string, enum: [auto_fixed, needs_review, resolved, ignored] } }
+ *       - { in: query, name: cursor, schema: { type: string } }
+ *       - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+ *     responses:
+ *       200: { description: "{ success, data, nextCursor }" }
+ *       400: { description: Invalid parameters }
+ * /billing-admin/reconciliation/run:
+ *   post:
+ *     tags: [BillingAdmin]
+ *     summary: Run a manual reconciliation for one mode now
+ *     security: [{ billingAdminKey: [] }]
+ *     requestBody: { required: true, content: { application/json: { schema: { type: object, required: [mode], properties: { mode: { type: string, enum: [test, live] } } } } } }
+ *     responses:
+ *       200: { description: The finished run }
+ *       400: { description: Invalid mode }
+ *       409: { description: LOCK_BUSY (a run is in progress) }
+ * /billing-admin/reconciliation/items/{id}/resolve:
+ *   post:
+ *     tags: [BillingAdmin]
+ *     summary: Resolve or ignore a review item with a note (audited)
+ *     security: [{ billingAdminKey: [] }]
+ *     parameters:
+ *       - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+ *     requestBody: { required: true, content: { application/json: { schema: { type: object, required: [resolution, note], properties: { resolution: { type: string, enum: [resolved, ignored] }, note: { type: string } } } } } }
+ *     responses:
+ *       200: { description: Updated item }
+ *       400: { description: Invalid body }
+ *       404: { description: Not found }
+ * /billing-admin/events/{id}/replay:
+ *   post:
+ *     tags: [BillingAdmin]
+ *     summary: Re-queue a stored webhook event (row id or provider event id)
+ *     security: [{ billingAdminKey: [] }]
+ *     parameters:
+ *       - { in: path, name: id, required: true, schema: { type: string } }
+ *     responses:
+ *       200: { description: The event row }
+ *       404: { description: Not found }
+ *       409: { description: EVENT_PROCESSING (a worker holds the event) }
+ */
+router.get('/reconciliation/runs', validate(runsQuerySchema), ctrl.runs);
+router.get('/reconciliation/items', validate(itemsQuerySchema), ctrl.items);
+router.post('/reconciliation/run', validate(runBodySchema), ctrl.runNow);
+router.post('/reconciliation/items/:id/resolve', validate(resolveSchema), ctrl.resolve);
+router.post('/events/:id/replay', validate(replayParamsSchema), ctrl.replay);
 
 export default router;

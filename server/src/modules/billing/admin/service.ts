@@ -1,9 +1,10 @@
 import { Op, WhereOptions } from 'sequelize';
-import { BillingCustomer, BillingSubscription, BillingTransaction, Household, HouseholdMember, User } from '../../../database/models';
+import { BillingCustomer, BillingEvent, BillingReconciliationItem, BillingReconciliationRun, BillingSubscription, BillingTransaction, Household, HouseholdMember, User } from '../../../database/models';
 import { getEntitlement } from '../entitlement';
+import { enqueueEvent } from '../worker';
 import type { Entitlement } from '../types';
 import type { LedgerType } from '../../../database/models/BillingTransaction';
-import { NotFoundError, ValidationError } from '../../../shared/utils/errors';
+import { AppError, NotFoundError, ValidationError } from '../../../shared/utils/errors';
 
 export function ping(): { ok: true } { return { ok: true }; }
 
@@ -178,4 +179,45 @@ export async function getHouseholdBilling(householdId: string): Promise<Househol
     members: members.map((m) => ({ userId: m.userId, role: m.role, displayName: m.user?.displayName ?? null, email: m.user?.email ?? null })),
     recentTransactions: recent.map(toView),
   };
+}
+
+async function page<T extends { createdAt: Date; id: string }>(
+  finder: (where: WhereOptions, limit: number) => Promise<T[]>, base: Record<string, unknown>, cursor: string | undefined, limit: number,
+): Promise<{ data: T[]; nextCursor: string | null }> {
+  const where: Record<string | symbol, unknown> = { ...base };
+  const c = decodeCursor(cursor);
+  if (c) where[Op.or] = [{ createdAt: { [Op.lt]: c.at } }, { createdAt: c.at, id: { [Op.lt]: c.id } }];
+  const rows = await finder(where as WhereOptions, limit + 1);
+  const data = rows.slice(0, limit);
+  const last = data[data.length - 1];
+  return { data, nextCursor: rows.length > limit && last ? encodeCursor(last.createdAt, last.id) : null };
+}
+
+export function listRuns(mode: 'test' | 'live', cursor: string | undefined, limit: number) {
+  return page((where, l) => BillingReconciliationRun.findAll({ where, order: [['createdAt', 'DESC'], ['id', 'DESC']], limit: l }), { livemode: mode === 'live' }, cursor, limit);
+}
+
+export function listItems(mode: 'test' | 'live', status: string | undefined, cursor: string | undefined, limit: number) {
+  return page((where, l) => BillingReconciliationItem.findAll({ where, order: [['createdAt', 'DESC'], ['id', 'DESC']], limit: l }),
+    { livemode: mode === 'live', ...(status ? { resolution: status } : {}) }, cursor, limit);
+}
+
+export async function resolveItem(id: string, resolution: 'resolved' | 'ignored', note: string): Promise<BillingReconciliationItem> {
+  const item = await BillingReconciliationItem.findByPk(id);
+  if (!item) throw new NotFoundError('Review item');
+  return item.update({ resolution, resolutionNote: note, resolvedBy: 'billing-key', resolvedAt: new Date() });
+}
+
+/** Re-queues a stored webhook event. Refused while a worker holds it, so one event is never processed twice at once. */
+export async function replayEvent(idOrProviderId: string): Promise<BillingEvent> {
+  const isUuid = /^[0-9a-f-]{36}$/i.test(idOrProviderId);
+  const row = await BillingEvent.findOne({ where: isUuid ? { id: idOrProviderId } : { providerEventId: idOrProviderId } });
+  if (!row) throw new NotFoundError('Event');
+  const [claimed] = await BillingEvent.update(
+    { status: 'received', attempts: 0, lockedAt: null, lastError: null },
+    { where: { id: row.id, status: { [Op.ne]: 'processing' } } },
+  );
+  if (claimed === 0) throw new AppError(409, 'This event is being processed right now. Try again in a moment.', 'EVENT_PROCESSING');
+  enqueueEvent(row.id);
+  return (await BillingEvent.findByPk(row.id))!;
 }
