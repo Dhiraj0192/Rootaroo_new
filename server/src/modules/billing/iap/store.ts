@@ -21,8 +21,10 @@ export interface StoreUpsertOptions {
 }
 
 export type StoreUpsertResult =
-  | { outcome: 'applied' | 'stale'; row: BillingSubscription }
-  | { outcome: 'unmatched' | 'household_mismatch'; row: null };
+  | { outcome: 'applied'; row: BillingSubscription }
+  | { outcome: 'stale'; row: BillingSubscription }
+  | { outcome: 'unmatched'; row: null }
+  | { outcome: 'household_mismatch'; row: null };
 
 async function validPurchaser(userId: string | undefined): Promise<string | null> {
   if (!userId) return null;
@@ -63,6 +65,11 @@ export async function upsertStoreSubscription(vp: VerifiedPurchase, opts: StoreU
 
     if (existing && opts.eventCreated !== undefined && existing.eventWatermark !== null && opts.eventCreated < Number(existing.eventWatermark)) {
       return { outcome: 'stale', row: existing };
+    }
+
+    if (vp.replaces) {
+      const old = await BillingSubscription.findOne({ where: { provider: vp.provider, livemode: vp.livemode, providerSubscriptionId: vp.replaces, householdId: household.id } });
+      if (old && old.status !== 'canceled') await old.update({ status: 'canceled', endedAt: new Date(), graceUntil: null, cancelAtPeriodEnd: false, lastSyncedAt: new Date() });
     }
 
     if (vp.seats === null) {

@@ -3,7 +3,7 @@ import { authenticate } from '../../shared/middleware/auth';
 import { validate } from '../../shared/middleware/validate';
 import * as ctrl from './controller';
 import { billingReturn } from './returnPage';
-import { checkoutSchema, planChangeSchema, syncParamsSchema } from './validation';
+import { appleVerifySchema, checkoutSchema, planChangeSchema, syncParamsSchema } from './validation';
 
 const router = Router();
 
@@ -124,6 +124,31 @@ router.get('/status', ctrl.status);
  */
 router.post('/portal', ctrl.portal);
 router.post('/plan', validate(planChangeSchema), ctrl.plan);
+
+/**
+ * @openapi
+ * /billing/iap/apple/verify:
+ *   post:
+ *     tags: [Billing]
+ *     summary: Verify an App Store signed transaction and grant the household its subscription (admin only)
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [signedTransaction]
+ *             properties:
+ *               signedTransaction: { type: string, description: JWS from StoreKit 2 }
+ *     responses:
+ *       200: { description: "{ entitlement }" }
+ *       400: { description: IAP_VERIFICATION_FAILED or IAP_UNKNOWN_PRODUCT }
+ *       403: { description: Not an admin, or NO_HOUSEHOLD }
+ *       409: { description: PURCHASE_HOUSEHOLD_MISMATCH }
+ *       503: { description: Apple IAP not configured or verification temporarily unavailable }
+ */
+router.post('/iap/apple/verify', validate(appleVerifySchema), ctrl.appleVerify);
 
 export default router;
 

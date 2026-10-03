@@ -7,7 +7,8 @@ export type BillingConflictCode =
   | 'PURCHASE_METHOD_MISMATCH'
   | 'NO_ACTIVE_SUBSCRIPTION'
   | 'PLAN_CHANGE_PENDING'
-  | 'COHORT_CHANGE_BLOCKED';
+  | 'COHORT_CHANGE_BLOCKED'
+  | 'PURCHASE_HOUSEHOLD_MISMATCH';
 
 export class PaymentRequiredError extends AppError {
   constructor(code: 'SUBSCRIPTION_REQUIRED' | 'SEAT_LIMIT', message: string, details: Record<string, unknown> = {}) {

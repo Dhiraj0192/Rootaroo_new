@@ -12,3 +12,8 @@ export const syncParamsSchema: ValidationSchemas = {
   params: z.object({ sessionId: z.string().regex(/^cs_(test|live)_[A-Za-z0-9]+$/, 'Invalid session id') }),
 };
 
+
+export const appleVerifySchema: ValidationSchemas = {
+  body: z.object({ signedTransaction: z.string().min(20).max(20_000) }),
+};
+

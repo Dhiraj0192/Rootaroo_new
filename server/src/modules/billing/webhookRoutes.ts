@@ -1,11 +1,16 @@
 import express, { Router, Request, Response, NextFunction } from 'express';
 import { stripeWebhookHandler } from './webhooks';
+import { appleWebhookHandler } from './iap/webhooks';
+import { registerIapDispatchers } from './iap/register';
 
 const router = Router();
 const raw = express.raw({ type: 'application/json', limit: '1mb' });
 
 router.post('/stripe/test', raw, stripeWebhookHandler('test'));
 router.post('/stripe/live', raw, stripeWebhookHandler('live'));
+router.post('/apple', raw, appleWebhookHandler);
+
+registerIapDispatchers();
 
 // body-parser errors (413 too large, 400 bad encoding) as plain JSON, never the global 500.
 // eslint-disable-next-line @typescript-eslint/no-unused-vars

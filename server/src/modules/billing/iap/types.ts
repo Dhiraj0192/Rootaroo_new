@@ -29,6 +29,8 @@ export interface VerifiedPurchase {
   pendingUpdate: Record<string, unknown> | null;
   /** From appAccountToken (Apple) or obfuscatedExternalAccountId (Google). Null when the purchase was not tagged. */
   householdId: string | null;
+  /** Google: the purchase token this one replaced (upgrade/downgrade). The old row is retired in the same write. */
+  replaces?: string | null;
   /** Price in minor units (cents) and ISO currency, when the store reports it. */
   unitAmount: number | null;
   currency: string | null;
