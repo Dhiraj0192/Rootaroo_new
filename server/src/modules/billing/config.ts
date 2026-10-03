@@ -1,6 +1,7 @@
 import Stripe from 'stripe';
 import logger from '../../shared/utils/logger';
 import { BillingUnavailableError } from './errors';
+import { assertIapConfig } from './iap/config';
 import type { BillingMode } from './types';
 
 export const STRIPE_API_VERSION = '2026-09-30.endive' as const;
@@ -137,6 +138,7 @@ export function assertBillingConfigAtStartup(): void {
     const cfg = getBillingConfig();
     for (const w of cfg.warnings) logger.warn(`[Billing] ${w}`);
     logger.info(`[Billing] env=${cfg.envTag} test=${cfg.modes.test ? 'on' : 'off'} live=${cfg.modes.live ? 'on' : 'off'}`);
+    assertIapConfig();
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error(`FATAL: billing configuration invalid: ${(err as Error).message}`);

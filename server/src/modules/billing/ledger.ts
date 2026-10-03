@@ -88,6 +88,14 @@ export async function linkInvoice(inv: Stripe.Invoice, mode: BillingMode): Promi
   return (await linkCustomer(idOf(inv.customer as Ref), livemode, inv.customer_email ?? null)) ?? UNMATCHED(inv.customer_email ?? null);
 }
 
+/** Store (Apple/Google) ledger rows link through the local subscription row: there is no Stripe customer. */
+export async function linkSubscriptionRow(sub: BillingSubscription): Promise<LedgerLink> {
+  return {
+    householdId: sub.householdId, subscriptionId: sub.id, matchStatus: 'matched',
+    ...(await snapshots(sub.householdId, { linked: true, userId: sub.purchasedByUserId }, null)),
+  };
+}
+
 export async function fetchPaymentFees(invoiceId: string, mode: BillingMode): Promise<{ fee: number | null; net: number | null; chargeId: string; receiptUrl: string | null } | null> {
   const stripe = getStripe(mode);
   // invoice -> InvoicePayment -> payment.payment_intent -> latest_charge -> balance_transaction.
