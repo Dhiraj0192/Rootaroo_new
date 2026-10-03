@@ -51,6 +51,18 @@ describe('dispatchEvent (§8.5)', () => {
     expect(upsertSubscription).toHaveBeenCalledWith('sub_1', 'test', expect.anything());
   });
 
+  it('invoice.paid and invoice.payment_failed upsert the subscription BEFORE recording the invoice (finding 3)', async () => {
+    (recordInvoice as jest.Mock).mockResolvedValue({ householdId: 'h1' });
+    await dispatchEvent(stripeEvent('invoice.paid', stripeInvoice({ id: 'in_1', subscriptionId: 'sub_1' })), 'test');
+    await dispatchEvent(stripeEvent('invoice.payment_failed', stripeInvoice({ id: 'in_2', subscriptionId: 'sub_1', status: 'open' })), 'test');
+    const ups = (upsertSubscription as jest.Mock).mock.invocationCallOrder;
+    const recs = (recordInvoice as jest.Mock).mock.invocationCallOrder;
+    expect(ups).toHaveLength(2);
+    expect(recs).toHaveLength(2);
+    expect(ups[0]).toBeLessThan(recs[0]);
+    expect(ups[1]).toBeLessThan(recs[1]);
+  });
+
   it.each([
     ['subscription_cycle', true], ['subscription_create', true], ['subscription_update', false], ['manual', false],
   ])('invoice.payment_failed with %s notifies=%s', async (reason, notifies) => {

@@ -1,5 +1,5 @@
 import Stripe from 'stripe';
-import { UniqueConstraintError } from 'sequelize';
+import { Op, UniqueConstraintError } from 'sequelize';
 import { BillingCustomer, BillingSubscription, BillingTransaction, Household, User } from '../../database/models';
 import type { FundsState, LedgerType } from '../../database/models/BillingTransaction';
 import logger from '../../shared/utils/logger';
@@ -35,10 +35,31 @@ export function invoiceSubscriptionId(inv: Stripe.Invoice): string | null {
   return idOf(inv.parent?.subscription_details?.subscription as Ref);
 }
 
-async function snapshots(householdId: string | null, userId: string | null, email: string | null | undefined) {
+const ANONYMIZED_LOGIN = /^deleted-.+@deleted\.rootaroo\.local$/;
+
+/** A user that is gone (soft-deleted, or whose login was anonymised) must never leave an email in the ledger. */
+async function isGoneUser(user: User | null): Promise<boolean> {
+  return !user || user.deletedAt != null || ANONYMIZED_LOGIN.test(user.email ?? '');
+}
+
+async function snapshots(householdId: string | null, purchaser: { linked: boolean; userId: string | null } | null, email: string | null | undefined) {
   const household = householdId ? await Household.findByPk(householdId, { paranoid: false, attributes: ['name'] }) : null;
-  const user = !email && userId ? await User.findByPk(userId, { paranoid: false, attributes: ['email'] }) : null;
-  return { householdNameSnapshot: household?.name ?? null, payerEmailSnapshot: email ?? user?.email ?? null };
+  let payerEmail = email ?? null;
+  let userId: string | null = purchaser?.userId ?? null;
+  if (purchaser?.linked) {
+    const user = userId ? await User.findByPk(userId, { paranoid: false, attributes: ['id', 'email', 'deletedAt'] }) : null;
+    if (await isGoneUser(user)) {
+      userId = null;
+      payerEmail = ANONYMIZED_EMAIL;
+    } else if (!payerEmail) {
+      payerEmail = user!.email;
+    }
+  }
+  if (payerEmail && payerEmail !== ANONYMIZED_EMAIL) {
+    const owner = await User.findOne({ where: { email: payerEmail }, paranoid: false, attributes: ['id', 'deletedAt'] });
+    if (owner && owner.deletedAt != null) payerEmail = ANONYMIZED_EMAIL;
+  }
+  return { userId, householdNameSnapshot: household?.name ?? null, payerEmailSnapshot: payerEmail };
 }
 
 const UNMATCHED = (email: string | null): LedgerLink => ({
@@ -49,7 +70,7 @@ async function linkCustomer(customerId: string | null, livemode: boolean, email:
   if (!customerId) return null;
   const c = await BillingCustomer.findOne({ where: { provider: 'stripe', livemode, providerCustomerId: customerId } });
   if (!c) return null;
-  return { householdId: c.householdId, userId: null, subscriptionId: null, matchStatus: 'matched', ...(await snapshots(c.householdId, null, email ?? c.billingEmail)) };
+  return { householdId: c.householdId, subscriptionId: null, matchStatus: 'matched', ...(await snapshots(c.householdId, null, email ?? c.billingEmail)) };
 }
 
 export async function linkInvoice(inv: Stripe.Invoice, mode: BillingMode): Promise<LedgerLink> {
@@ -59,8 +80,8 @@ export async function linkInvoice(inv: Stripe.Invoice, mode: BillingMode): Promi
     const sub = await BillingSubscription.findOne({ where: { provider: 'stripe', livemode, providerSubscriptionId: subId } });
     if (sub) {
       return {
-        householdId: sub.householdId, userId: sub.purchasedByUserId, subscriptionId: sub.id, matchStatus: 'matched',
-        ...(await snapshots(sub.householdId, sub.purchasedByUserId, inv.customer_email)),
+        householdId: sub.householdId, subscriptionId: sub.id, matchStatus: 'matched',
+        ...(await snapshots(sub.householdId, { linked: true, userId: sub.purchasedByUserId }, inv.customer_email)),
       };
     }
   }
@@ -89,6 +110,12 @@ export function mergeLedgerFields(existing: BillingTransaction | null, fields: L
   for (const key of ['fee', 'net', 'providerChargeId', 'receiptUrl', 'disputeFee', 'providerInvoiceId'] as const) {
     if ((out[key] === null || out[key] === undefined) && existing[key] !== null && existing[key] !== undefined) {
       (out as Record<string, unknown>)[key] = existing[key];
+    }
+  }
+  if (existing.matchStatus === 'matched' && out.matchStatus === 'matched') {
+    // A later link may know less (subscription row not yet written): never blank a known link.
+    for (const key of ['householdId', 'userId', 'subscriptionId'] as const) {
+      if ((out[key] === null || out[key] === undefined) && existing[key]) (out as Record<string, unknown>)[key] = existing[key];
     }
   }
   if (existing.matchStatus === 'matched' && out.matchStatus === 'unmatched') {
@@ -204,7 +231,8 @@ export async function recordDispute(d: Stripe.Dispute, mode: BillingMode, eventI
   });
 }
 
-export async function anonymizeUserLedger(userId: string): Promise<number> {
-  const [count] = await BillingTransaction.update({ userId: null, payerEmailSnapshot: ANONYMIZED_EMAIL }, { where: { userId } });
+export async function anonymizeUserLedger(userId: string, email?: string | null): Promise<number> {
+  const where = email ? { [Op.or]: [{ userId }, { payerEmailSnapshot: email }] } : { userId };
+  const [count] = await BillingTransaction.update({ userId: null, payerEmailSnapshot: ANONYMIZED_EMAIL }, { where });
   return count;
 }

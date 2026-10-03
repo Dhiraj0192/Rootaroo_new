@@ -23,4 +23,11 @@ describe('ledger helpers', () => {
     const existing: any = { matchStatus: 'matched', householdId: 'h1', userId: 'u1', subscriptionId: 's1', householdNameSnapshot: 'Fam', payerEmailSnapshot: 'a@x' };
     expect(mergeLedgerFields(existing, { matchStatus: 'unmatched', householdId: null, userId: null, subscriptionId: null })).toMatchObject({ matchStatus: 'matched', householdId: 'h1', subscriptionId: 's1' });
   });
+
+  it('fills null userId/subscriptionId on a matched row and never blanks known ones (finding 3)', () => {
+    const customerMatched: any = { matchStatus: 'matched', householdId: 'h1', userId: null, subscriptionId: null, householdNameSnapshot: 'Fam', payerEmailSnapshot: 'a@x' };
+    expect(mergeLedgerFields(customerMatched, { matchStatus: 'matched', householdId: 'h1', userId: 'u1', subscriptionId: 's1' })).toMatchObject({ userId: 'u1', subscriptionId: 's1' });
+    const subMatched: any = { matchStatus: 'matched', householdId: 'h1', userId: 'u1', subscriptionId: 's1', householdNameSnapshot: 'Fam', payerEmailSnapshot: 'a@x' };
+    expect(mergeLedgerFields(subMatched, { matchStatus: 'matched', householdId: 'h1', userId: null, subscriptionId: null })).toMatchObject({ userId: 'u1', subscriptionId: 's1' });
+  });
 });

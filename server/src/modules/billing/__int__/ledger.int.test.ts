@@ -1,4 +1,4 @@
-import { setupAssociations, BillingTransaction, BillingReconciliationItem } from '../../../database/models';
+import { setupAssociations, BillingTransaction, BillingReconciliationItem, BillingSubscription, User } from '../../../database/models';
 import { resetDb, closeIntResources } from '../../../test/int/db';
 import { createHouseholdWithAdmin } from '../../../test/factories';
 import { createCustomerRow, createSubscriptionRow } from '../../../test/billing/rows';
@@ -75,5 +75,52 @@ describe('ledger', () => {
     expect(await anonymizeUserLedger(admin.id)).toBe(1);
     const again = await recordInvoice(stripeInvoice({ id: 'in_L', customer: 'cus_L', subscriptionId: 'sub_L' }), 'test', 'payment', null);
     expect(again).toMatchObject({ userId: null, payerEmailSnapshot: ANONYMIZED_EMAIL });
+  });
+});
+
+describe('ledger: deleted purchasers (finding 4)', () => {
+  it('stores the anonymised email when the linked subscription purchaser is soft-deleted', async () => {
+    const { admin } = await linked();
+    await admin.destroy();
+    const row = await recordInvoice(stripeInvoice({ id: 'in_D1', customer: 'cus_L', subscriptionId: 'sub_L', customerEmail: null }), 'test', 'payment', null);
+    expect(row).toMatchObject({ payerEmailSnapshot: ANONYMIZED_EMAIL, userId: null, matchStatus: 'matched' });
+  });
+
+  it('stores the anonymised email when the purchaser was cleared (null) or the user row is anonymised', async () => {
+    const { household, sub, admin } = await linked();
+    await sub.update({ purchasedByUserId: null });
+    const a = await recordInvoice(stripeInvoice({ id: 'in_D2', customer: 'cus_L', subscriptionId: 'sub_L' }), 'test', 'payment', null);
+    expect(a.payerEmailSnapshot).toBe(ANONYMIZED_EMAIL);
+    await sub.update({ purchasedByUserId: admin.id });
+    await admin.update({ email: `deleted-${admin.id}@deleted.rootaroo.local` });
+    const b = await recordInvoice(stripeInvoice({ id: 'in_D3', customer: 'cus_L', subscriptionId: 'sub_L' }), 'test', 'payment', null);
+    expect(b.payerEmailSnapshot).toBe(ANONYMIZED_EMAIL);
+    expect(household.id).toBe(b.householdId);
+  });
+
+  it('stores the anonymised email when the invoice email belongs to a soft-deleted user', async () => {
+    const { admin } = await linked();
+    const gone = await User.findByPk(admin.id);
+    await gone!.destroy();
+    const row = await recordInvoice(stripeInvoice({ id: 'in_D4', customer: 'cus_L', subscriptionId: null, customerEmail: admin.email }), 'test', 'payment', null);
+    expect(row.payerEmailSnapshot).toBe(ANONYMIZED_EMAIL);
+  });
+
+  it('keeps the invoice email for a live purchaser', async () => {
+    await linked();
+    const row = await recordInvoice(stripeInvoice({ id: 'in_D5', customer: 'cus_L', subscriptionId: 'sub_L', customerEmail: 'payer@example.test' }), 'test', 'payment', null);
+    expect(row.payerEmailSnapshot).toBe('payer@example.test');
+  });
+
+  it('anonymizeUserLedger also covers rows matched only by the email snapshot', async () => {
+    const { household, admin } = await linked();
+    const base = { provider: 'stripe' as const, livemode: false, type: 'payment' as const, status: 'paid', amount: 899, currency: 'usd', matchStatus: 'matched' as const, householdId: household.id, occurredAt: new Date() };
+    await BillingTransaction.create({ ...base, providerObjectId: 'in_E1', userId: admin.id, payerEmailSnapshot: 'x@y.test' });
+    await BillingTransaction.create({ ...base, providerObjectId: 'in_E2', userId: null, payerEmailSnapshot: 'Orig@Example.test' });
+    await BillingTransaction.create({ ...base, providerObjectId: 'in_E3', userId: null, payerEmailSnapshot: 'someone-else@example.test' });
+    expect(await anonymizeUserLedger(admin.id, 'orig@example.test')).toBe(2);
+    expect((await BillingTransaction.findOne({ where: { providerObjectId: 'in_E2' } }))!.payerEmailSnapshot).toBe(ANONYMIZED_EMAIL);
+    expect((await BillingTransaction.findOne({ where: { providerObjectId: 'in_E3' } }))!.payerEmailSnapshot).toBe('someone-else@example.test');
+    expect(await BillingSubscription.count()).toBe(1);
   });
 });

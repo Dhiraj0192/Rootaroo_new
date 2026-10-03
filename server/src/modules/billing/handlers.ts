@@ -68,21 +68,22 @@ export async function dispatchEvent(event: Stripe.Event, mode: BillingMode): Pro
     }
     case 'invoice.paid': {
       const inv = obj as Stripe.Invoice;
-      await recordInvoice(inv, mode, 'payment', event.id);
+      // Upsert first so the local subscription row exists when the ledger row is linked.
       const subId = invoiceSubscriptionId(inv);
       if (subId) await upsertSubscription(subId, mode, opts);
+      await recordInvoice(inv, mode, 'payment', event.id);
       return 'processed';
     }
     case 'invoice.payment_failed': {
       const inv = obj as Stripe.Invoice;
+      const failedSubId = invoiceSubscriptionId(inv);
+      if (failedSubId) await upsertSubscription(failedSubId, mode, opts);
       const row = await recordInvoice(inv, mode, 'failed_payment', event.id);
       if (row?.householdId && NOTIFY_FAILED_REASONS.includes(inv.billing_reason ?? '')) {
         await notifyHouseholdAdmins(row.householdId, 'billing_payment_failed', 'Your Rootaroo payment failed',
           `We couldn't charge ${formatUsd(inv.amount_due)}. Update your card to keep access: ${inv.hosted_invoice_url ?? 'More → Subscription → Manage subscription'}`,
           { type: 'billing_payment_failed', url: inv.hosted_invoice_url ?? null });
       }
-      const subId = invoiceSubscriptionId(inv);
-      if (subId) await upsertSubscription(subId, mode, opts);
       return 'processed';
     }
     case 'invoice.payment_action_required': {
