@@ -1,20 +1,22 @@
 import Stripe from 'stripe';
 import { UniqueConstraintError, Op } from 'sequelize';
 import { v4 as uuidv4 } from 'uuid';
-import { BillingCheckoutSession, BillingCustomer, BillingSubscription, Household, User } from '../../database/models';
-import { AppError, NotFoundError } from '../../shared/utils/errors';
+import { BillingCheckoutSession, BillingCustomer, BillingSubscription, Household, HouseholdMember, User } from '../../database/models';
+import { AppError, ForbiddenError, NotFoundError } from '../../shared/utils/errors';
 import logger from '../../shared/utils/logger';
 import { assertSeats, getCatalog, priceFor } from './catalog';
 import { getBillingConfig, getStripe, isModeAvailable } from './config';
-import { CallerContext, requireAdminContext } from './context';
+import { CallerContext, loadCallerContext, requireAdminContext } from './context';
 import { autoRenewDisclosure } from './copy';
+import { getEntitlement } from './entitlement';
 import { BillingConflictError, BillingUnavailableError } from './errors';
 import { withLock } from './locks';
 import { livemodeOf } from './mode';
+import { getPlansForMode, PlansResponse } from './plans';
 import { createPortalUrl } from './portal';
 import { isStripeCheckoutAllowed, resolvePurchaseMethod } from './routing';
 import { idOf, upsertSubscription } from './sync';
-import type { BillingInterval, BillingMode, ClientContext } from './types';
+import type { BillingInterval, BillingMode, CheckoutState, ClientContext, Entitlement, PendingCheckout, PurchaseMethod } from './types';
 
 export interface CheckoutBody { interval: BillingInterval; seats: number }
 export interface CheckoutResult { url: string; sessionId: string }
@@ -171,4 +173,93 @@ export async function createCheckout(userId: string, body: CheckoutBody, client:
   }
   assertSeats(body.seats);
   return withLock(checkoutLockName(ctx.household.id, ctx.mode), 60_000, () => createCheckoutLocked(ctx, body, now), { waitMs: 10_000 });
+}
+
+export function deriveCheckoutState(sessionStatus: string | null, allowed: boolean): CheckoutState {
+  if (sessionStatus === 'complete') return allowed ? 'complete' : 'processing';
+  if (sessionStatus === 'expired') return 'expired';
+  return 'open';
+}
+
+export interface SyncResult { entitlement: Entitlement; pendingCheckout: PendingCheckout }
+
+export async function syncCheckout(userId: string, sessionId: string): Promise<SyncResult> {
+  const ctx = await loadCallerContext(userId);
+  const { household, mode } = ctx;
+  const denied = () => new ForbiddenError('This checkout session does not belong to your household');
+  if (sessionId.startsWith('cs_live_') !== (mode === 'live')) throw denied();
+  const stripe = getStripe(mode);
+  let session: Stripe.Checkout.Session;
+  try {
+    session = await stripe.checkout.sessions.retrieve(sessionId, { expand: ['subscription'] });
+  } catch (err) {
+    if ((err as { code?: string }).code === 'resource_missing') throw denied();
+    throw err;
+  }
+  const customer = await BillingCustomer.findOne({ where: { householdId: household.id, provider: 'stripe', livemode: livemodeOf(mode) } });
+  if (session.client_reference_id !== household.id || !customer || idOf(session.customer as string | { id: string } | null) !== customer.providerCustomerId) {
+    throw denied();
+  }
+  const row = await BillingCheckoutSession.findOne({ where: { providerSessionId: sessionId } });
+  if (session.status === 'complete') {
+    if (row && row.status !== 'complete') await row.update({ status: 'complete' });
+    const subId = idOf(session.subscription as string | { id: string } | null);
+    if (subId) await upsertSubscription(subId, mode);
+  } else if (session.status === 'expired' && row) {
+    await row.update({ status: 'expired' });
+  }
+  const entitlement = await getEntitlement(household.id, { bypassCache: true });
+  return { entitlement, pendingCheckout: { sessionId, state: deriveCheckoutState(session.status, entitlement.allowed) } };
+}
+
+export interface SubscriptionView {
+  provider: string; status: string; interval: string; seats: number; unitAmount: number | null; currency: string | null;
+  priceSet: string | null; currentPeriodEnd: string | null; cancelAtPeriodEnd: boolean; graceUntil: string | null; pendingUpdate: boolean;
+}
+
+export interface BillingStatus {
+  entitlement: Entitlement;
+  subscription: SubscriptionView | null;
+  isAdmin: boolean;
+  adminNames: string[];
+  purchaseMethod: PurchaseMethod;
+  plans: PlansResponse | null;
+  pendingCheckout: PendingCheckout | null;
+  memberCount: number;
+}
+
+export async function getBillingStatus(userId: string, client: ClientContext): Promise<BillingStatus> {
+  const ctx = await loadCallerContext(userId);
+  const { household, mode } = ctx;
+  const livemode = livemodeOf(mode);
+  const entitlement = await getEntitlement(household.id);
+  const sub = await BillingSubscription.findOne({ where: { householdId: household.id, livemode }, order: [['updatedAt', 'DESC']] });
+  const admins = await HouseholdMember.findAll({ where: { householdId: household.id, role: 'admin' }, include: [{ model: User, as: 'user', required: true }] });
+  let plans: PlansResponse | null = null;
+  try { plans = await getPlansForMode(mode); } catch (err) { logger.warn(`[Billing] plans unavailable: ${(err as Error).message}`); }
+
+  const recent = await BillingCheckoutSession.findOne({
+    where: { householdId: household.id, livemode, status: { [Op.in]: ['open', 'complete'] }, createdAt: { [Op.gte]: new Date(Date.now() - 2 * 3600_000) } },
+    order: [['createdAt', 'DESC']],
+  });
+  let pendingCheckout: PendingCheckout | null = null;
+  if (recent?.providerSessionId) {
+    if (recent.status === 'open' && recent.expiresAt && recent.expiresAt.getTime() > Date.now()) pendingCheckout = { sessionId: recent.providerSessionId, state: 'open' };
+    else if (recent.status === 'complete' && !entitlement.allowed) pendingCheckout = { sessionId: recent.providerSessionId, state: 'processing' };
+  }
+
+  return {
+    entitlement,
+    subscription: sub ? {
+      provider: sub.provider, status: sub.status, interval: sub.interval, seats: sub.seats, unitAmount: sub.unitAmount, currency: sub.currency,
+      priceSet: sub.priceSet, currentPeriodEnd: sub.currentPeriodEnd?.toISOString() ?? null, cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
+      graceUntil: sub.graceUntil?.toISOString() ?? null, pendingUpdate: sub.pendingUpdate !== null,
+    } : null,
+    isAdmin: ctx.isAdmin,
+    adminNames: admins.map((a) => a.user!.displayName),
+    purchaseMethod: await resolvePurchaseMethod(client, household.billingCohort),
+    plans,
+    pendingCheckout,
+    memberCount: ctx.memberCount,
+  };
 }

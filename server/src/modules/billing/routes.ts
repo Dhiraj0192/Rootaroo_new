@@ -2,11 +2,27 @@ import { Router } from 'express';
 import { authenticate } from '../../shared/middleware/auth';
 import { validate } from '../../shared/middleware/validate';
 import * as ctrl from './controller';
-import { checkoutSchema } from './validation';
+import { billingReturn } from './returnPage';
+import { checkoutSchema, syncParamsSchema } from './validation';
 
 const router = Router();
 
-// ── Public (no auth): the Checkout return page is added here in Task 5.6 ──
+// ── Public (no auth) ──
+
+/**
+ * @openapi
+ * /billing/return/{result}:
+ *   get:
+ *     tags: [Billing]
+ *     summary: Public Checkout/portal return page. 302 to rootaroo://billing/<result>; no side effects
+ *     parameters:
+ *       - { in: path, name: result, required: true, schema: { type: string, enum: [success, cancel, portal] } }
+ *       - { in: query, name: session_id, schema: { type: string, pattern: '^cs_(test|live)_[A-Za-z0-9]+$' } }
+ *     responses:
+ *       302: { description: Redirect into the app }
+ *       200: { description: Static fallback page }
+ */
+router.get('/return/:result', billingReturn);
 
 router.use(authenticate);
 
@@ -52,6 +68,30 @@ router.get('/plans', ctrl.plans);
  *       503: { description: BILLING_MODE_UNAVAILABLE }
  */
 router.post('/checkout', validate(checkoutSchema), ctrl.checkout);
+
+/**
+ * @openapi
+ * /billing/checkout/{sessionId}/sync:
+ *   post:
+ *     tags: [Billing]
+ *     summary: Sync a Checkout session for the caller household (any member)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: path, name: sessionId, required: true, schema: { type: string } }
+ *     responses:
+ *       200: { description: "{ entitlement, pendingCheckout: { sessionId, state: open|processing|complete|expired } }" }
+ *       403: { description: Session belongs to another household or mode }
+ * /billing/status:
+ *   get:
+ *     tags: [Billing]
+ *     summary: Entitlement, subscription, admins, purchase method, plans and pending checkout
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: "{ entitlement, subscription, isAdmin, adminNames, purchaseMethod, plans, pendingCheckout, memberCount }" }
+ *       403: { description: NO_HOUSEHOLD }
+ */
+router.post('/checkout/:sessionId/sync', validate(syncParamsSchema), ctrl.sync);
+router.get('/status', ctrl.status);
 
 export default router;
 
