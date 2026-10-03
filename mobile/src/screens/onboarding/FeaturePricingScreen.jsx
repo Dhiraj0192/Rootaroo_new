@@ -10,7 +10,10 @@ import { pricing, oldWay, derivePricing } from './featureTourContent';
 import { updateSignupProgress } from '../../shared/store/signupProgress';
 import { useAuthStore } from '../../shared/store/authStore';
 import { useBillingStore } from '../../shared/store/billingStore';
-import { seatRange } from '../../shared/billing/pricing';
+import { seatRange, autoRenewDisclosure } from '../../shared/billing/pricing';
+import { startStripeCheckout } from '../../shared/billing/purchase';
+import { TERMS_URL, PRIVACY_URL } from '../../shared/billing/legalLinks';
+import * as WebBrowser from 'expo-web-browser';
 import { colors, fonts, radius, goldButton, withAlpha } from '../../shared/theme';
 
 // Two groups, not eight — the "what you'd pay elsewhere / what you pay here"
@@ -30,7 +33,9 @@ const SLIDE_PX = 32;
  * so it only ever proceeds when the user actually presses Continue.
  *
  * Prices are the server's (GET /billing/plans via the billing store); the app holds
- * no price constants. Payment is wired in the purchase step that follows.
+ * no price constants. The CTA starts the routed purchase; finish() runs on
+ * confirmed entitlement or "Not now", after which RootNavigator shows the
+ * paywall if the household is still blocked.
  */
 export default function FeaturePricingScreen({ navigation }) {
   const status = useBillingStore((s) => s.status);
@@ -38,6 +43,8 @@ export default function FeaturePricingScreen({ navigation }) {
   const range = plans ? seatRange(plans, status?.memberCount ?? 1) : { min: 5, max: 10, overCap: false };
   const [plan, setPlan] = useState('year');
   const [size, setSize] = useState(range.min);
+  const [buying, setBuying] = useState(false);
+  const [note, setNote] = useState(null);
   useEffect(() => { useBillingStore.getState().refresh(); }, []);
   useEffect(() => { setSize((s) => Math.min(Math.max(s, range.min), range.max)); }, [range.min, range.max]);
   const p = plans ? derivePricing(plan, Math.min(size, range.max), plans) : null;
@@ -99,6 +106,22 @@ export default function FeaturePricingScreen({ navigation }) {
     useAuthStore.getState().completeSetup();
   };
 
+  const purchase = async () => {
+    if (buying) return;
+    if (status?.purchaseMethod !== 'stripe_checkout') {
+      setNote("Purchasing isn't available here yet. You can subscribe later from More → Subscription.");
+      return;
+    }
+    setBuying(true);
+    setNote(null);
+    const r = await startStripeCheckout({ interval: plan, seats: Math.min(size, range.max) });
+    setBuying(false);
+    if (r.outcome === 'unlocked') { await finish(); return; }
+    if (r.outcome === 'confirming') setNote('Confirming your payment…');
+    else if (r.outcome === 'error') setNote(r.error.message);
+    else setNote('Checkout was not completed.');
+  };
+
   if (!p) {
     return (
       <FeatureTourShell step={3} navigation={navigation} contentPadding={22} ctaLabel={'Loading prices…'} onContinue={() => {}}>
@@ -112,9 +135,9 @@ export default function FeaturePricingScreen({ navigation }) {
       step={3}
       navigation={navigation}
       contentPadding={22}
-      ctaLabel={p.payLabel}
+      ctaLabel={buying ? 'Opening checkout…' : p.payLabel}
       ctaSubLabel={p.payFine}
-      onContinue={finish}
+      onContinue={purchase}
     >
       <Animated.View style={{ opacity: heroAnim.opacity, transform: [{ translateX: heroAnim.translateX }] }}>
         <Eyebrow style={styles.topEyebrow}>{pricing.eyebrow}</Eyebrow>
@@ -235,6 +258,20 @@ export default function FeaturePricingScreen({ navigation }) {
             <Text style={styles.settingSub}>{pricing.featuresSub}</Text>
           </View>
           <Text style={styles.includedBadge}>{pricing.featuresBadge}</Text>
+        </View>
+
+        <Text style={styles.disclosure}>{autoRenewDisclosure(p.amountCents, plan)}</Text>
+        {note ? <Text style={styles.note}>{note}</Text> : null}
+        <TouchableOpacity onPress={finish} accessibilityRole="button" style={styles.notNow}>
+          <Text style={styles.notNowText}>Not now</Text>
+        </TouchableOpacity>
+        <View style={styles.legalRow}>
+          <TouchableOpacity onPress={() => WebBrowser.openBrowserAsync(TERMS_URL)} accessibilityRole="link">
+            <Text style={styles.legalText}>Terms</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => WebBrowser.openBrowserAsync(PRIVACY_URL)} accessibilityRole="link">
+            <Text style={styles.legalText}>Privacy</Text>
+          </TouchableOpacity>
         </View>
       </Animated.View>
     </FeatureTourShell>
@@ -549,6 +586,12 @@ const styles = StyleSheet.create({
     backgroundColor: colors.inkDeep,
   },
   stepBarVertical: { width: 1.8, height: 11 },
+  disclosure: { fontFamily: fonts.bodySemiBold, fontSize: 11.5, color: colors.textMuted, marginTop: 16 },
+  note: { fontFamily: fonts.bodySemiBold, fontSize: 13, color: colors.ink, marginTop: 12, textAlign: 'center' },
+  notNow: { alignSelf: 'center', marginTop: 14, padding: 8 },
+  notNowText: { fontFamily: fonts.bodyBold, fontSize: 13, color: colors.textSecondary },
+  legalRow: { flexDirection: 'row', justifyContent: 'center', gap: 20, marginTop: 4 },
+  legalText: { fontFamily: fonts.bodySemiBold, fontSize: 12, color: colors.textMuted, padding: 6 },
   stepperValue: {
     width: 30,
     textAlign: 'center',
