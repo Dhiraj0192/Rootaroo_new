@@ -3,7 +3,7 @@ import { authenticate } from '../../shared/middleware/auth';
 import { validate } from '../../shared/middleware/validate';
 import * as ctrl from './controller';
 import { billingReturn } from './returnPage';
-import { appleVerifySchema, checkoutSchema, planChangeSchema, syncParamsSchema } from './validation';
+import { appleVerifySchema, googleVerifySchema, checkoutSchema, planChangeSchema, syncParamsSchema } from './validation';
 
 const router = Router();
 
@@ -149,6 +149,32 @@ router.post('/plan', validate(planChangeSchema), ctrl.plan);
  *       503: { description: Apple IAP not configured or verification temporarily unavailable }
  */
 router.post('/iap/apple/verify', validate(appleVerifySchema), ctrl.appleVerify);
+
+/**
+ * @openapi
+ * /billing/iap/google/verify:
+ *   post:
+ *     tags: [Billing]
+ *     summary: Verify a Google Play subscription purchase token, grant the subscription and acknowledge it (admin only)
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [purchaseToken, productId]
+ *             properties:
+ *               purchaseToken: { type: string }
+ *               productId: { type: string, example: rootaroo.hh5 }
+ *     responses:
+ *       200: { description: "{ entitlement }" }
+ *       400: { description: IAP_VERIFICATION_FAILED or IAP_UNKNOWN_PRODUCT }
+ *       403: { description: Not an admin, or NO_HOUSEHOLD }
+ *       409: { description: PURCHASE_HOUSEHOLD_MISMATCH }
+ *       503: { description: Google Play billing not configured or Play API unavailable }
+ */
+router.post('/iap/google/verify', validate(googleVerifySchema), ctrl.googleVerify);
 
 export default router;
 

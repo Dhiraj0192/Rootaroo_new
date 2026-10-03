@@ -17,3 +17,6 @@ export const appleVerifySchema: ValidationSchemas = {
   body: z.object({ signedTransaction: z.string().min(20).max(20_000) }),
 };
 
+export const googleVerifySchema: ValidationSchemas = {
+  body: z.object({ purchaseToken: z.string().min(10).max(2048), productId: z.string().regex(/^rootaroo\.hh(10|[5-9])(\.(month|year))?$/, 'Invalid product id') }),
+};

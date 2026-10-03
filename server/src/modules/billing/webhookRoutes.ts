@@ -1,6 +1,6 @@
 import express, { Router, Request, Response, NextFunction } from 'express';
 import { stripeWebhookHandler } from './webhooks';
-import { appleWebhookHandler } from './iap/webhooks';
+import { appleWebhookHandler, googleWebhookHandler } from './iap/webhooks';
 import { registerIapDispatchers } from './iap/register';
 
 const router = Router();
@@ -9,6 +9,7 @@ const raw = express.raw({ type: 'application/json', limit: '1mb' });
 router.post('/stripe/test', raw, stripeWebhookHandler('test'));
 router.post('/stripe/live', raw, stripeWebhookHandler('live'));
 router.post('/apple', raw, appleWebhookHandler);
+router.post('/google', raw, googleWebhookHandler);
 
 registerIapDispatchers();
 

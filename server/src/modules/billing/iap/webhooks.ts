@@ -6,6 +6,8 @@ import { enqueueEvent } from '../worker';
 import { AppleVerificationError, verifyNotification } from './apple';
 import { appleEventType } from './appleEvents';
 import { getIapConfig } from './config';
+import { verifyPushAuthorization } from './google';
+import { DeveloperNotification, googleEventType } from './googleEvents';
 
 /**
  * POST /api/v1/billing/webhooks/apple: App Store Server Notifications V2.
@@ -66,3 +68,61 @@ export const appleWebhookHandler: RequestHandler = async (req: Request, res: Res
   }
 };
 
+/**
+ * POST /api/v1/billing/webhooks/google: Pub/Sub push of Real-time Developer Notifications.
+ * Authenticated by the OIDC bearer token Google signs for the push service account. The truth is fetched from the
+ * Play API by the worker, so this only decodes, persists and acknowledges (any 2xx acks the Pub/Sub message).
+ */
+export const googleWebhookHandler: RequestHandler = async (req: Request, res: Response) => {
+  const cfg = getIapConfig().google;
+  if (!cfg) {
+    res.status(503).json({ success: false, error: 'Google Play billing is not configured' });
+    return;
+  }
+  try {
+    await verifyPushAuthorization(req.header('authorization'));
+  } catch (err) {
+    logger.warn(`[IAP] Google push rejected: ${(err as Error).message}`);
+    res.status(401).json({ success: false, error: 'Unauthorized' });
+    return;
+  }
+  if (!Buffer.isBuffer(req.body)) {
+    res.status(400).json({ success: false, error: 'Expected application/json' });
+    return;
+  }
+  let envelope: { message?: { data?: string; messageId?: string; publishTime?: string } };
+  let notification: DeveloperNotification;
+  try {
+    envelope = JSON.parse(req.body.toString('utf8'));
+    const data = envelope.message?.data;
+    if (typeof data !== 'string' || !envelope.message?.messageId) throw new Error('missing message');
+    notification = JSON.parse(Buffer.from(data, 'base64').toString('utf8')) as DeveloperNotification;
+  } catch {
+    res.status(400).json({ success: false, error: 'Invalid Pub/Sub message' });
+    return;
+  }
+  if (notification.packageName !== cfg.packageName) {
+    // A permanent mismatch: retrying cannot fix it, so ack the message and drop it.
+    logger.warn(`[IAP] Google notification for package ${String(notification.packageName)} ignored`);
+    res.status(200).json({ received: true, ignored: true });
+    return;
+  }
+  const messageId = envelope.message!.messageId!;
+  try {
+    const row = await BillingEvent.create({
+      // livemode is unknown until the Play API says whether it was a test purchase; the worker corrects it.
+      provider: 'google', livemode: true, providerEventId: messageId, type: googleEventType(notification),
+      payload: { notification, publishTime: envelope.message?.publishTime } as unknown as Record<string, unknown>,
+      status: 'received', attempts: 0, receivedAt: new Date(),
+    });
+    res.status(200).json({ received: true });
+    enqueueEvent(row.id);
+  } catch (err) {
+    if (err instanceof UniqueConstraintError) {
+      res.status(200).json({ received: true, duplicate: true });
+      return;
+    }
+    logger.error(`[IAP] failed to persist Google message ${messageId}:`, err);
+    res.status(500).json({ success: false, error: 'Temporary failure' });
+  }
+};
