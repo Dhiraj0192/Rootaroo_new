@@ -24,6 +24,7 @@ import eventRouter from './modules/calendar/routes';
 import calendarFeedRouter from './modules/calendar/feedRoutes';
 import { shouldServeUploads } from './shared/middleware/uploads';
 import billingRouter from './modules/billing/routes';
+import billingWebhookRouter from './modules/billing/webhookRoutes';
 import checkInRouter from './modules/checkin/routes';
 import pingRouter from './modules/ping/routes';
 import placeRouter from './modules/place/routes';
@@ -57,6 +58,11 @@ app.use(cors({
 // whole round trips during TCP slow start on a fresh connection.
 app.use(compression());
 
+// ── Billing webhooks ──
+// Raw body (signature verification), no rate limit (renewal-day bursts, T9),
+// so they are mounted before the limiter and before express.json() (§4.4).
+app.use('/api/v1/billing/webhooks', billingWebhookRouter);
+
 // ── Rate Limiting ──
 // Backed by Redis so limits survive restarts/deploys and are shared across
 // instances, instead of the default in-memory store resetting on every boot.
@@ -69,7 +75,7 @@ app.use(compression());
 // `redisRateLimiter()` below only delegates to the Redis-backed limiter once
 // `redis.status === 'ready'`; otherwise it skips straight to `next()`.
 function redisRateLimiter(limiter: ReturnType<typeof rateLimit>) {
-  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  return function rateLimitGate(req: express.Request, res: express.Response, next: express.NextFunction) {
     if (redis.status !== 'ready') return next();
     limiter(req, res, next);
   };
@@ -79,7 +85,7 @@ function redisRateLimiter(limiter: ReturnType<typeof rateLimit>) {
 // failure mode: these guard account-takeover surfaces, so an unthrottled
 // window during a Redis outage is worse than a temporary 503. Fails CLOSED.
 function authRedisRateLimiter(limiter: ReturnType<typeof rateLimit>) {
-  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  return function authRateLimitGate(req: express.Request, res: express.Response, next: express.NextFunction) {
     if (redis.status !== 'ready') {
       res.status(503).json({ success: false, error: 'Service temporarily unavailable, please try again shortly.' });
       return;
