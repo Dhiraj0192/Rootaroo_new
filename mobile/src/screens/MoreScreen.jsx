@@ -110,6 +110,10 @@ export default function MoreScreen({ navigation }) {
           onPress: go('HouseholdSettings'),
         },
         {
+          label: 'Subscription',
+          onPress: go('Subscription'),
+        },
+        {
           label: 'Notification preferences',
           onPress: go('NotificationPreferences'),
         },

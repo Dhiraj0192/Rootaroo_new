@@ -13,6 +13,7 @@ import { useBillingLifecycle } from '../shared/hooks/useBillingLifecycle';
 import { chooseRootView } from '../shared/billing/gate';
 import PaywallScreen from '../screens/billing/PaywallScreen';
 import PaywallMemberScreen from '../screens/billing/PaywallMemberScreen';
+import SubscriptionScreen from '../screens/billing/SubscriptionScreen';
 import GraceBanner from '../screens/billing/components/GraceBanner';
 import { connectSocket, disconnectSocket } from '../shared/socket';
 import { registerForPushNotificationsAsync } from '../shared/pushNotifications';
@@ -168,6 +169,7 @@ function MoreNavigator() {
     <MoreNav.Navigator screenOptions={{ headerShown: false }}>
       <MoreNav.Screen name="MoreIndex" component={MoreScreen} />
       <MoreNav.Screen name="HouseholdSettings" component={HouseholdSettingsScreen} />
+      <MoreNav.Screen name="Subscription" component={SubscriptionScreen} />
       <MoreNav.Screen name="GroceryList" component={GroceryListScreen} />
       <MoreNav.Screen name="TodoList" component={TodoListScreen} />
       <MoreNav.Screen
