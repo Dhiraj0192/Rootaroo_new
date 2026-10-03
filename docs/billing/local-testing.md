@@ -311,31 +311,27 @@ npx tsx scripts/dev/seed-billing.ts --reset 2>&1 | grep -v '^Executing'
 
 ## Android emulator
 
-Tested on a 6 GB Windows laptop. Memory is the main constraint: do not run the Gradle build while the emulator is up.
+On machines with limited RAM, don't run the Gradle build while an emulator is running: the build alone needs a few GB.
 
-**One-time build (about 30 to 60 min the first time, a few minutes after that)**
+**One-time native build (slow the first time because Gradle downloads the NDK; later builds are much faster)**
 1. Stop the emulator, Metro and the dev server; keep Docker running.
 2. In `mobile/`, regenerate the native project (it is gitignored). `LOCAL_NO_FCM=1` tells `app.config.js` to skip
-   `google-services.json`, so push notifications are off in this build:
-   ```powershell
-   $env:ANDROID_HOME='E:\Softwares\Android\SDK'; $env:LOCAL_NO_FCM='1'
-   npx expo prebuild --platform android --clean --no-install
+   `google-services.json` if you don't have it, so push notifications are off in that build:
+   ```bash
+   export ANDROID_HOME=<your Android SDK path>
+   LOCAL_NO_FCM=1 npx expo prebuild --platform android --clean --no-install
    ```
-3. Low-memory settings in `mobile/android/gradle.properties` (reapply after every prebuild):
-   `reactNativeArchitectures=x86_64`, `org.gradle.parallel=false`, `org.gradle.workers.max=2`,
+3. Optional low-memory settings in `mobile/android/gradle.properties` (reapply after every prebuild):
+   `reactNativeArchitectures=x86_64` (emulator ABI only), `org.gradle.parallel=false`, `org.gradle.workers.max=2`,
    `kotlin.compiler.execution.strategy=in-process`.
-4. On JDK 17.0.2 the generated `gradlew.bat` fails with "-classpath requires class path specification". Remove
-   ` -classpath "%CLASSPATH%"` from its last java line (newer JDKs don't need this).
-5. Build:
-   ```powershell
-   cd android; $env:JAVA_HOME='C:\Program Files\Java\jdk-17.0.2'
-   .\gradlew.bat app:assembleDebug -x lint -x test -PreactNativeArchitectures=x86_64
-   ```
-   The APK is written to `android/app/build/outputs/apk/debug/app-debug.apk`.
+4. Some older JDK 17 builds reject the empty classpath in the generated `gradlew.bat` with "-classpath requires class
+   path specification". Either use a current JDK 17 or newer, or remove ` -classpath "%CLASSPATH%"` from its last java line.
+5. Build: `cd android && ./gradlew app:assembleDebug -x lint -x test -PreactNativeArchitectures=x86_64`
+   (on Windows, `gradlew.bat`). The APK is written to `android/app/build/outputs/apk/debug/app-debug.apk`.
 
 **Each test session**
 ```bash
-emulator -avd Pixel_6 -skin 1080x2400 -no-boot-anim -no-audio -no-snapshot-save -memory 2048
+emulator -avd <your AVD> -no-boot-anim -no-audio -no-snapshot-save
 adb install -r mobile/android/app/build/outputs/apk/debug/app-debug.apk
 adb reverse tcp:3000 tcp:3000   # API and the Checkout return page on localhost:3000
 adb reverse tcp:8081 tcp:8081   # Metro
@@ -343,8 +339,9 @@ cd server && set -a && . ./.env.impl && set +a && npm run dev
 cd mobile && LOCAL_NO_FCM=1 npx expo start --dev-client
 ```
 The app talks to `10.0.2.2:3000` (the emulator's alias for the host) unless `EXPO_PUBLIC_API_URL` is set. In dev,
-routing sends every platform to `stripe_checkout`, so the emulator shows the Stripe path. Store IAP needs a real device
-with a Play-signed build (see `device-test-checklist.md`).
+routing sends every platform to `stripe_checkout`, so the emulator shows the Stripe path. Checkout opens in a Chrome
+Custom Tab; on a fresh emulator, finish Chrome's first-run screen once. Store IAP needs a real device with a
+Play-signed build (see `device-test-checklist.md`).
 
 **What to try**
 

@@ -53,7 +53,7 @@ OWNER DECISION NEEDED: confirm both URLs (and the Google Play package in `STORE_
 Outcome: NOT RUN. Requires owner device run.
 
 Environment check:
-- `adb` exists (`E:\Softwares\Android\SDK\platform-tools`), the SDK has `emulator`, platform 35/36 and two AVDs (`Pixel_6`, `Medium_Phone_API_36.0`), JDK 17 is installed. No device was attached.
+- `adb`, the emulator, Android platforms and AVDs, and JDK 17 were available locally. No device was attached.
 - The walk-through cannot be completed from this environment because it needs a Stripe test-mode API key (`STRIPE_TEST_SECRET_KEY` or a restricted key) with the catalog bootstrapped, plus `stripe listen` forwarding; `server/.env.impl` holds only webhook secrets, not an API key, and keys must not be requested or printed here. This is also the scope of Wave 10 (sandbox end to end).
 - A NEW EAS/local development build is required: the deep-link scheme was renamed from `rootaru` to `rootaroo` in Wave 1, so any previously installed dev client will not open `rootaroo://` links. `expo run:android` (or an EAS dev build) must be rerun.
 
