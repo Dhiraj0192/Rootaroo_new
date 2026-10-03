@@ -188,6 +188,14 @@ export async function main(argv: string[]): Promise<void> {
     console.log(`backfill (weekly reconciliation) ${run.id}: ${run.status} ${JSON.stringify(run.counts)}`);
     return;
   }
+  if (opts.migratePrices) {
+    const { setupAssociations } = await import('../../../database/models');
+    const { scheduleMigration } = await import('../priceNotices');
+    setupAssociations();
+    const r = await scheduleMigration(opts.mode, opts.migratePrices.from, opts.migratePrices.to, opts.migratePrices.noticeDays);
+    console.log(`migrate-prices ${opts.migratePrices.from} -> ${opts.migratePrices.to}: ${r.scheduled} scheduled, ${r.skipped} skipped`);
+    return;
+  }
   const stripe = new Stripe(bootstrapKey(opts.mode), { apiVersion: STRIPE_API_VERSION });
   const base = (process.env.BILLING_PUBLIC_BASE_URL || process.env.SERVER_BASE_URL || '').replace(/\/+$/, '');
 
