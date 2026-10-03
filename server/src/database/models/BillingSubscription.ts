@@ -25,6 +25,7 @@ class BillingSubscription extends Model {
   declare purchasedByUserId: string | null;
   declare eventWatermark: number | null;
   declare lastSyncedAt: Date | null;
+  declare planChangeVersion: CreationOptional<number>;
   declare createdAt: CreationOptional<Date>;
   declare updatedAt: CreationOptional<Date>;
 }
@@ -56,6 +57,7 @@ BillingSubscription.init(
     purchasedByUserId: { type: DataTypes.UUID, allowNull: true, field: 'purchased_by_user_id' },
     eventWatermark: { type: DataTypes.BIGINT, allowNull: true, field: 'event_watermark' },
     lastSyncedAt: { type: DataTypes.DATE, allowNull: true, field: 'last_synced_at' },
+    planChangeVersion: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false, defaultValue: 0, field: 'plan_change_version' },
     createdAt: { type: DataTypes.DATE, field: 'created_at' },
     updatedAt: { type: DataTypes.DATE, field: 'updated_at' },
   },

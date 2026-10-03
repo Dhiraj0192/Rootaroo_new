@@ -2,7 +2,7 @@ jest.mock('../notify', () => ({ notifyHouseholdAdmins: jest.fn(), alertStaff: je
 
 import request from 'supertest';
 import app from '../../../app';
-import { setupAssociations, BillingPriceNotice, BillingSubscription } from '../../../database/models';
+import { setupAssociations, BillingPriceNotice } from '../../../database/models';
 import { resetDb, closeIntResources } from '../../../test/int/db';
 import { createHouseholdWithAdmin, addMember, authHeaderFor } from '../../../test/factories';
 import { createCustomerRow, createSubscriptionRow } from '../../../test/billing/rows';
@@ -57,11 +57,10 @@ describe('POST /billing/plan', () => {
     const { admin } = await subscribed();
     const res = await plan(admin, { interval: 'month', seats: 7 });
     expect(res.status).toBe(200);
-    const row = await BillingSubscription.findOne({ where: { providerSubscriptionId: "sub_1" } });
     expect(s.subscriptions.update).toHaveBeenCalledWith('sub_1', {
       items: [{ id: 'si_1', price: 'price_202610_7_month' }], payment_behavior: 'pending_if_incomplete',
       proration_behavior: 'always_invoice', expand: ['latest_invoice'],
-    }, { idempotencyKey: `plan:sub_1:month:7:${Math.floor(row!.currentPeriodStart!.getTime() / 1000)}` });
+    }, { idempotencyKey: `plan:sub_1:month:7:v0` });
   });
 
   it('interval change: create_prorations and billing_cycle_anchor now', async () => {
@@ -69,7 +68,7 @@ describe('POST /billing/plan', () => {
     await plan(admin, { interval: 'year', seats: 5 });
     expect(s.subscriptions.update).toHaveBeenCalledWith('sub_1', expect.objectContaining({
       items: [{ id: 'si_1', price: 'price_202610_5_year' }], proration_behavior: 'create_prorations', billing_cycle_anchor: { type: 'now' }, payment_behavior: 'pending_if_incomplete',
-    }), { idempotencyKey: expect.stringMatching(/^plan:sub_1:year:5:\d+$/) });
+    }), { idempotencyKey: expect.stringMatching(/^plan:sub_1:year:5:v\d+$/) });
   });
 
   it('no change -> 200 without calling Stripe', async () => {
@@ -146,14 +145,28 @@ describe('POST /billing/plan: pending update and idempotency (finding 8)', () =>
     expect(res.body.hostedInvoiceUrl ?? null).toBeNull();
   });
 
-  it('retries of the same change reuse the same deterministic idempotency key', async () => {
+  it('A -> B -> A -> B in one period uses a fresh idempotency key for every applied change', async () => {
     const { admin } = await subscribed();
-    await plan(admin, { interval: 'month', seats: 8 });
+    let seats = 5;
+    s.subscriptions.retrieve.mockImplementation(async () => stripeSubscription({ id: 'sub_1', customer: 'cus_1', itemId: 'si_1', seats, interval: 'month' }));
+    s.subscriptions.update.mockImplementation(async (_id: string, params: any) => {
+      seats = Number(/_(\d+)_month$/.exec(params.items[0].price)![1]);
+      return stripeSubscription({ id: 'sub_1', customer: 'cus_1', seats, interval: 'month' });
+    });
+    for (const n of [7, 5, 7]) expect((await plan(admin, { interval: 'month', seats: n })).body.data.changed).toBe(true);
+    const keys = s.subscriptions.update.mock.calls.map((c: any[]) => c[2].idempotencyKey);
+    expect(new Set(keys).size).toBe(3);
+    expect(s.subscriptions.update.mock.calls.map((c: any[]) => c[1].items[0].price)).toEqual(['price_202610_7_month', 'price_202610_5_month', 'price_202610_7_month']);
+  });
+
+  it('a failed Stripe call does not advance the key, so the retry dedupes', async () => {
+    const { admin } = await subscribed();
+    s.subscriptions.update.mockRejectedValueOnce(new Error('network'));
+    expect((await plan(admin, { interval: 'month', seats: 8 })).status).toBeGreaterThanOrEqual(500);
     await plan(admin, { interval: 'month', seats: 8 });
     const keys = s.subscriptions.update.mock.calls.map((c: any[]) => c[2].idempotencyKey);
-    expect(keys).toHaveLength(2);
     expect(keys[0]).toBe(keys[1]);
-    expect(keys[0]).toMatch(/^plan:sub_1:month:8:\d+$/);
+    expect(keys[0]).toMatch(/^plan:sub_1:month:8:v\d+$/);
   });
 
   it('past_due without a customer row is a 409 PAYMENT_ISSUE, not a 500', async () => {

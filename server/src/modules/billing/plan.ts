@@ -71,7 +71,10 @@ export async function changePlan(userId: string, body: { interval: BillingInterv
       proration_behavior: intervalChange ? 'create_prorations' : 'always_invoice',
       ...(intervalChange ? { billing_cycle_anchor: { type: 'now' as const } } : {}),
       expand: ['latest_invoice'],
-    }, { idempotencyKey: `plan:${sub.providerSubscriptionId}:${body.interval}:${body.seats}:${Math.floor((sub.currentPeriodStart?.getTime() ?? 0) / 1000)}` });
+    }, { idempotencyKey: `plan:${sub.providerSubscriptionId}:${body.interval}:${body.seats}:v${sub.planChangeVersion}` });
+    // Advance only after Stripe accepted the change: a retry of a failed attempt keeps the same key (Stripe dedupes it),
+    // while A -> B -> A -> B gets a fresh key per applied change instead of replaying a cached response.
+    await sub.increment('planChangeVersion');
     await upsertSubscription(sub.providerSubscriptionId, mode);
     const invoice = typeof updated.latest_invoice === 'object' ? (updated.latest_invoice as Stripe.Invoice | null) : null;
     const pending = updated.pending_update !== null && updated.pending_update !== undefined;
