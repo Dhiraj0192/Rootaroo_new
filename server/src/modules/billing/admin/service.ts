@@ -8,6 +8,7 @@ import { BillingConflictError } from '../errors';
 import { withLock } from '../locks';
 import { livemodeOf, resolveMode } from '../mode';
 import { clearRoutingCache, loadRules, replaceRoutingRules, RuleRow } from '../routing';
+import { raiseReviewItem } from '../review';
 import { upsertSubscription } from '../sync';
 import { ALLOWED_STATUSES, BillingCohort, Entitlement } from '../types';
 import logger from '../../../shared/utils/logger';
@@ -127,7 +128,8 @@ export interface Summary {
 
 export async function getSummary(mode: 'test' | 'live', from: Date, to: Date, now: Date = new Date()): Promise<Summary> {
   const livemode = mode === 'live';
-  const inRange = { livemode, occurredAt: { [Op.between]: [from, to] } };
+  // Store (Apple/Google) rows keep the buyer's currency; this summary is USD only, so other currencies stay out of the totals.
+  const inRange = { livemode, currency: 'usd', occurredAt: { [Op.between]: [from, to] } };
   const sum = async (field: 'amount' | 'fee' | 'disputeFee', where: Record<string, unknown>) =>
     Number((await BillingTransaction.sum(field, { where: { ...inRange, ...where } })) ?? 0);
 
@@ -138,7 +140,7 @@ export async function getSummary(mode: 'test' | 'live', from: Date, to: Date, no
   const disputeFees = await sum('disputeFee', { type: 'dispute' });
   const failedCyclePayments = await BillingTransaction.count({ where: { ...inRange, type: 'failed_payment', billingReason: 'subscription_cycle' } });
 
-  const subs = await BillingSubscription.findAll({ where: { livemode, status: { [Op.in]: ['active', 'trialing', 'past_due'] } } });
+  const subs = (await BillingSubscription.findAll({ where: { livemode, status: { [Op.in]: ['active', 'trialing', 'past_due'] } } })).filter((s) => (s.currency ?? 'usd').toLowerCase() === 'usd');
   const healthy = subs.filter((s) => s.status === 'active' || s.status === 'trialing');
   const pastDue = subs.filter((s) => s.status === 'past_due');
   const inGrace = pastDue.filter((s) => s.graceUntil && s.graceUntil.getTime() > now.getTime());
@@ -230,14 +232,14 @@ export async function replayEvent(idOrProviderId: string): Promise<BillingEvent>
   return (await BillingEvent.findByPk(row.id))!;
 }
 
-export interface CohortChange { changed: boolean; from: BillingCohort; to: BillingCohort; canceledSubscriptions: string[]; expiredSessions: string[] }
+export interface CohortChange { changed: boolean; from: BillingCohort; to: BillingCohort; canceledSubscriptions: string[]; expiredSessions: string[]; storeSubscriptions: string[] }
 
 /** L9: refused while an allowed subscription or an open checkout exists in the household's current mode, unless forced. */
 export async function changeCohort(householdId: string, body: { cohort: BillingCohort; reason: string; force?: boolean }): Promise<CohortChange> {
   const household = await Household.findByPk(householdId, { paranoid: false });
   if (!household) throw new NotFoundError('Household');
   const from = household.billingCohort;
-  if (from === body.cohort) return { changed: false, from, to: body.cohort, canceledSubscriptions: [], expiredSessions: [] };
+  if (from === body.cohort) return { changed: false, from, to: body.cohort, canceledSubscriptions: [], expiredSessions: [], storeSubscriptions: [] };
 
   const mode = resolveMode(household);
   const livemode = livemodeOf(mode);
@@ -252,17 +254,26 @@ export async function changeCohort(householdId: string, body: { cohort: BillingC
 
     const canceledSubscriptions: string[] = [];
     const expiredSessions: string[] = [];
+    const storeSubscriptions: string[] = [];
     if (body.force) {
-      const stripe = getStripe(mode);
       for (const sub of subs) {
-        if (sub.provider !== 'stripe' || sub.cancelAtPeriodEnd) continue;
-        await stripe.subscriptions.update(sub.providerSubscriptionId, { cancel_at_period_end: true }, { idempotencyKey: `cohort:${sub.providerSubscriptionId}:${Date.now()}` });
+        if (sub.provider !== 'stripe') {
+          // Apple/Google subscriptions belong to the buyer's store account; we cannot cancel them. Staff follow up.
+          await raiseReviewItem({
+            livemode, kind: 'store_subscription_cohort_change', entityType: 'subscription', entityId: sub.id, providerObjectId: sub.providerSubscriptionId,
+            after: { provider: sub.provider, householdId, from, to: body.cohort, reason: body.reason },
+          });
+          storeSubscriptions.push(sub.providerSubscriptionId);
+          continue;
+        }
+        if (sub.cancelAtPeriodEnd) continue;
+        await getStripe(mode).subscriptions.update(sub.providerSubscriptionId, { cancel_at_period_end: true }, { idempotencyKey: `cohort:${sub.providerSubscriptionId}:${Date.now()}` });
         await upsertSubscription(sub.providerSubscriptionId, mode);
         canceledSubscriptions.push(sub.providerSubscriptionId);
       }
       for (const session of sessions) {
         if (session.providerSessionId) {
-          await stripe.checkout.sessions.expire(session.providerSessionId).catch((err: Error) => logger.warn(`[Billing] expire ${session.providerSessionId}: ${err.message}`));
+          await getStripe(mode).checkout.sessions.expire(session.providerSessionId).catch((err: Error) => logger.warn(`[Billing] expire ${session.providerSessionId}: ${err.message}`));
           expiredSessions.push(session.providerSessionId);
         }
         await session.update({ status: 'expired' });
@@ -271,7 +282,7 @@ export async function changeCohort(householdId: string, body: { cohort: BillingC
 
     await household.update({ billingCohort: body.cohort });
     await clearEntitlementCache(householdId);
-    return { changed: true, from, to: body.cohort, canceledSubscriptions, expiredSessions };
+    return { changed: true, from, to: body.cohort, canceledSubscriptions, expiredSessions, storeSubscriptions };
   }, { waitMs: 10_000 });
 }
 

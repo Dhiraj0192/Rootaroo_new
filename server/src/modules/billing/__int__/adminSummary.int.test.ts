@@ -43,6 +43,21 @@ describe('GET /billing-admin/summary (spec 11 arithmetic)', () => {
     });
   });
 
+  it('counts store rows in USD only: other currencies stay out of the totals and MRR, but remain listed', async () => {
+    const { household } = await createHouseholdWithAdmin();
+    const at = new Date('2026-10-05T00:00:00Z');
+    const base = { livemode: true, matchStatus: 'matched', householdId: household.id, occurredAt: at, type: 'payment', status: 'paid' };
+    await BillingTransaction.create({ ...base, provider: 'apple', currency: 'usd', amount: 899, providerObjectId: 'tx_usd' });
+    await BillingTransaction.create({ ...base, provider: 'apple', currency: 'eur', amount: 899, providerObjectId: 'tx_eur' });
+    await createSubscriptionRow(household.id, { livemode: true, provider: 'apple', providerSubscriptionId: 'A-1', unitAmount: 899, currency: 'usd' });
+    const other = await createHouseholdWithAdmin();
+    await createSubscriptionRow(other.household.id, { livemode: true, provider: 'google', providerSubscriptionId: 'G-1', unitAmount: 899, currency: 'eur' });
+    const res = await get('/summary?mode=live&from=2026-10-01T00:00:00Z&to=2026-10-31T23:59:59Z');
+    expect(res.body.data).toMatchObject({ gross: 899, mrr: 899, counts: { active: 1 } });
+    const list = await get('/transactions?mode=live');
+    expect(list.body.data.map((t: { providerObjectId: string }) => t.providerObjectId).sort()).toEqual(['tx_eur', 'tx_usd']);
+  });
+
   it('returns zeros for an empty window and defaults the range', async () => {
     const res = await get('/summary');
     expect(res.status).toBe(200);

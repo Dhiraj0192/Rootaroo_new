@@ -3,7 +3,7 @@ jest.mock('../notify', () => ({ notifyHouseholdAdmins: jest.fn(), alertStaff: je
 import request from 'supertest';
 import { v4 as uuidv4 } from 'uuid';
 import app from '../../../app';
-import { setupAssociations, Household, BillingCheckoutSession, BillingRoutingRule, AdminAuditLog } from '../../../database/models';
+import { setupAssociations, Household, BillingCheckoutSession, BillingReconciliationItem, BillingRoutingRule, AdminAuditLog } from '../../../database/models';
 import { resetDb, closeIntResources } from '../../../test/int/db';
 import { createHouseholdWithAdmin } from '../../../test/factories';
 import { createCustomerRow, createSubscriptionRow } from '../../../test/billing/rows';
@@ -74,6 +74,26 @@ describe('POST /households/:id/cohort (L9, B8)', () => {
     expect(res.body.data).toMatchObject({ changed: true, canceledSubscriptions: [], expiredSessions: ['cs_test_gone'] });
     expect(s.subscriptions.update).not.toHaveBeenCalled();
     expect(await BillingCheckoutSession.count({ where: { status: 'expired' } })).toBe(2);
+  });
+
+  it('force with a store subscription cannot cancel it: it raises a review item, leaves it untouched and still switches', async () => {
+    const { household } = await createHouseholdWithAdmin();
+    const store = await createSubscriptionRow(household.id, { provider: 'apple', providerSubscriptionId: '2000000555555' });
+    const res = await call('post', `/households/${household.id}/cohort`, { cohort: 'test', reason: 'QA on a store buyer', force: true });
+    expect(res.status).toBe(200);
+    expect(res.body.data).toMatchObject({ changed: true, canceledSubscriptions: [], storeSubscriptions: ['2000000555555'] });
+    expect(s.subscriptions.update).not.toHaveBeenCalled();
+    expect((await store.reload()).status).toBe('active');
+    expect(await BillingReconciliationItem.count({ where: { kind: 'store_subscription_cohort_change', providerObjectId: '2000000555555', resolution: 'needs_review' } })).toBe(1);
+    expect((await Household.findByPk(household.id))!.billingCohort).toBe('test');
+  });
+
+  it('without force a store subscription still blocks the switch', async () => {
+    const { household } = await createHouseholdWithAdmin();
+    await createSubscriptionRow(household.id, { provider: 'google', providerSubscriptionId: 'tok-abc' });
+    const res = await call('post', `/households/${household.id}/cohort`, { cohort: 'test', reason: 'no force' });
+    expect(res.status).toBe(409);
+    expect((await Household.findByPk(household.id))!.billingCohort).toBe('live');
   });
 
   it('validates the body', async () => {

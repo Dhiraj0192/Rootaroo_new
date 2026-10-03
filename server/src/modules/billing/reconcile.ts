@@ -13,6 +13,7 @@ import { fetchPaymentFees, recordDispute, recordInvoice, recordRefund } from './
 import { livemodeOf } from './mode';
 import { getAdminRecipients } from './notify';
 import { raiseReviewItem, recordAutoFix } from './review';
+import { reconcileStoreSubscriptions, StoreReconCounts } from './iap/reconcileStore';
 import { upsertSubscription } from './sync';
 import { ALLOWED_STATUSES, BillingMode } from './types';
 
@@ -21,6 +22,7 @@ export interface ReconCounts {
   subscriptionsChecked: number; subscriptionsFixed: number; missingInStripe: number; ledgerUpserts: number;
   feesFilled: number; emailDriftFixed: number; checkoutRowsFixed: number; reviewItems: number;
 }
+export type ReconRunCounts = ReconCounts & Partial<StoreReconCounts>;
 
 export const SUB_FIELDS = ['status', 'seats', 'interval', 'priceId', 'unitAmount', 'currentPeriodEnd', 'cancelAtPeriodEnd', 'pendingUpdate', 'graceUntil'] as const;
 
@@ -46,6 +48,7 @@ export async function runReconciliation(mode: BillingMode, kind: ReconKind, now:
   const envOk = (obj: unknown) => { const e = envOfEventObject(obj); return !e || e === envTag; };
   const run = await BillingReconciliationRun.create({ livemode, kind, startedAt: now, status: 'running' });
   const counts: ReconCounts = { subscriptionsChecked: 0, subscriptionsFixed: 0, missingInStripe: 0, ledgerUpserts: 0, feesFilled: 0, emailDriftFixed: 0, checkoutRowsFixed: 0, reviewItems: 0 };
+  let storeCounts: StoreReconCounts | null = null;
   const since = Math.floor((now.getTime() - (kind === 'weekly' ? 35 : 2) * 86400_000) / 1000);
 
   try {
@@ -82,6 +85,10 @@ export async function runReconciliation(mode: BillingMode, kind: ReconKind, now:
         counts.missingInStripe++;
       }
     }
+
+    // (b1) Apple / Google subscriptions through the store APIs (Task 11.4)
+    const store = await reconcileStoreSubscriptions(mode, kind, run.id, now);
+    storeCounts = store;
 
     // (b2) deletion drift: a household scheduled for deletion must have every allowed subscription set to cancel
     // (the fire-and-forget hook in household/service.ts can fail). Rows were just refreshed from Stripe above.
@@ -167,7 +174,7 @@ export async function runReconciliation(mode: BillingMode, kind: ReconKind, now:
     }
 
     counts.reviewItems = await BillingReconciliationItem.count({ where: { livemode, resolution: 'needs_review', createdAt: { [Op.gte]: now } } });
-    await run.update({ status: 'succeeded', finishedAt: new Date(), counts: { ...counts } });
+    await run.update({ status: 'succeeded', finishedAt: new Date(), counts: { ...counts, ...(storeCounts ?? {}) } });
     return run;
   } catch (err) {
     await run.update({ status: 'failed', finishedAt: new Date(), counts: { ...counts } });

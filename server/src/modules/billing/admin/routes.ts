@@ -204,7 +204,7 @@ router.post('/events/:id/replay', validate(replayParamsSchema), ctrl.replay);
  *               reason: { type: string }
  *               force: { type: boolean, description: "Sets cancel_at_period_end and expires open sessions" }
  *     responses:
- *       200: { description: "{ changed, from, to, canceledSubscriptions, expiredSessions }" }
+ *       200: { description: "{ changed, from, to, canceledSubscriptions, expiredSessions, storeSubscriptions }" }
  *       400: { description: Invalid body }
  *       404: { description: Household not found }
  *       409: { description: "COHORT_CHANGE_BLOCKED { subscriptions, openSessions }" }
