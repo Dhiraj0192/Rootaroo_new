@@ -13,6 +13,7 @@ import { startPurgeScheduledDeletionsJob } from './jobs/purge-scheduled-deletion
 import { startPingExpiryJob } from './jobs/ping-expiry';
 import { startBillingEventSweepJob } from './jobs/billing-event-sweep';
 import { startBillingCheckoutSweepJob } from './jobs/billing-checkout-sweep';
+import { startBillingReconcileJobs } from './jobs/billing-reconcile';
 import { setIO } from './shared/utils/socket';
 import {
   socketAuthMiddleware,
@@ -87,6 +88,7 @@ async function start(): Promise<void> {
     startPingExpiryJob();
     startBillingEventSweepJob();
     startBillingCheckoutSweepJob();
+    startBillingReconcileJobs();
 
     server.listen(env.port, () => {
       logger.info(`
