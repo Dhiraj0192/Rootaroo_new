@@ -180,6 +180,14 @@ function bootstrapKey(mode: BillingMode): string {
 export async function main(argv: string[]): Promise<void> {
   dotenv.config({ path: path.resolve(__dirname, '../../../../.env') });
   const opts = parseArgs(argv);
+  if (opts.backfill) {
+    const { setupAssociations } = await import('../../../database/models');
+    const { runReconciliation } = await import('../reconcile');
+    setupAssociations();
+    const run = await runReconciliation(opts.mode, 'weekly');
+    console.log(`backfill (weekly reconciliation) ${run.id}: ${run.status} ${JSON.stringify(run.counts)}`);
+    return;
+  }
   const stripe = new Stripe(bootstrapKey(opts.mode), { apiVersion: STRIPE_API_VERSION });
   const base = (process.env.BILLING_PUBLIC_BASE_URL || process.env.SERVER_BASE_URL || '').replace(/\/+$/, '');
 
