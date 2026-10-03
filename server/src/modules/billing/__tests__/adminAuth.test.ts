@@ -85,6 +85,14 @@ describe('auditLog', () => {
     expect(row).toMatchObject({ keyLabel: 'billing-key', bodyDigest: null, query: { _note: { reason: 'x' } }, ip: null });
   });
 
+  it('redacts the email filter (PII) before storing the query', () => {
+    run({ method: 'GET', originalUrl: '/p?email=Jane%40Example.com&limit=5', query: { email: 'Jane@Example.com', limit: '5' }, body: {} });
+    const row = (AdminAuditLog.create as jest.Mock).mock.calls[0][0];
+    const digest = crypto.createHash('sha256').update('jane@example.com').digest('hex').slice(0, 16);
+    expect(row.query).toEqual({ email: `sha256:${digest}`, limit: '5' });
+    expect(JSON.stringify(row)).not.toMatch(/jane/i);
+  });
+
   it('never throws into the response when the write fails', async () => {
     (AdminAuditLog.create as jest.Mock).mockRejectedValue(new Error('db down'));
     expect(() => run({ method: 'GET', originalUrl: '/p', query: {} })).not.toThrow();

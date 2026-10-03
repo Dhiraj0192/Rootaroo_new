@@ -53,6 +53,22 @@ export function requireBillingAdminKey(req: Request, res: Response, next: NextFu
   next();
 }
 
+const PII_QUERY_KEYS = new Set(['email']);
+
+/** Replaces PII query values (the `email` filter) with a short sha256 digest so audit rows can be correlated but never reveal the address. */
+export function redactQuery(query: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(query ?? {})) {
+    if (PII_QUERY_KEYS.has(key.toLowerCase())) {
+      const digest = (v: unknown) => `sha256:${crypto.createHash('sha256').update(String(v).trim().toLowerCase()).digest('hex').slice(0, 16)}`;
+      out[key] = Array.isArray(value) ? value.map(digest) : digest(value);
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
 /** Logs every request on `finish` (rejected ones included): method, path, query, a body digest (never the body) and status. */
 export function auditLog(surface: 'admin' | 'billing-admin'): RequestHandler {
   return (req: Request, res: Response, next: NextFunction) => {
@@ -64,7 +80,7 @@ export function auditLog(surface: 'admin' | 'billing-admin'): RequestHandler {
         keyLabel: (res.locals.auditKeyLabel as string | undefined) ?? 'none',
         method: req.method,
         path: req.originalUrl.split('?')[0].slice(0, 500),
-        query: { ...req.query, ...(note ? { _note: note } : {}) },
+        query: { ...redactQuery(req.query as Record<string, unknown>), ...(note ? { _note: note } : {}) },
         bodyDigest: body ? crypto.createHash('sha256').update(body).digest('hex') : null,
         statusCode: res.statusCode,
         ip: req.ip ?? null,
