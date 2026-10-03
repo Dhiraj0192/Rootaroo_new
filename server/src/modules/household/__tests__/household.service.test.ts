@@ -56,8 +56,9 @@ jest.mock('../../billing/deletion', () => ({
   onHouseholdDeletionCancelled: jest.fn().mockResolvedValue(undefined),
   onHouseholdPurged: jest.fn().mockResolvedValue(undefined),
   syncBillingEmail: jest.fn().mockResolvedValue(undefined),
+  reportDeletionHookFailure: jest.fn().mockResolvedValue(undefined),
 }));
-import { onHouseholdDeletionScheduled, onHouseholdDeletionCancelled, syncBillingEmail } from '../../billing/deletion';
+import { onHouseholdDeletionScheduled, onHouseholdDeletionCancelled, syncBillingEmail, reportDeletionHookFailure } from '../../billing/deletion';
 import { PaymentRequiredError } from '../../billing/errors';
 
 const userId = '550e8400-e29b-41d4-a716-446655440001';
@@ -670,6 +671,19 @@ describe('Household Service — Member Management', () => {
       expect(onHouseholdDeletionScheduled).toHaveBeenCalledWith(request.householdId);
     });
 
+    it('raises a review item (via reportDeletionHookFailure) when the scheduled hook fails', async () => {
+      const request = fakeRequest({ type: 'delete' });
+      (models.HouseholdActionRequest.findByPk as jest.Mock).mockResolvedValue(request);
+      (models.Household.findByPk as jest.Mock).mockResolvedValue(fakeHousehold({ scheduledDeletionAt: null, save: jest.fn().mockResolvedValue(undefined) }));
+      const boom = new Error('stripe down');
+      (onHouseholdDeletionScheduled as jest.Mock).mockRejectedValueOnce(boom);
+
+      await approveActionRequest('req-4');
+      await new Promise((r) => setImmediate(r));
+
+      expect(reportDeletionHookFailure).toHaveBeenCalledWith(request.householdId, 'scheduled', boom);
+    });
+
     it('should throw NotFoundError for an unknown request id', async () => {
       (models.HouseholdActionRequest.findByPk as jest.Mock).mockResolvedValue(null);
 
@@ -724,6 +738,18 @@ describe('Household Service — Member Management', () => {
       expect(household.scheduledDeletionAt).toBeNull();
       expect(household.save).toHaveBeenCalled();
       expect(onHouseholdDeletionCancelled).toHaveBeenCalledWith(householdId);
+    });
+
+    it('raises a review item (via reportDeletionHookFailure) when the cancelled hook fails', async () => {
+      (models.HouseholdMember.findOne as jest.Mock).mockResolvedValue(fakeMembership({ role: 'admin' }));
+      (models.Household.findByPk as jest.Mock).mockResolvedValue(fakeHousehold({ scheduledDeletionAt: new Date(), save: jest.fn() }));
+      const boom = new Error('stripe down');
+      (onHouseholdDeletionCancelled as jest.Mock).mockRejectedValueOnce(boom);
+
+      await cancelHouseholdDeletion(userId, householdId);
+      await new Promise((r) => setImmediate(r));
+
+      expect(reportDeletionHookFailure).toHaveBeenCalledWith(householdId, 'cancelled', boom);
     });
 
     it('should throw ForbiddenError for a non-admin', async () => {

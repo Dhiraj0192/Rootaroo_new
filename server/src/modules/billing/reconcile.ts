@@ -1,12 +1,12 @@
 import Stripe from 'stripe';
 import { Op } from 'sequelize';
 import {
-  BillingCustomer, BillingReconciliationItem, BillingReconciliationRun, BillingSubscription, BillingTransaction,
+  BillingCustomer, BillingReconciliationItem, Household, BillingReconciliationRun, BillingSubscription, BillingTransaction,
 } from '../../database/models';
 import logger from '../../shared/utils/logger';
 import { getBillingConfig, getStripe } from './config';
 import { sweepCheckouts } from './checkoutSweep';
-import { syncBillingEmail } from './deletion';
+import { setCancelAtPeriodEndForHousehold, syncBillingEmail } from './deletion';
 import { clearEntitlementCache } from './entitlement';
 import { envOfEventObject } from './handlers';
 import { fetchPaymentFees, recordDispute, recordInvoice, recordRefund } from './ledger';
@@ -80,6 +80,26 @@ export async function runReconciliation(mode: BillingMode, kind: ReconKind, now:
         await clearEntitlementCache(local.householdId);
         await raiseReviewItem({ livemode, kind: 'missing_in_stripe', entityType: 'subscription', entityId: local.id, providerObjectId: subId, before, runId: run.id });
         counts.missingInStripe++;
+      }
+    }
+
+    // (b2) deletion drift: a household scheduled for deletion must have every allowed subscription set to cancel
+    // (the fire-and-forget hook in household/service.ts can fail). Rows were just refreshed from Stripe above.
+    const scheduled = await Household.findAll({ where: { scheduledDeletionAt: { [Op.ne]: null } }, attributes: ['id'] });
+    if (scheduled.length > 0) {
+      const drifting = await BillingSubscription.findAll({
+        where: { livemode, provider: 'stripe', status: { [Op.in]: [...ALLOWED_STATUSES] }, cancelAtPeriodEnd: false, householdId: scheduled.map((h) => h.id) },
+      });
+      for (const sub of drifting) {
+        try {
+          const fixed = await setCancelAtPeriodEndForHousehold(sub.householdId, true, 'recon-hh-delete', { livemode });
+          if (fixed.includes(sub.providerSubscriptionId)) {
+            await recordAutoFix({ livemode, kind: 'deletion_drift', entityType: 'subscription', entityId: sub.id, providerObjectId: sub.providerSubscriptionId, before: { cancelAtPeriodEnd: false }, after: { cancelAtPeriodEnd: true }, runId: run.id });
+          }
+        } catch (err) {
+          logger.warn(`[Reconcile] deletion drift fix failed for ${sub.providerSubscriptionId}: ${(err as Error).message}`);
+          await raiseReviewItem({ livemode, kind: 'deletion_drift', entityType: 'subscription', entityId: sub.id, providerObjectId: sub.providerSubscriptionId, after: { error: (err as Error).message }, runId: run.id });
+        }
       }
     }
 

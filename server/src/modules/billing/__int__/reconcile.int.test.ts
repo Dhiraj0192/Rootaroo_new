@@ -78,3 +78,33 @@ describe('runReconciliation (criterion 5)', () => {
     await expect(runReconciliation('test', 'daily')).rejects.toThrow('api down');
   });
 });
+
+describe('runReconciliation: deletion drift (finding 2)', () => {
+  it('re-applies cancel_at_period_end for a household scheduled for deletion and records an auto_fixed item', async () => {
+    const { household } = await createHouseholdWithAdmin();
+    await household.update({ scheduledDeletionAt: new Date(Date.now() + 20 * 86400_000) });
+    await createCustomerRow(household.id, { providerCustomerId: 'cus_D' });
+    await createSubscriptionRow(household.id, { providerSubscriptionId: 'sub_D', status: 'active', cancelAtPeriodEnd: false });
+    let flag = false;
+    s.subscriptions.retrieve.mockImplementation(async (id: string) => stripeSubscription({ id, customer: 'cus_D', cancelAtPeriodEnd: flag }));
+    s.subscriptions.update.mockImplementation(async (_id: string, p: { cancel_at_period_end: boolean }) => { flag = p.cancel_at_period_end; return {}; });
+    s.customers.retrieve.mockResolvedValue({ id: 'cus_D', email: null });
+
+    const run = await runReconciliation('test', 'daily');
+
+    expect(s.subscriptions.update).toHaveBeenCalledWith('sub_D', { cancel_at_period_end: true });
+    expect((await BillingSubscription.findOne({ where: { providerSubscriptionId: 'sub_D' } }))!.cancelAtPeriodEnd).toBe(true);
+    expect(await BillingReconciliationItem.findOne({ where: { kind: 'deletion_drift', providerObjectId: 'sub_D' } })).toMatchObject({ resolution: 'auto_fixed', runId: run.id });
+  });
+
+  it('does nothing when the household is not scheduled or the subscription already cancels', async () => {
+    const { household } = await createHouseholdWithAdmin();
+    await createCustomerRow(household.id, { providerCustomerId: 'cus_E' });
+    await createSubscriptionRow(household.id, { providerSubscriptionId: 'sub_E', status: 'active', cancelAtPeriodEnd: false });
+    s.subscriptions.retrieve.mockImplementation(async (id: string) => stripeSubscription({ id, customer: 'cus_E' }));
+    s.customers.retrieve.mockResolvedValue({ id: 'cus_E', email: null });
+    await runReconciliation('test', 'daily');
+    expect(s.subscriptions.update).not.toHaveBeenCalled();
+    expect(await BillingReconciliationItem.count({ where: { kind: 'deletion_drift' } })).toBe(0);
+  });
+});

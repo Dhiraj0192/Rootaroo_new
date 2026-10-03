@@ -9,7 +9,7 @@ import { sendAdminAlertEmail } from '../../shared/utils/mailer';
 import { getIO } from '../../shared/utils/socket';
 import { withDeadlockRetry } from '../../shared/utils/dbRetry';
 import { assertSeatAvailable, clearEntitlementCache } from '../billing/entitlement';
-import { onHouseholdDeletionScheduled, onHouseholdDeletionCancelled, onHouseholdPurged, syncBillingEmail } from '../billing/deletion';
+import { onHouseholdDeletionScheduled, onHouseholdDeletionCancelled, onHouseholdPurged, syncBillingEmail, reportDeletionHookFailure } from '../billing/deletion';
 import logger from '../../shared/utils/logger';
 import * as notificationService from '../../shared/services/notifications';
 import type {
@@ -613,7 +613,7 @@ export async function approveActionRequest(
     return toActionRequestResponse(request);
   });
   if (scheduledHouseholdId) {
-    void onHouseholdDeletionScheduled(scheduledHouseholdId).catch((err) => logger.error('[Billing] deletion-scheduled hook failed:', err));
+    void onHouseholdDeletionScheduled(scheduledHouseholdId).catch((err) => reportDeletionHookFailure(scheduledHouseholdId!, 'scheduled', err));
   }
   return result;
 }
@@ -735,7 +735,7 @@ export async function cancelHouseholdDeletion(userId: string, householdId: strin
 
   household.scheduledDeletionAt = null;
   await household.save();
-  void onHouseholdDeletionCancelled(householdId).catch((err) => logger.error('[Billing] deletion-cancelled hook failed:', err));
+  void onHouseholdDeletionCancelled(householdId).catch((err) => reportDeletionHookFailure(householdId, 'cancelled', err));
 
   notificationService
     .notifyHousehold(

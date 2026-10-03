@@ -5,6 +5,7 @@ import { getStripe, isModeAvailable } from './config';
 import { clearEntitlementCache } from './entitlement';
 import { anonymizeUserLedger } from './ledger';
 import { modeFromLivemode } from './mode';
+import { withLock } from './locks';
 import { getAdminRecipients, notifyHouseholdAdmins } from './notify';
 import { raiseReviewItem } from './review';
 import { upsertSubscription } from './sync';
@@ -30,22 +31,71 @@ export async function syncBillingEmail(householdId: string, excludeUserId?: stri
   }
 }
 
-export async function setCancelAtPeriodEndForHousehold(householdId: string, value: boolean, reason: string): Promise<string[]> {
-  const subs = await BillingSubscription.findAll({ where: { householdId, provider: 'stripe', ...allowedWhere } });
-  const changed: string[] = [];
-  for (const sub of subs) {
-    if (sub.cancelAtPeriodEnd === value) continue;
-    const mode = modeFromLivemode(sub.livemode);
-    await getStripe(mode).subscriptions.update(sub.providerSubscriptionId, { cancel_at_period_end: value }, { idempotencyKey: `${reason}:${sub.providerSubscriptionId}:${value}` });
-    await upsertSubscription(sub.providerSubscriptionId, mode);
-    changed.push(sub.providerSubscriptionId);
+/**
+ * Sets cancel_at_period_end on the household's allowed Stripe subscriptions. No Stripe idempotency key is
+ * sent: a key built from (reason, sub, value) replays the cached response when deletion is scheduled,
+ * cancelled and rescheduled within 24 h. The update itself is idempotent, the local
+ * cancelAtPeriodEnd === value check skips no-ops, and the lock serialises concurrent flips.
+ */
+export async function setCancelAtPeriodEndForHousehold(
+  householdId: string, value: boolean, reason: string, opts: { livemode?: boolean } = {},
+): Promise<string[]> {
+  return withLock(`billing:hhdel:${householdId}`, 60_000, async () => {
+    const subs = await BillingSubscription.findAll({
+      where: { householdId, provider: 'stripe', ...allowedWhere, ...(opts.livemode === undefined ? {} : { livemode: opts.livemode }) },
+    });
+    const changed: string[] = [];
+    for (const sub of subs) {
+      if (sub.cancelAtPeriodEnd === value) continue;
+      const mode = modeFromLivemode(sub.livemode);
+      logger.info(`[Billing] ${reason}: cancel_at_period_end=${value} on ${sub.providerSubscriptionId}`);
+      await getStripe(mode).subscriptions.update(sub.providerSubscriptionId, { cancel_at_period_end: value });
+      await upsertSubscription(sub.providerSubscriptionId, mode);
+      changed.push(sub.providerSubscriptionId);
+    }
+    return changed;
+  }, { waitMs: 15_000 });
+}
+
+async function livemodesOf(where: Record<string, unknown>): Promise<boolean[]> {
+  const rows = await BillingSubscription.findAll({ where, attributes: ['livemode'] });
+  const modes = [...new Set(rows.map((r) => r.livemode))];
+  return modes.length > 0 ? modes : [false];
+}
+
+/** A failed fire-and-forget deletion hook must not vanish into the log: staff see it, reconciliation re-applies it. */
+export async function reportDeletionHookFailure(householdId: string, action: 'scheduled' | 'cancelled', err: unknown): Promise<void> {
+  logger.error(`[Billing] deletion-${action} hook failed for household ${householdId}:`, err);
+  try {
+    for (const livemode of await livemodesOf({ householdId, provider: 'stripe', ...allowedWhere })) {
+      await raiseReviewItem({
+        livemode, kind: 'household_deletion_sync_failed', entityType: 'household', entityId: householdId, providerObjectId: householdId,
+        after: { action, error: (err as Error)?.message ?? String(err) },
+      });
+    }
+  } catch (inner) {
+    logger.error(`[Billing] could not raise review item for household ${householdId}:`, inner);
   }
-  return changed;
+}
+
+/** Account deletion must not block on billing; staff get one review item per affected mode. */
+export async function reportPurchaserDeletionFailure(userId: string, err: unknown): Promise<void> {
+  logger.error(`[Billing] purchaser deletion hook failed for ${userId}:`, err);
+  try {
+    for (const livemode of await livemodesOf({ purchasedByUserId: userId })) {
+      await raiseReviewItem({
+        livemode, kind: 'purchaser_deletion_failed', entityType: 'user', entityId: userId, providerObjectId: userId,
+        after: { error: (err as Error)?.message ?? String(err) },
+      });
+    }
+  } catch (inner) {
+    logger.error(`[Billing] could not raise review item for purchaser ${userId}:`, inner);
+  }
 }
 
 /** §5.11: runs from finalizeUserDeletion after the 30-day window. */
-export async function onPurchaserDeleted(userId: string): Promise<void> {
-  await anonymizeUserLedger(userId);
+export async function onPurchaserDeleted(userId: string, email?: string | null): Promise<void> {
+  await anonymizeUserLedger(userId, email);
   const subs = await BillingSubscription.findAll({ where: { purchasedByUserId: userId } });
   for (const sub of subs) {
     const mode = modeFromLivemode(sub.livemode);
