@@ -71,11 +71,16 @@ describe('worker (unit)', () => {
     const exhausted = mkRow({ id: 'x1', status: 'failed', attempts: MAX_ATTEMPTS, lastError: 'e' });
     const waiting = mkRow({ id: 'w1', status: 'failed', attempts: 1 });
     BE.findAll.mockResolvedValueOnce([stale]).mockResolvedValueOnce([exhausted]).mockResolvedValueOnce([waiting]);
-    BE.update.mockResolvedValue([0]);
+    BE.update.mockResolvedValue([1]);
     const res = await sweepEvents();
     await __drainForTests();
     expect(res).toEqual({ requeued: 0, dead: 1, reset: 1 });
-    expect(stale.update).toHaveBeenCalledWith(expect.objectContaining({ status: 'failed', attempts: 1 }));
+    // finding 10: conditional update, never an unconditional row.update
+    expect(BE.update).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'failed', lastError: 'stale processing lock' }),
+      { where: expect.objectContaining({ id: 's1', status: 'processing', lockedAt: expect.anything() }) },
+    );
+    expect(stale.update).not.toHaveBeenCalled();
     expect(exhausted.update).toHaveBeenCalledWith({ status: 'dead' });
     expect(raiseReviewItem).toHaveBeenCalledWith(expect.objectContaining({ kind: 'dead_event' }));
     expect(alertStaff).toHaveBeenCalled();

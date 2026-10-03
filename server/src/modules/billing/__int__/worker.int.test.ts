@@ -52,6 +52,18 @@ describe('worker', () => {
     expect((await BillingEvent.findByPk(row.id))!.status).toBe('processed');
   });
 
+  it('the sweep does not clobber a row that finished after it was read (finding 10)', async () => {
+    const row = await store(stripeEvent('invoice.paid', {}), { status: 'processing', lockedAt: new Date(Date.now() - 11 * 60_000) });
+    const snapshot = (await BillingEvent.findByPk(row.id))!; // what sweep's findAll saw
+    await BillingEvent.update({ status: 'processed', processedAt: new Date(), lockedAt: null }, { where: { id: row.id } }); // worker finished meanwhile
+    const spy = jest.spyOn(BillingEvent, 'findAll').mockImplementationOnce(async () => [snapshot]);
+    const res = await sweepEvents();
+    spy.mockRestore();
+    await __drainForTests();
+    expect(res.reset).toBe(0);
+    expect(await BillingEvent.findByPk(row.id)).toMatchObject({ status: 'processed', attempts: 0 });
+  });
+
   it('respects exponential backoff and moves attempts >= 8 to dead with review + alert', async () => {
     (dispatchEvent as jest.Mock).mockResolvedValue('processed');
     expect(backoffMs(1)).toBe(2 * 60_000);

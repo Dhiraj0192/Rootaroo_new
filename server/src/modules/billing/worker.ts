@@ -1,5 +1,5 @@
 import Stripe from 'stripe';
-import { Op } from 'sequelize';
+import { literal, Op } from 'sequelize';
 import { BillingEvent } from '../../database/models';
 import logger from '../../shared/utils/logger';
 import { getBillingConfig } from './config';
@@ -69,9 +69,17 @@ export async function processEvent(id: string): Promise<'processed' | 'ignored' 
 
 export async function sweepEvents(now: Date = new Date()): Promise<{ requeued: number; dead: number; reset: number }> {
   // 1. stale `processing` rows (crash mid-dispatch) go back to failed with one more attempt
-  const stale = await BillingEvent.findAll({ where: { status: 'processing', lockedAt: { [Op.lt]: new Date(now.getTime() - STALE_PROCESSING_MS) } } });
-  const resetIds = new Set(stale.map((r) => r.id)); // crash recovery retries immediately, without waiting for backoff
-  for (const row of stale) await row.update({ status: 'failed', attempts: row.attempts + 1, lockedAt: null, lastError: 'stale processing lock' });
+  const cutoff = new Date(now.getTime() - STALE_PROCESSING_MS);
+  const stale = await BillingEvent.findAll({ where: { status: 'processing', lockedAt: { [Op.lt]: cutoff } } });
+  const resetIds = new Set<string>(); // crash recovery retries immediately, without waiting for backoff
+  for (const row of stale) {
+    // Conditional: a worker that finished (or re-claimed) the row since the read must not be overwritten.
+    const [n] = await BillingEvent.update(
+      { status: 'failed', attempts: literal('attempts + 1'), lockedAt: null, lastError: 'stale processing lock' },
+      { where: { id: row.id, status: 'processing', lockedAt: { [Op.lt]: cutoff } } },
+    );
+    if (n > 0) resetIds.add(row.id);
+  }
 
   // 2. exhausted rows become dead
   const exhausted = await BillingEvent.findAll({ where: { status: 'failed', attempts: { [Op.gte]: MAX_ATTEMPTS } } });
@@ -91,5 +99,5 @@ export async function sweepEvents(now: Date = new Date()): Promise<{ requeued: n
     enqueueEvent(row.id);
     requeued++;
   }
-  return { requeued, dead: exhausted.length, reset: stale.length };
+  return { requeued, dead: exhausted.length, reset: resetIds.size };
 }

@@ -111,7 +111,7 @@ async function ensureCustomerRow(householdId: string, customerId: string, livemo
  * per-subscription lock, so the last writer always writes the newest Stripe state.
  */
 export async function upsertSubscription(
-  subId: string, mode: BillingMode, opts: { eventCreated?: number } = {},
+  subId: string, mode: BillingMode, opts: { eventCreated?: number; skipDuplicates?: boolean } = {},
 ): Promise<BillingSubscription | null> {
   const row = await withLock(`billing:sub:${subId}`, 30_000, async () => {
     const cfg = getBillingConfig();
@@ -171,7 +171,7 @@ export async function upsertSubscription(
 
   if (row) {
     await clearEntitlementCache(row.householdId);
-    await resolveDuplicates(row.householdId, mode);
+    if (!opts.skipDuplicates) await resolveDuplicates(row.householdId, mode);
   }
   return row;
 }

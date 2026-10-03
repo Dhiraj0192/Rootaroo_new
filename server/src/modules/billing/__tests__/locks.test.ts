@@ -3,7 +3,7 @@ jest.mock('../../../config/redis', () => ({ __esModule: true, default: redisMock
 
 const conn = { query: jest.fn() };
 const cm = { getConnection: jest.fn().mockResolvedValue(conn), releaseConnection: jest.fn().mockResolvedValue(undefined) };
-jest.mock('../../../config/database', () => ({ __esModule: true, default: { connectionManager: cm } }));
+jest.mock('../../../config/database', () => ({ __esModule: true, default: { connectionManager: cm, options: { pool: { max: 4 } } } }));
 
 import { withLock, mysqlLockName } from '../locks';
 import { LockBusyError } from '../errors';
@@ -78,5 +78,35 @@ describe('mysqlLockName', () => {
     const long = mysqlLockName(`billing:checkout:${'a'.repeat(60)}:test`);
     expect(long.length).toBeLessThanOrEqual(64);
     expect(long.startsWith('billing:')).toBe(true);
+  });
+});
+
+describe('withLock heartbeat and MySQL slots (finding 12)', () => {
+  it('extends a Redis lock that outlives its TTL, only while the token is still ours', async () => {
+    redisMock.set.mockResolvedValue('OK');
+    await withLock('billing:slow', 90, async () => { await new Promise((r) => setTimeout(r, 250)); });
+    const extend = redisMock.eval.mock.calls.filter((c) => String(c[0]).includes('pexpire'));
+    expect(extend.length).toBeGreaterThanOrEqual(2);
+    expect(extend[0].slice(1)).toEqual([1, 'lock:billing:slow', redisMock.set.mock.calls[0][1], 90]);
+    const callsAtEnd = redisMock.eval.mock.calls.length;
+    await new Promise((r) => setTimeout(r, 150));
+    expect(redisMock.eval.mock.calls.length).toBe(callsAtEnd); // heartbeat stopped after release
+  });
+
+  it('caps concurrent MySQL lock holders below the pool size so nested locks cannot starve queries', async () => {
+    redisMock.status = 'end';
+    mysqlReturns(1, 1, 1, 1);
+    const release: Array<() => void> = [];
+    const hold = () => new Promise<void>((r) => { release.push(r); });
+    const a = withLock('billing:a', 1000, hold);
+    const b = withLock('billing:b', 1000, hold);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(cm.getConnection).toHaveBeenCalledTimes(2); // pool max 4 -> 2 slots
+    await expect(withLock('billing:c', 1000, async () => 1)).rejects.toBeInstanceOf(LockBusyError);
+    expect(cm.getConnection).toHaveBeenCalledTimes(2);
+    release.forEach((r) => r());
+    await Promise.all([a, b]);
+    mysqlReturns(1);
+    await expect(withLock('billing:d', 1000, async () => 'free')).resolves.toBe('free');
   });
 });

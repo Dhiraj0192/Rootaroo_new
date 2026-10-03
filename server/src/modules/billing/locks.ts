@@ -13,6 +13,8 @@ type ConnManager = {
 };
 
 const RELEASE_LUA = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end";
+// Extends the TTL only while the key still holds our token.
+const EXTEND_LUA = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('pexpire', KEYS[1], ARGV[2]) else return 0 end";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export function mysqlLockName(name: string): string {
@@ -26,7 +28,33 @@ function rawQuery(conn: RawConn, sql: string, params: unknown[]): Promise<Array<
   });
 }
 
+// Every MySQL lock pins a pool connection for the whole of fn, and fn itself needs more connections (and nested
+// locks). Capping holders at half the pool guarantees fn can always get a query connection instead of starving.
+let mysqlHolders = 0;
+function mysqlSlots(): number {
+  const max = (sequelize as unknown as { options?: { pool?: { max?: number } } }).options?.pool?.max ?? 10;
+  return Math.max(1, Math.floor(max / 2));
+}
+
+async function acquireMysqlSlot(name: string, waitMs: number): Promise<void> {
+  const deadline = Date.now() + waitMs;
+  while (mysqlHolders >= mysqlSlots()) {
+    if (Date.now() >= deadline) throw new LockBusyError(name);
+    await sleep(25);
+  }
+  mysqlHolders++;
+}
+
 async function withMysqlLock<T>(name: string, fn: () => Promise<T>, waitMs: number): Promise<T> {
+  await acquireMysqlSlot(name, waitMs);
+  try {
+    return await withMysqlConnection(name, fn, waitMs);
+  } finally {
+    mysqlHolders--;
+  }
+}
+
+async function withMysqlConnection<T>(name: string, fn: () => Promise<T>, waitMs: number): Promise<T> {
   const cm = sequelize.connectionManager as unknown as ConnManager;
   const conn = await cm.getConnection({ type: 'write' });
   const lockName = mysqlLockName(name);
@@ -68,9 +96,15 @@ export async function withLock<T>(name: string, ttlMs: number, fn: () => Promise
     return withMysqlLock(name, fn, waitMs);
   }
   if (!acquired) throw new LockBusyError(name);
+  // Heartbeat: long operations (Stripe calls, duplicate resolution) must not lose the lock mid-flight.
+  const beat = setInterval(() => {
+    redis.eval(EXTEND_LUA, 1, key, token, ttlMs).catch((err: Error) => logger.warn(`[Billing] lock heartbeat failed on ${name}: ${err.message}`));
+  }, Math.max(10, Math.floor(ttlMs / 3)));
+  beat.unref();
   try {
     return await fn();
   } finally {
+    clearInterval(beat);
     await redis.eval(RELEASE_LUA, 1, key, token).catch(() => undefined);
   }
 }
