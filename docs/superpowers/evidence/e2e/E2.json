@@ -1,0 +1,172 @@
+{
+  "scenario": "E2",
+  "title": "Checkout 7 members yearly",
+  "pass": true,
+  "startedAt": "2026-10-03T20:34:33.220Z",
+  "assertions": [
+    {
+      "name": "household starts blocked (402)",
+      "ok": true
+    },
+    {
+      "name": "POST /billing/checkout returns a hosted URL and session id",
+      "ok": true,
+      "detail": {
+        "status": 200
+      }
+    },
+    {
+      "name": "entitlement active after completing the hosted page (sync)",
+      "ok": true,
+      "detail": {
+        "sessionId": "cs_test_a1WkdVNhJu81yjGG6AOF0bN9tXb15udl8mIPq8ObQPEM8WFEnLADbzrZnL",
+        "state": "complete"
+      }
+    },
+    {
+      "name": "subscription yearly with 7 seats",
+      "ok": true,
+      "detail": {
+        "provider": "stripe",
+        "status": "active",
+        "interval": "year",
+        "seats": 7,
+        "unitAmount": 12775,
+        "currency": "usd",
+        "priceSet": "2026-10",
+        "currentPeriodEnd": "2027-10-03T20:42:45.000Z",
+        "cancelAtPeriodEnd": false,
+        "graceUntil": null,
+        "pendingUpdate": false
+      }
+    },
+    {
+      "name": "price rootaroo_hh7_year = 12775",
+      "ok": true,
+      "detail": {
+        "unit": 12775
+      }
+    },
+    {
+      "name": "purchaser recorded on the subscription",
+      "ok": true
+    },
+    {
+      "name": "guarded route no longer 402",
+      "ok": true
+    },
+    {
+      "name": "ledger payment matched to household and purchaser",
+      "ok": true,
+      "detail": {
+        "amount": 12775,
+        "match": "matched"
+      }
+    },
+    {
+      "name": "fee and net filled (now or after reconcile)",
+      "ok": true,
+      "detail": {
+        "fee": 0,
+        "net": 12775
+      }
+    },
+    {
+      "name": "checkout session row marked complete",
+      "ok": true,
+      "detail": "complete"
+    }
+  ],
+  "data": {
+    "snapshot": {
+      "subscriptions": [
+        {
+          "id": "211a7a1e-1228-42fc-b6e2-e10eadc816fc",
+          "householdId": "d935401d-1a75-4b33-90ad-ff2d08054867",
+          "provider": "stripe",
+          "livemode": false,
+          "providerSubscriptionId": "sub_1UMZlb0dWk0w8nqYLSLPQe4n",
+          "status": "active",
+          "interval": "year",
+          "seats": 7,
+          "priceId": "price_1UMD400dWk0w8nqYsfo1fED9",
+          "priceSet": "2026-10",
+          "unitAmount": 12775,
+          "currency": "usd",
+          "currentPeriodStart": "2026-10-03T20:42:45.000Z",
+          "currentPeriodEnd": "2027-10-03T20:42:45.000Z",
+          "cancelAtPeriodEnd": false,
+          "canceledAt": null,
+          "endedAt": null,
+          "pendingUpdate": null,
+          "graceUntil": null,
+          "purchasedByUserId": "fbddfc5c-ec40-4d43-936b-6615ebbc81fb",
+          "eventWatermark": 1791060169,
+          "lastSyncedAt": "2026-10-03T20:43:00.000Z",
+          "planChangeVersion": 0,
+          "createdAt": "2026-10-03T20:42:54.000Z",
+          "updatedAt": "2026-10-03T20:43:00.000Z"
+        }
+      ],
+      "customers": [
+        {
+          "id": "5c1bd00b-c2c0-46af-90d8-7baa6b3a1902",
+          "householdId": "d935401d-1a75-4b33-90ad-ff2d08054867",
+          "provider": "stripe",
+          "livemode": false,
+          "providerCustomerId": "cus_VNKIKDOGt3FKZ4",
+          "billingEmail": "e2e-e2-musuoolk-041d@example.test",
+          "createdAt": "2026-10-03T20:34:38.000Z",
+          "updatedAt": "2026-10-03T20:42:58.000Z"
+        }
+      ],
+      "transactions": [
+        {
+          "id": "10c053bf-86a1-4e1b-a76c-7c45049400a4",
+          "provider": "stripe",
+          "livemode": false,
+          "type": "payment",
+          "status": "paid",
+          "billingReason": "subscription_create",
+          "amount": 12775,
+          "fee": 0,
+          "net": 12775,
+          "disputeFee": null,
+          "fundsState": null,
+          "currency": "usd",
+          "householdId": "d935401d-1a75-4b33-90ad-ff2d08054867",
+          "userId": "fbddfc5c-ec40-4d43-936b-6615ebbc81fb",
+          "subscriptionId": "211a7a1e-1228-42fc-b6e2-e10eadc816fc",
+          "matchStatus": "matched",
+          "householdNameSnapshot": "E2E E2 Household",
+          "payerEmailSnapshot": "e2e-e2-musuoolk-041d@example.test",
+          "providerObjectId": "in_1UMZlZ0dWk0w8nqYLtZd8gbB",
+          "providerInvoiceId": "in_1UMZlZ0dWk0w8nqYLtZd8gbB",
+          "providerChargeId": "ch_3UMZla0dWk0w8nqY0CzuU7qF",
+          "receiptUrl": "<stripe-url:pay.stripe.com>",
+          "description": "1 × Rootaroo Household: 7 members (at $127.75 / year)",
+          "occurredAt": "2026-10-03T20:42:46.000Z",
+          "lastEventId": "evt_1UMZld0dWk0w8nqYcpNizqKX",
+          "createdAt": "2026-10-03T20:42:57.000Z",
+          "updatedAt": "2026-10-03T20:42:57.000Z"
+        }
+      ],
+      "checkoutSessions": [
+        {
+          "id": "cf80359b-e538-44fd-a412-c2741b8014d2",
+          "householdId": "d935401d-1a75-4b33-90ad-ff2d08054867",
+          "livemode": false,
+          "providerSessionId": "cs_test_a1WkdVNhJu81yjGG6AOF0bN9tXb15udl8mIPq8ObQPEM8WFEnLADbzrZnL",
+          "createdByUserId": "fbddfc5c-ec40-4d43-936b-6615ebbc81fb",
+          "interval": "year",
+          "seats": 7,
+          "status": "complete",
+          "expiresAt": "2026-10-03T21:05:36.000Z",
+          "createdAt": "2026-10-03T20:34:38.000Z",
+          "updatedAt": "2026-10-03T20:42:57.000Z"
+        }
+      ],
+      "reviewItems": []
+    }
+  }
+}

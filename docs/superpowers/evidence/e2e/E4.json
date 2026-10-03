@@ -1,0 +1,64 @@
+{
+  "scenario": "E4",
+  "title": "Declined card 4000 0000 0000 9995",
+  "pass": true,
+  "startedAt": "2026-10-03T20:46:31.496Z",
+  "assertions": [
+    {
+      "name": "household starts blocked (402)",
+      "ok": true
+    },
+    {
+      "name": "POST /billing/checkout returns a hosted URL and session id",
+      "ok": true,
+      "detail": {
+        "status": 200
+      }
+    },
+    {
+      "name": "no subscription row exists",
+      "ok": true
+    },
+    {
+      "name": "entitlement still not allowed and guarded route still 402",
+      "ok": true,
+      "detail": {
+        "allowed": false,
+        "reason": "subscription_required",
+        "mode": "test",
+        "subscription": null,
+        "graceUntil": null,
+        "seatsAllowed": 5
+      }
+    },
+    {
+      "name": "sync reports the session as open (not complete)",
+      "ok": true,
+      "detail": {
+        "sessionId": "cs_test_a1M1uLDLO8TXdnlTDBnJKDDodqXCsTXngnSUXvDURFXOx3uOPMcupJFHAH",
+        "state": "open"
+      }
+    },
+    {
+      "name": "retrying checkout reuses the same open session",
+      "ok": true
+    }
+  ],
+  "data": {
+    "checkoutSessions": [
+      {
+        "id": "588173b3-3ba2-4c53-9629-182f9d47ea05",
+        "householdId": "3181b687-91dc-4029-b6d5-53ef46e79ab0",
+        "livemode": false,
+        "providerSessionId": "cs_test_a1M1uLDLO8TXdnlTDBnJKDDodqXCsTXngnSUXvDURFXOx3uOPMcupJFHAH",
+        "createdByUserId": "fc876779-b8b3-41c8-bb80-79d51e7e0db9",
+        "interval": "month",
+        "seats": 5,
+        "status": "open",
+        "expiresAt": "2026-10-03T21:17:35.000Z",
+        "createdAt": "2026-10-03T20:46:37.000Z",
+        "updatedAt": "2026-10-03T20:46:38.000Z"
+      }
+    ]
+  }
+}
