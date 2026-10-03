@@ -91,6 +91,7 @@
         }
       ],
       "expo-font",
+      "expo-iap",
       [
         "@react-native-google-signin/google-signin",
         {

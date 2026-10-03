@@ -18,3 +18,18 @@ describe('api client billing hooks', () => {
     expect(handler).toHaveBeenCalledWith({ code: 'SUBSCRIPTION_REQUIRED' });
   });
 });
+
+describe('store country header', () => {
+  const { setStoreCountry } = require('../client');
+
+  it('defaults to ZZ, takes a valid alpha-2 from the IAP module, and rejects anything else', () => {
+    expect(platformHeaders()['X-Store-Country']).toBe('ZZ');
+    setStoreCountry('NP');
+    expect(platformHeaders()['X-Store-Country']).toBe('NP');
+    setStoreCountry('USA');
+    expect(platformHeaders()['X-Store-Country']).toBe('ZZ');
+    setStoreCountry('np');
+    expect(platformHeaders()['X-Store-Country']).toBe('ZZ');
+    setStoreCountry('ZZ');
+  });
+});

@@ -106,7 +106,7 @@ describe('GET /billing/status', () => {
     const res = await request(app).get('/api/v1/billing/status').set(authHeaderFor(admin)).set('X-Platform', 'android').set('X-Store-Country', 'us');
     expect(res.status).toBe(200);
     expect(res.body.data).toMatchObject({
-      entitlement: { allowed: false, reason: 'subscription_required' }, subscription: null, isAdmin: true,
+      householdId: household.id, entitlement: { allowed: false, reason: 'subscription_required' }, subscription: null, isAdmin: true,
       adminNames: [admin.displayName], purchaseMethod: 'stripe_checkout', memberCount: 2,
       pendingCheckout: { sessionId: 'cs_test_ok', state: 'open' }, plans: { seatsIncluded: 5 },
     });

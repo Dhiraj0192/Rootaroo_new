@@ -2,14 +2,17 @@ import React from 'react';
 import { render, fireEvent, waitFor } from '@testing-library/react-native';
 
 jest.mock('../../../shared/billing/purchase', () => ({
-  startStripeCheckout: jest.fn(async () => ({ outcome: 'unlocked' })),
+  ...jest.requireActual('../../../shared/billing/purchase'),
+  startPurchase: jest.fn(async () => ({ outcome: 'unlocked' })),
+  restorePurchases: jest.fn(async () => ({ outcome: 'refreshed' })),
   openBillingPortal: jest.fn(),
-  describeCheckoutError: jest.requireActual('../../../shared/billing/purchase').describeCheckoutError,
 }));
+jest.mock('../../../shared/billing/iap', () => ({ fetchStorePrices: jest.fn(async () => ({})) }));
 jest.mock('../../../shared/api/billing', () => ({ billingApi: { getStatus: jest.fn() } }));
 jest.mock('../../../shared/store/authStore', () => ({ useAuthStore: { getState: () => ({ logout: jest.fn() }) } }));
 
-const { startStripeCheckout } = require('../../../shared/billing/purchase');
+const { startPurchase, restorePurchases } = require('../../../shared/billing/purchase');
+const { fetchStorePrices } = require('../../../shared/billing/iap');
 const { useBillingStore } = require('../../../shared/store/billingStore');
 const { statusFixture } = require('../../../shared/billing/__tests__/fixtures');
 const PaywallScreen = require('../PaywallScreen').default;
@@ -48,7 +51,7 @@ describe('PaywallScreen', () => {
     const { getByLabelText } = render(<PaywallScreen />);
     fireEvent.press(getByLabelText('Add a member'));
     fireEvent.press(getByLabelText('Subscribe'));
-    await waitFor(() => expect(startStripeCheckout).toHaveBeenCalledWith({ interval: 'year', seats: 6 }));
+    await waitFor(() => expect(startPurchase).toHaveBeenCalledWith({ method: 'stripe_checkout', interval: 'year', seats: 6 }));
   });
 
   it('explains over-cap households and disables Subscribe (Review Focus 3)', () => {
@@ -59,12 +62,52 @@ describe('PaywallScreen', () => {
   });
 
   it("shows \"Purchasing isn't available here yet\" for an unsupported method", () => {
-    setStatus({ purchaseMethod: 'apple_iap' });
+    setStatus({ purchaseMethod: 'none' });
     expect(render(<PaywallScreen />).getByText("Purchasing isn't available here yet")).toBeTruthy();
   });
 
+  it.each(['apple_iap', 'google_play'])('%s is purchasable: Subscribe dispatches with the server-chosen method', async (method) => {
+    setStatus({ purchaseMethod: method });
+    const { getByLabelText, queryByText } = render(<PaywallScreen />);
+    expect(queryByText("Purchasing isn't available here yet")).toBeNull();
+    fireEvent.press(getByLabelText('Subscribe'));
+    await waitFor(() => expect(startPurchase).toHaveBeenCalledWith({ method, interval: 'year', seats: 5 }));
+  });
+
+  it('shows the store-localized price and disclosure for IAP instead of the server USD amount', async () => {
+    fetchStorePrices.mockResolvedValueOnce({ 'year:5': '€74,99' });
+    setStatus({ purchaseMethod: 'apple_iap' });
+    const { findByText, queryByText } = render(<PaywallScreen />);
+    expect(await findByText('€74,99')).toBeTruthy();
+    expect(await findByText('Renews automatically at €74,99 per year until cancelled. Cancel anytime in Manage subscription.')).toBeTruthy();
+    expect(queryByText('$79.99')).toBeNull();
+  });
+
+  it('does not ask the store for prices on the Stripe path', () => {
+    setStatus();
+    render(<PaywallScreen />);
+    expect(fetchStorePrices).not.toHaveBeenCalled();
+  });
+
+  it('explains a pending (Ask to Buy) purchase', async () => {
+    startPurchase.mockResolvedValueOnce({ outcome: 'pending' });
+    setStatus({ purchaseMethod: 'apple_iap' });
+    const { getByLabelText, findByText } = render(<PaywallScreen />);
+    fireEvent.press(getByLabelText('Subscribe'));
+    expect(await findByText(/pending approval/)).toBeTruthy();
+  });
+
+  it('Restore purchases asks the store for IAP and reports when there is nothing to restore', async () => {
+    restorePurchases.mockResolvedValueOnce({ outcome: 'nothing_to_restore' });
+    setStatus({ purchaseMethod: 'google_play' });
+    const { getByLabelText, findByText } = render(<PaywallScreen />);
+    fireEvent.press(getByLabelText('Restore purchases'));
+    await waitFor(() => expect(restorePurchases).toHaveBeenCalledWith({ method: 'google_play' }));
+    expect(await findByText('No purchases to restore for this household.')).toBeTruthy();
+  });
+
   it('shows Confirming while a payment is processing', async () => {
-    startStripeCheckout.mockResolvedValueOnce({ outcome: 'confirming' });
+    startPurchase.mockResolvedValueOnce({ outcome: 'confirming' });
     setStatus();
     const { getByLabelText, findByText } = render(<PaywallScreen />);
     fireEvent.press(getByLabelText('Subscribe'));

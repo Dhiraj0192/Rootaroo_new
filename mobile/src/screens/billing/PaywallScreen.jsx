@@ -1,11 +1,12 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as WebBrowser from 'expo-web-browser';
 import { useBillingStore } from '../../shared/store/billingStore';
 import { useAuthStore } from '../../shared/store/authStore';
 import { seatRange } from '../../shared/billing/pricing';
-import { startStripeCheckout, openBillingPortal } from '../../shared/billing/purchase';
+import { startPurchase, restorePurchases, canStartPurchase, STORE_METHODS, openBillingPortal } from '../../shared/billing/purchase';
+import { fetchStorePrices } from '../../shared/billing/iap';
 import { TERMS_URL, PRIVACY_URL } from '../../shared/billing/legalLinks';
 import PlanPicker from './components/PlanPicker';
 import { colors, fonts } from '../../shared/theme';
@@ -19,19 +20,40 @@ export default function PaywallScreen() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState(null);
 
-  const supported = status?.purchaseMethod === 'stripe_checkout';
+  const method = status?.purchaseMethod;
+  const supported = canStartPurchase(method);
+  const [storePrices, setStorePrices] = useState(null);
+
+  // App Store / Google Play show the store's own localized prices, not the server's USD matrix.
+  useEffect(() => {
+    if (!STORE_METHODS.includes(method)) return;
+    let live = true;
+    fetchStorePrices().then((p) => { if (live) setStorePrices(p); });
+    return () => { live = false; };
+  }, [method]);
   const canBuy = Boolean(supported && plans && !range.overCap && !busy);
   const seats = Math.max(choice.seats, range.min);
 
   const subscribe = async () => {
     setBusy(true);
     setMessage(null);
-    const r = await startStripeCheckout({ interval: choice.interval, seats });
+    const r = await startPurchase({ method, interval: choice.interval, seats });
     setBusy(false);
     if (r.outcome === 'confirming') setMessage({ text: 'Confirming your payment…' });
-    else if (r.outcome === 'not_completed') setMessage({ text: 'Checkout was not completed.' });
+    else if (r.outcome === 'pending') setMessage({ text: 'Your purchase is pending approval. You will get access as soon as it completes.' });
+    else if (r.outcome === 'not_completed') setMessage({ text: STORE_METHODS.includes(method) ? 'The purchase was not completed.' : 'Checkout was not completed.' });
     else if (r.outcome === 'error') setMessage({ text: r.error.message, portalUrl: r.error.portalUrl });
     // 'unlocked': the store flips the gate and RootNavigator shows MainTabs.
+  };
+
+  const restore = async () => {
+    setBusy(true);
+    setMessage(null);
+    const r = await restorePurchases({ method });
+    setBusy(false);
+    if (r.outcome === 'nothing_to_restore') setMessage({ text: 'No purchases to restore for this household.' });
+    else if (r.outcome === 'confirming') setMessage({ text: 'Confirming your purchase…' });
+    else if (r.outcome === 'error') setMessage({ text: r.error.message });
   };
 
   const fixPayment = () => {
@@ -48,7 +70,7 @@ export default function PaywallScreen() {
           {range.overCap ? (
             <Text style={styles.warn}>{`Your household has ${status.memberCount} members, and the largest plan is ${plans.seatsMax}. Remove members in Household settings to subscribe.`}</Text>
           ) : (
-            <PlanPicker plans={plans} interval={choice.interval} seats={seats} range={range} onChange={setChoice} />
+            <PlanPicker plans={plans} interval={choice.interval} seats={seats} range={range} onChange={setChoice} storePrices={storePrices} />
           )}
         </View>
       )}
@@ -71,7 +93,7 @@ export default function PaywallScreen() {
         <TouchableOpacity onPress={fixPayment}><Text style={styles.link}>Update payment method</Text></TouchableOpacity>
       ) : null}
 
-      <TouchableOpacity onPress={() => useBillingStore.getState().refresh()}><Text style={styles.link}>Restore purchases</Text></TouchableOpacity>
+      <TouchableOpacity onPress={restore} accessibilityRole="button" accessibilityLabel="Restore purchases"><Text style={styles.link}>Restore purchases</Text></TouchableOpacity>
       <View style={styles.legal}>
         <TouchableOpacity onPress={() => WebBrowser.openBrowserAsync(TERMS_URL)}><Text style={styles.small}>Terms</Text></TouchableOpacity>
         <TouchableOpacity onPress={() => WebBrowser.openBrowserAsync(PRIVACY_URL)}><Text style={styles.small}>Privacy</Text></TouchableOpacity>

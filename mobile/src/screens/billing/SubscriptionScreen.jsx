@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Linking, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as WebBrowser from 'expo-web-browser';
 import { useBillingStore } from '../../shared/store/billingStore';
 import { billingApi } from '../../shared/api/billing';
-import { openBillingPortal, describeCheckoutError } from '../../shared/billing/purchase';
+import { openBillingPortal, describeCheckoutError, restorePurchases } from '../../shared/billing/purchase';
+import { manageStoreSubscription } from '../../shared/billing/iap';
 import { formatCents, seatRange } from '../../shared/billing/pricing';
-import { STORE_SUBSCRIPTION_URLS } from '../../shared/billing/legalLinks';
 import PlanPicker from './components/PlanPicker';
 import { colors, fonts } from '../../shared/theme';
 
@@ -29,7 +29,13 @@ export default function SubscriptionScreen() {
     if (!sub || sub.provider === 'stripe') {
       return openBillingPortal().catch(() => setMessage('Could not open the billing portal. Please try again.'));
     }
-    return Linking.openURL(STORE_SUBSCRIPTION_URLS[sub.provider === 'apple' ? 'apple' : 'google']);
+    return manageStoreSubscription(sub.provider, { seats: sub.seats, interval: sub.interval });
+  };
+
+  const restore = async () => {
+    const r = await restorePurchases({ method: status.purchaseMethod });
+    if (r.outcome === 'nothing_to_restore') setMessage('No purchases to restore for this household.');
+    else if (r.outcome === 'error') setMessage(r.error.message);
   };
 
   const confirmChange = async () => {
@@ -80,7 +86,7 @@ export default function SubscriptionScreen() {
               <Action label="Cancel" onPress={() => setEditing(false)} />
             </View>
           ) : null}
-          <Action label="Restore purchases" onPress={() => useBillingStore.getState().refresh()} />
+          <Action label="Restore purchases" onPress={restore} />
         </View>
       ) : null}
       {message ? <Text style={styles.line}>{message}</Text> : null}

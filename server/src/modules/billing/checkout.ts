@@ -235,6 +235,8 @@ export interface SubscriptionView {
 }
 
 export interface BillingStatus {
+  /** The id the stores echo back (appAccountToken / obfuscatedAccountId) so purchases link to this household. */
+  householdId: string;
   entitlement: Entitlement;
   subscription: SubscriptionView | null;
   isAdmin: boolean;
@@ -266,6 +268,7 @@ export async function getBillingStatus(userId: string, client: ClientContext): P
   }
 
   return {
+    householdId: household.id,
     entitlement,
     subscription: sub ? {
       provider: sub.provider, status: sub.status, interval: sub.interval, seats: sub.seats, unitAmount: sub.unitAmount, currency: sub.currency,

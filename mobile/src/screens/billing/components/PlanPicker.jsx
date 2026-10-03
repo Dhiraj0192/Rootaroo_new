@@ -1,10 +1,12 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import { planAmount, formatCents, autoRenewDisclosure } from '../../../shared/billing/pricing';
+import { planAmount, formatCents, autoRenewDisclosureText } from '../../../shared/billing/pricing';
 import { colors, fonts, withAlpha } from '../../../shared/theme';
 
-export default function PlanPicker({ plans, interval, seats, range, onChange }) {
+// storePrices (App Store / Google Play only): the store's own localized price strings keyed "month:5"; they win over the server USD amounts.
+export default function PlanPicker({ plans, interval, seats, range, onChange, storePrices }) {
   const cents = planAmount(plans, interval, Math.min(seats, plans.seatsMax));
+  const priceText = storePrices?.[`${interval}:${Math.min(seats, plans.seatsMax)}`] ?? formatCents(cents);
   return (
     <View>
       <View style={styles.tabs}>
@@ -47,9 +49,9 @@ export default function PlanPicker({ plans, interval, seats, range, onChange }) 
         </View>
       </View>
 
-      <Text style={styles.total}>{formatCents(cents)}</Text>
+      <Text style={styles.total}>{priceText}</Text>
       <Text style={styles.per}>per {interval}</Text>
-      <Text style={styles.disclosure}>{autoRenewDisclosure(cents, interval)}</Text>
+      <Text style={styles.disclosure}>{autoRenewDisclosureText(priceText, interval)}</Text>
     </View>
   );
 }

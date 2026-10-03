@@ -76,11 +76,18 @@ export function setPaymentRequiredHandler(fn) {
 }
 
 // Routing (spec §12): which purchase flow the server offers depends on the
-// platform and store country. Until the IAP modules exist, the country is ZZ.
+// platform and store country. The IAP module sets the storefront country once
+// the store connection reports it; until then (and on web) it is ZZ.
+let storeCountry = 'ZZ';
+
+export function setStoreCountry(code) {
+  storeCountry = /^[A-Z]{2}$/.test(code) ? code : 'ZZ';
+}
+
 export function platformHeaders() {
   return {
     'X-Platform': Platform.OS === 'ios' || Platform.OS === 'android' ? Platform.OS : 'web',
-    'X-Store-Country': 'ZZ',
+    'X-Store-Country': storeCountry,
   };
 }
 

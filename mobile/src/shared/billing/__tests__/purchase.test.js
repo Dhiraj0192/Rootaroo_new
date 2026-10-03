@@ -1,7 +1,9 @@
 jest.mock('../../api/billing', () => ({ billingApi: {} }));
+jest.mock('../iap', () => ({ purchaseSubscription: jest.fn(), restoreStorePurchases: jest.fn() }));
 jest.mock('../../store/billingStore', () => ({ useBillingStore: { getState: () => ({ refresh: jest.fn(), applySync: jest.fn() }) } }));
 
-import { startStripeCheckout, openBillingPortal, describeCheckoutError, RETURN_URL } from '../purchase';
+import { startStripeCheckout, startPurchase, restorePurchases, canStartPurchase, openBillingPortal, describeCheckoutError, RETURN_URL } from '../purchase';
+import { purchaseSubscription, restoreStorePurchases } from '../iap';
 
 function deps(overrides = {}) {
   let t = 0;
@@ -97,6 +99,53 @@ describe('openBillingPortal', () => {
     const d = deps();
     await openBillingPortal(d);
     expect(d.openAuthSession).toHaveBeenCalledWith('https://billing.stripe.com/p/session/x', RETURN_URL);
+    expect(d.refreshStatus).toHaveBeenCalled();
+  });
+});
+
+describe('startPurchase (section 12 dispatch)', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it('stripe_checkout opens hosted Checkout', async () => {
+    const d = deps();
+    const r = await startPurchase({ method: 'stripe_checkout', interval: 'year', seats: 7 }, d);
+    expect(d.api.createCheckout).toHaveBeenCalledWith({ interval: 'year', seats: 7 });
+    expect(purchaseSubscription).not.toHaveBeenCalled();
+    expect(r.outcome).toBe('unlocked');
+  });
+
+  it.each(['apple_iap', 'google_play'])('%s goes through the store purchase and never touches Stripe', async (method) => {
+    purchaseSubscription.mockResolvedValue({ outcome: 'unlocked' });
+    const d = deps();
+    const r = await startPurchase({ method, interval: 'month', seats: 6 }, d);
+    expect(purchaseSubscription).toHaveBeenCalledWith({ interval: 'month', seats: 6 }, undefined);
+    expect(d.api.createCheckout).not.toHaveBeenCalled();
+    expect(r.outcome).toBe('unlocked');
+  });
+
+  it('an already-owned store subscription is restored onto the household instead of bought again', async () => {
+    purchaseSubscription.mockResolvedValue({ outcome: 'already_owned' });
+    restoreStorePurchases.mockResolvedValue({ outcome: 'unlocked', verified: 1 });
+    expect((await startPurchase({ method: 'apple_iap', interval: 'month', seats: 5 }, deps())).outcome).toBe('unlocked');
+    expect(restoreStorePurchases).toHaveBeenCalled();
+  });
+
+  it('refuses a method this build cannot start (none)', async () => {
+    const r = await startPurchase({ method: 'none', interval: 'month', seats: 5 }, deps());
+    expect(r.outcome).toBe('error');
+    expect(canStartPurchase('none')).toBe(false);
+    expect(['stripe_checkout', 'apple_iap', 'google_play'].every(canStartPurchase)).toBe(true);
+  });
+});
+
+describe('restorePurchases', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it('re-verifies with the store for IAP and just refreshes status for Stripe', async () => {
+    restoreStorePurchases.mockResolvedValue({ outcome: 'confirming' });
+    expect((await restorePurchases({ method: 'google_play' }, deps())).outcome).toBe('confirming');
+    const d = deps();
+    expect((await restorePurchases({ method: 'stripe_checkout' }, d)).outcome).toBe('refreshed');
     expect(d.refreshStatus).toHaveBeenCalled();
   });
 });

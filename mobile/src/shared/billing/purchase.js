@@ -1,6 +1,7 @@
 import * as WebBrowser from 'expo-web-browser';
 import { billingApi } from '../api/billing';
 import { useBillingStore } from '../store/billingStore';
+import { purchaseSubscription, restoreStorePurchases } from './iap';
 
 export const RETURN_URL = 'rootaroo://billing';
 const POLL_EVERY_MS = 2000;
@@ -59,6 +60,32 @@ export async function startStripeCheckout({ interval, seats }, deps = defaultDep
   const status = await deps.refreshStatus();
   if (status?.entitlement?.allowed) return { outcome: 'unlocked', status };
   return { outcome: result.type === 'success' ? 'confirming' : 'not_completed', status };
+}
+
+export const STORE_METHODS = ['apple_iap', 'google_play'];
+
+/** Whether the server's purchaseMethod is something this build can start. */
+export const canStartPurchase = (method) => method === 'stripe_checkout' || STORE_METHODS.includes(method);
+
+/**
+ * Section 12 routing in the app: dispatch on the server-chosen purchaseMethod. Every flow resolves to the same
+ * outcomes ('unlocked' | 'confirming' | 'not_completed' | 'pending' | 'error') so the screens stay provider-agnostic.
+ */
+export async function startPurchase({ method, interval, seats }, deps = defaultDeps, iapDeps) {
+  if (STORE_METHODS.includes(method)) {
+    const r = await purchaseSubscription({ interval, seats }, iapDeps);
+    // The store says this Apple/Google account already owns it: attach it to the household instead of buying again.
+    if (r.outcome === 'already_owned') return restoreStorePurchases(iapDeps);
+    return r;
+  }
+  if (method === 'stripe_checkout') return startStripeCheckout({ interval, seats }, deps);
+  return { outcome: 'error', status: null, error: describeCheckoutError({ response: { data: { code: 'PURCHASE_METHOD_MISMATCH' } } }) };
+}
+
+/** Restore purchases: re-verifies the store's entitlements for IAP, a plain status refresh otherwise. */
+export async function restorePurchases({ method }, deps = defaultDeps, iapDeps) {
+  if (STORE_METHODS.includes(method)) return restoreStorePurchases(iapDeps);
+  return { outcome: 'refreshed', status: await deps.refreshStatus() };
 }
 
 export async function openBillingPortal(deps = defaultDeps) {

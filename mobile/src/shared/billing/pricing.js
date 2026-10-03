@@ -10,8 +10,12 @@ export function planAmount(plans, interval, seats) {
 }
 
 // Must match server/src/modules/billing/copy.ts autoRenewDisclosure exactly.
+export function autoRenewDisclosureText(priceText, interval) {
+  return `Renews automatically at ${priceText} per ${interval} until cancelled. Cancel anytime in Manage subscription.`;
+}
+
 export function autoRenewDisclosure(cents, interval) {
-  return `Renews automatically at ${formatCents(cents)} per ${interval} until cancelled. Cancel anytime in Manage subscription.`;
+  return autoRenewDisclosureText(formatCents(cents), interval);
 }
 
 export function seatRange(plans, memberCount) {

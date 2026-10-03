@@ -5,13 +5,14 @@ import * as WebBrowser from 'expo-web-browser';
 
 jest.mock('../../../shared/api/billing', () => ({ billingApi: { getStatus: jest.fn(), changePlan: jest.fn() } }));
 jest.mock('../../../shared/billing/purchase', () => ({
+  ...jest.requireActual('../../../shared/billing/purchase'),
   openBillingPortal: jest.fn(async () => {}),
-  describeCheckoutError: jest.requireActual('../../../shared/billing/purchase').describeCheckoutError,
+  restorePurchases: jest.fn(async () => ({ outcome: 'refreshed' })),
 }));
 jest.mock('../../../shared/store/authStore', () => ({ useAuthStore: { getState: () => ({}) } }));
 
 const { billingApi } = require('../../../shared/api/billing');
-const { openBillingPortal } = require('../../../shared/billing/purchase');
+const { openBillingPortal, restorePurchases } = require('../../../shared/billing/purchase');
 const { useBillingStore } = require('../../../shared/store/billingStore');
 const { statusFixture } = require('../../../shared/billing/__tests__/fixtures');
 const SubscriptionScreen = require('../SubscriptionScreen').default;
@@ -53,6 +54,17 @@ describe('SubscriptionScreen', () => {
     fireEvent.press(getByText('Manage subscription'));
     expect(spy).toHaveBeenCalledWith('https://apps.apple.com/account/subscriptions');
     expect(queryByText('Change plan')).toBeNull();
+  });
+
+  it('Restore purchases uses the server-chosen purchase method', async () => {
+    useBillingStore.setState({ status: active({ purchaseMethod: 'apple_iap' }) });
+    fireEvent.press(render(<SubscriptionScreen />).getByText('Restore purchases'));
+    await waitFor(() => expect(restorePurchases).toHaveBeenCalledWith({ method: 'apple_iap' }));
+  });
+
+  it('shows the store label for a Google Play subscription', () => {
+    useBillingStore.setState({ status: active({ subscription: { ...active().subscription, provider: 'google' } }) });
+    expect(render(<SubscriptionScreen />).getByText('Paid through Google Play')).toBeTruthy();
   });
 
   it('changes plan and opens the hosted invoice when payment needs action (T8)', async () => {

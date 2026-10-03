@@ -11,7 +11,7 @@ import { updateSignupProgress } from '../../shared/store/signupProgress';
 import { useAuthStore } from '../../shared/store/authStore';
 import { useBillingStore } from '../../shared/store/billingStore';
 import { seatRange, autoRenewDisclosure } from '../../shared/billing/pricing';
-import { startStripeCheckout } from '../../shared/billing/purchase';
+import { startPurchase, canStartPurchase } from '../../shared/billing/purchase';
 import { TERMS_URL, PRIVACY_URL } from '../../shared/billing/legalLinks';
 import * as WebBrowser from 'expo-web-browser';
 import { colors, fonts, radius, goldButton, withAlpha } from '../../shared/theme';
@@ -108,18 +108,19 @@ export default function FeaturePricingScreen({ navigation }) {
 
   const purchase = async () => {
     if (buying) return;
-    if (status?.purchaseMethod !== 'stripe_checkout') {
+    if (!canStartPurchase(status?.purchaseMethod)) {
       setNote("Purchasing isn't available here yet. You can subscribe later from More → Subscription.");
       return;
     }
     setBuying(true);
     setNote(null);
-    const r = await startStripeCheckout({ interval: plan, seats: Math.min(size, range.max) });
+    const r = await startPurchase({ method: status.purchaseMethod, interval: plan, seats: Math.min(size, range.max) });
     setBuying(false);
     if (r.outcome === 'unlocked') { await finish(); return; }
     if (r.outcome === 'confirming') setNote('Confirming your payment…');
+    else if (r.outcome === 'pending') setNote('Your purchase is pending approval. You can keep setting up.');
     else if (r.outcome === 'error') setNote(r.error.message);
-    else setNote('Checkout was not completed.');
+    else setNote('The purchase was not completed.');
   };
 
   if (!p) {
