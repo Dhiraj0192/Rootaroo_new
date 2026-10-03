@@ -42,7 +42,15 @@ export async function changePlan(userId: string, body: { interval: BillingInterv
     }
     if (sub.status === 'past_due') {
       const customer = await BillingCustomer.findOne({ where: { householdId: household.id, provider: 'stripe', livemode } });
-      throw await paymentIssueError(mode, customer!.providerCustomerId);
+      throw await paymentIssueError(mode, customer?.providerCustomerId ?? null);
+    }
+    if (sub.pendingUpdate) {
+      // A previous change is still waiting on payment; a second update would stack on top of it.
+      const pendingSub = await getStripe(mode).subscriptions.retrieve(sub.providerSubscriptionId, { expand: ['latest_invoice'] });
+      const pendingInvoice = typeof pendingSub.latest_invoice === 'object' ? (pendingSub.latest_invoice as Stripe.Invoice | null) : null;
+      throw new BillingConflictError('PLAN_CHANGE_PENDING', 'Your previous plan change is still waiting for payment', {
+        hostedInvoiceUrl: pendingInvoice?.status === 'open' ? pendingInvoice.hosted_invoice_url ?? null : null,
+      });
     }
     if (body.seats < ctx.memberCount) {
       throw new BillingConflictError('SEATS_BELOW_MEMBERS', `Your household has ${ctx.memberCount} members`, { memberCount: ctx.memberCount });
@@ -63,7 +71,7 @@ export async function changePlan(userId: string, body: { interval: BillingInterv
       proration_behavior: intervalChange ? 'create_prorations' : 'always_invoice',
       ...(intervalChange ? { billing_cycle_anchor: { type: 'now' as const } } : {}),
       expand: ['latest_invoice'],
-    });
+    }, { idempotencyKey: `plan:${sub.providerSubscriptionId}:${body.interval}:${body.seats}:${Math.floor((sub.currentPeriodStart?.getTime() ?? 0) / 1000)}` });
     await upsertSubscription(sub.providerSubscriptionId, mode);
     const invoice = typeof updated.latest_invoice === 'object' ? (updated.latest_invoice as Stripe.Invoice | null) : null;
     const pending = updated.pending_update !== null && updated.pending_update !== undefined;

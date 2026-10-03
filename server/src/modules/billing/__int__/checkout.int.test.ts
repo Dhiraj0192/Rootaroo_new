@@ -1,5 +1,6 @@
 jest.mock('../notify', () => ({ notifyHouseholdAdmins: jest.fn(), alertStaff: jest.fn() }));
 
+import crypto from 'crypto';
 import request from 'supertest';
 import app from '../../../app';
 import { setupAssociations, BillingCheckoutSession, BillingCustomer } from '../../../database/models';
@@ -56,8 +57,12 @@ describe('POST /billing/checkout', () => {
     expect(opts).toEqual({ idempotencyKey: `cs:${row!.id}` });
     expect(s.customers.create).toHaveBeenCalledWith(
       expect.objectContaining({ email: admin.email, metadata: { householdId: household.id, env: 'dev' } }),
-      { idempotencyKey: `cust:${household.id}:test:${admin.id}` },
+      { idempotencyKey: expect.stringMatching(new RegExp(`^cust:${household.id}:test:[0-9a-f]{16}$`)) },
     );
+    // finding 9: the key is derived from the exact params it protects, so a changed email/name never replays a stale customer
+    const [custParams, custOpts] = s.customers.create.mock.calls[0] as any[];
+    const hash = crypto.createHash('sha256').update(JSON.stringify(custParams)).digest('hex').slice(0, 16);
+    expect(custOpts.idempotencyKey).toBe(`cust:${household.id}:test:${hash}`);
   });
 
   it('omits consent_collection only when BILLING_REQUIRE_TOS_CONSENT is off', async () => {
@@ -187,5 +192,41 @@ describe('POST /billing/checkout', () => {
     const res = await post(admin, { interval: 'month', seats: 5 });
     expect(res.status).toBe(503);
     expect(res.body.code).toBe('BILLING_MODE_UNAVAILABLE');
+  });
+});
+
+describe('POST /billing/checkout: existing-subscription guards (finding 5)', () => {
+  it('409 PAYMENT_ISSUE without a portal URL for a past_due store subscription (no Stripe customer)', async () => {
+    const { household, admin } = await createHouseholdWithAdmin();
+    await createSubscriptionRow(household.id, { provider: 'apple', providerSubscriptionId: '2000000555', status: 'past_due' });
+    const res = await post(admin, { interval: 'month', seats: 5 });
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('PAYMENT_ISSUE');
+    expect(res.body.portalUrl ?? null).toBeNull();
+    expect(s.billingPortal.sessions.create).not.toHaveBeenCalled();
+    expect(s.checkout.sessions.create).not.toHaveBeenCalled();
+  });
+
+  it('409 PAYMENT_ISSUE without a portal URL for a past_due Stripe row when no customer can be found', async () => {
+    const { household, admin } = await createHouseholdWithAdmin();
+    await createSubscriptionRow(household.id, { providerSubscriptionId: 'sub_nocust', status: 'past_due' });
+    const res = await post(admin, { interval: 'month', seats: 5 });
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('PAYMENT_ISSUE');
+    expect(res.body.portalUrl ?? null).toBeNull();
+    expect(s.checkout.sessions.create).not.toHaveBeenCalled();
+  });
+
+  it('recovers the customer by search BEFORE the Stripe subscriptions.list check', async () => {
+    const { household, admin } = await createHouseholdWithAdmin();
+    s.customers.search.mockReturnValue(listOf([{ id: 'cus_rec', email: 'a@x' }]));
+    s.subscriptions.list.mockReturnValue(listOf([stripeSubscription({ id: 'sub_rec', customer: 'cus_rec' })]));
+    s.subscriptions.retrieve.mockResolvedValue(stripeSubscription({ id: 'sub_rec', customer: 'cus_rec' }));
+    const res = await post(admin, { interval: 'month', seats: 5 });
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('ALREADY_SUBSCRIBED');
+    expect(s.subscriptions.list).toHaveBeenCalledWith(expect.objectContaining({ customer: 'cus_rec' }));
+    expect(s.checkout.sessions.create).not.toHaveBeenCalled();
+    expect((await BillingCustomer.findOne({ where: { householdId: household.id } }))!.providerCustomerId).toBe('cus_rec');
   });
 });

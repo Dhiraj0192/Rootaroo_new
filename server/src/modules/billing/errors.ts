@@ -6,6 +6,7 @@ export type BillingConflictCode =
   | 'SEATS_BELOW_MEMBERS'
   | 'PURCHASE_METHOD_MISMATCH'
   | 'NO_ACTIVE_SUBSCRIPTION'
+  | 'PLAN_CHANGE_PENDING'
   | 'COHORT_CHANGE_BLOCKED';
 
 export class PaymentRequiredError extends AppError {

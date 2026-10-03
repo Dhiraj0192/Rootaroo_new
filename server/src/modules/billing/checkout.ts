@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import Stripe from 'stripe';
 import { UniqueConstraintError, Op } from 'sequelize';
 import { v4 as uuidv4 } from 'uuid';
@@ -29,32 +30,21 @@ export function checkoutLockName(householdId: string, mode: BillingMode): string
 
 const envOk = (s: Stripe.Subscription) => !s.metadata?.env || s.metadata.env === getBillingConfig().envTag;
 
-export async function paymentIssueError(mode: BillingMode, customerId: string): Promise<BillingConflictError> {
+export async function paymentIssueError(mode: BillingMode, customerId: string | null): Promise<BillingConflictError> {
   let portalUrl: string | null = null;
-  try {
-    portalUrl = await createPortalUrl(mode, customerId);
-  } catch (err) {
-    logger.warn(`[Billing] portal URL for PAYMENT_ISSUE failed: ${(err as Error).message}`);
+  if (customerId) {
+    try {
+      portalUrl = await createPortalUrl(mode, customerId);
+    } catch (err) {
+      logger.warn(`[Billing] portal URL for PAYMENT_ISSUE failed: ${(err as Error).message}`);
+    }
   }
   return new BillingConflictError('PAYMENT_ISSUE', 'Your last payment failed. Update your payment method to continue.', { portalUrl });
 }
 
-export async function findOrCreateCustomer(household: Household, mode: BillingMode, admin: User): Promise<string> {
-  const livemode = livemodeOf(mode);
-  const where = { householdId: household.id, provider: 'stripe' as const, livemode };
-  const existing = await BillingCustomer.findOne({ where });
-  if (existing) return existing.providerCustomerId;
-
-  const stripe = getStripe(mode);
-  const { envTag } = getBillingConfig();
-  // Search query syntax per https://docs.stripe.com/search.md#query-fields-for-customers: metadata['key']:'value'.
-  const found = await stripe.customers.search({ query: `metadata['householdId']:'${household.id}' AND metadata['env']:'${envTag}'`, limit: 1 });
-  const customer = found.data[0] ?? await stripe.customers.create(
-    { email: admin.email, name: household.name, metadata: { householdId: household.id, env: envTag } },
-    { idempotencyKey: `cust:${household.id}:${mode}:${admin.id}` },
-  );
+async function saveCustomerRow(where: { householdId: string; provider: 'stripe'; livemode: boolean }, customer: { id: string; email?: string | null }, fallbackEmail: string | null): Promise<string> {
   try {
-    await BillingCustomer.create({ ...where, providerCustomerId: customer.id, billingEmail: customer.email ?? admin.email });
+    await BillingCustomer.create({ ...where, providerCustomerId: customer.id, billingEmail: customer.email ?? fallbackEmail });
   } catch (err) {
     if (!(err instanceof UniqueConstraintError)) throw err;
     const again = await BillingCustomer.findOne({ where });
@@ -62,6 +52,32 @@ export async function findOrCreateCustomer(household: Household, mode: BillingMo
     throw err;
   }
   return customer.id;
+}
+
+/** Local row first, then a Stripe metadata search (recovers a lost row). Null when the household has no customer. */
+export async function findExistingCustomer(household: Household, mode: BillingMode): Promise<string | null> {
+  const livemode = livemodeOf(mode);
+  const where = { householdId: household.id, provider: 'stripe' as const, livemode };
+  const existing = await BillingCustomer.findOne({ where });
+  if (existing) return existing.providerCustomerId;
+  const { envTag } = getBillingConfig();
+  // Search query syntax per https://docs.stripe.com/search.md#query-fields-for-customers: metadata['key']:'value'.
+  const found = await getStripe(mode).customers.search({ query: `metadata['householdId']:'${household.id}' AND metadata['env']:'${envTag}'`, limit: 1 });
+  const customer = found.data[0];
+  return customer ? saveCustomerRow(where, customer, null) : null;
+}
+
+export async function findOrCreateCustomer(household: Household, mode: BillingMode, admin: User, known?: string | null): Promise<string> {
+  const existing = known === undefined ? await findExistingCustomer(household, mode) : known;
+  if (existing) return existing;
+  const livemode = livemodeOf(mode);
+  const where = { householdId: household.id, provider: 'stripe' as const, livemode };
+  const { envTag } = getBillingConfig();
+  const params = { email: admin.email, name: household.name, metadata: { householdId: household.id, env: envTag } };
+  // The key is derived from the exact params it protects: Stripe rejects/replays a reused key with different params.
+  const paramsHash = crypto.createHash('sha256').update(JSON.stringify(params)).digest('hex').slice(0, 16);
+  const customer = await getStripe(mode).customers.create(params, { idempotencyKey: `cust:${household.id}:${mode}:${paramsHash}` });
+  return saveCustomerRow(where, customer, admin.email);
 }
 
 async function expireOrSync(row: BillingCheckoutSession, mode: BillingMode): Promise<void> {
@@ -89,27 +105,28 @@ async function createCheckoutLocked(ctx: CallerContext, body: CheckoutBody, now:
   const stripe = getStripe(mode);
   const cfg = getBillingConfig();
 
-  // 4(a) local state
+  // 4(a) local state: any allowed subscription, from any provider, blocks a new checkout
   const local = await BillingSubscription.findAll({
     where: { householdId: household.id, livemode, status: { [Op.in]: ['active', 'trialing', 'past_due', 'unpaid'] } },
   });
   if (local.some((s) => s.status === 'active' || s.status === 'trialing')) {
     throw new BillingConflictError('ALREADY_SUBSCRIBED', 'This household already has a subscription');
   }
-  const customerRow = await BillingCustomer.findOne({ where: { householdId: household.id, provider: 'stripe', livemode } });
-  if (customerRow && local.some((s) => s.status === 'past_due' || s.status === 'unpaid')) {
-    throw await paymentIssueError(mode, customerRow.providerCustomerId);
+  // Recover the customer (local row, else Stripe search) before any Stripe-side check, so a lost row cannot hide a subscription.
+  const customerId = await findExistingCustomer(household, mode);
+  if (local.length > 0) {
+    throw await paymentIssueError(mode, customerId); // portal URL only when a Stripe customer exists
   }
   // 4(b) Stripe state
-  if (customerRow) {
-    const subs = (await stripe.subscriptions.list({ customer: customerRow.providerCustomerId, status: 'all', limit: 10 })).data.filter(envOk);
+  if (customerId) {
+    const subs = (await stripe.subscriptions.list({ customer: customerId, status: 'all', limit: 10 })).data.filter(envOk);
     const healthy = subs.find((s) => s.status === 'active' || s.status === 'trialing');
     if (healthy) {
       await upsertSubscription(healthy.id, mode);
       throw new BillingConflictError('ALREADY_SUBSCRIBED', 'This household already has a subscription');
     }
     if (subs.some((s) => s.status === 'past_due' || s.status === 'unpaid')) {
-      throw await paymentIssueError(mode, customerRow.providerCustomerId);
+      throw await paymentIssueError(mode, customerId);
     }
   }
   // 5. seats
@@ -126,7 +143,7 @@ async function createCheckoutLocked(ctx: CallerContext, body: CheckoutBody, now:
   // 7. customer
   const admin = await User.findByPk(ctx.userId, { paranoid: false });
   if (!admin) throw new NotFoundError('User');
-  const customerId = await findOrCreateCustomer(household, mode, admin);
+  const stripeCustomerId = await findOrCreateCustomer(household, mode, admin, customerId);
   // 8. session
   const price = priceFor(await getCatalog(mode), body.interval, body.seats);
   const expiresAt = Math.floor(now.getTime() / 1000) + CHECKOUT_SESSION_TTL_SEC;
@@ -140,7 +157,7 @@ async function createCheckoutLocked(ctx: CallerContext, body: CheckoutBody, now:
     // origin_context (mobile_app|web), integration_identifier, expires_at (30 min to 24 h), custom_text.submit.
     session = await stripe.checkout.sessions.create({
       mode: 'subscription',
-      customer: customerId,
+      customer: stripeCustomerId,
       client_reference_id: household.id,
       line_items: [{ price: price.priceId, quantity: 1 }],
       subscription_data: { metadata: { householdId: household.id, purchasedByUserId: ctx.userId, env: cfg.envTag } },

@@ -2,7 +2,7 @@ jest.mock('../notify', () => ({ notifyHouseholdAdmins: jest.fn(), alertStaff: je
 
 import request from 'supertest';
 import app from '../../../app';
-import { setupAssociations, BillingPriceNotice } from '../../../database/models';
+import { setupAssociations, BillingPriceNotice, BillingSubscription } from '../../../database/models';
 import { resetDb, closeIntResources } from '../../../test/int/db';
 import { createHouseholdWithAdmin, addMember, authHeaderFor } from '../../../test/factories';
 import { createCustomerRow, createSubscriptionRow } from '../../../test/billing/rows';
@@ -57,10 +57,11 @@ describe('POST /billing/plan', () => {
     const { admin } = await subscribed();
     const res = await plan(admin, { interval: 'month', seats: 7 });
     expect(res.status).toBe(200);
+    const row = await BillingSubscription.findOne({ where: { providerSubscriptionId: "sub_1" } });
     expect(s.subscriptions.update).toHaveBeenCalledWith('sub_1', {
       items: [{ id: 'si_1', price: 'price_202610_7_month' }], payment_behavior: 'pending_if_incomplete',
       proration_behavior: 'always_invoice', expand: ['latest_invoice'],
-    });
+    }, { idempotencyKey: `plan:sub_1:month:7:${Math.floor(row!.currentPeriodStart!.getTime() / 1000)}` });
   });
 
   it('interval change: create_prorations and billing_cycle_anchor now', async () => {
@@ -68,7 +69,7 @@ describe('POST /billing/plan', () => {
     await plan(admin, { interval: 'year', seats: 5 });
     expect(s.subscriptions.update).toHaveBeenCalledWith('sub_1', expect.objectContaining({
       items: [{ id: 'si_1', price: 'price_202610_5_year' }], proration_behavior: 'create_prorations', billing_cycle_anchor: { type: 'now' }, payment_behavior: 'pending_if_incomplete',
-    }));
+    }), { idempotencyKey: expect.stringMatching(/^plan:sub_1:year:5:\d+$/) });
   });
 
   it('no change -> 200 without calling Stripe', async () => {
@@ -122,5 +123,44 @@ describe('POST /billing/plan', () => {
     await createCustomerRow(pd.household.id, { providerCustomerId: 'cus_pd' });
     await createSubscriptionRow(pd.household.id, { status: 'past_due', graceUntil: new Date(Date.now() + 1e6) });
     expect((await plan(pd.admin, { interval: 'month', seats: 6 })).body.code).toBe('PAYMENT_ISSUE');
+  });
+});
+
+describe('POST /billing/plan: pending update and idempotency (finding 8)', () => {
+  it('409 PLAN_CHANGE_PENDING with the hosted invoice URL while a pending update is outstanding', async () => {
+    const { admin } = await subscribed({ pendingUpdate: { expires_at: 1 } });
+    s.subscriptions.retrieve.mockResolvedValue(stripeSubscription({
+      id: 'sub_1', customer: 'cus_1', pendingUpdate: { expires_at: 1 }, latestInvoice: stripeInvoice({ status: 'open', hostedInvoiceUrl: 'https://invoice.stripe.com/i/pending' }),
+    }));
+    const res = await plan(admin, { interval: 'month', seats: 7 });
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ code: 'PLAN_CHANGE_PENDING', hostedInvoiceUrl: 'https://invoice.stripe.com/i/pending' });
+    expect(s.subscriptions.update).not.toHaveBeenCalled();
+  });
+
+  it('409 PLAN_CHANGE_PENDING without a URL when Stripe has none', async () => {
+    const { admin } = await subscribed({ pendingUpdate: { expires_at: 1 } });
+    s.subscriptions.retrieve.mockResolvedValue(stripeSubscription({ id: 'sub_1', customer: 'cus_1', pendingUpdate: { expires_at: 1 } }));
+    const res = await plan(admin, { interval: 'month', seats: 7 });
+    expect(res.body.code).toBe('PLAN_CHANGE_PENDING');
+    expect(res.body.hostedInvoiceUrl ?? null).toBeNull();
+  });
+
+  it('retries of the same change reuse the same deterministic idempotency key', async () => {
+    const { admin } = await subscribed();
+    await plan(admin, { interval: 'month', seats: 8 });
+    await plan(admin, { interval: 'month', seats: 8 });
+    const keys = s.subscriptions.update.mock.calls.map((c: any[]) => c[2].idempotencyKey);
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).toBe(keys[1]);
+    expect(keys[0]).toMatch(/^plan:sub_1:month:8:\d+$/);
+  });
+
+  it('past_due without a customer row is a 409 PAYMENT_ISSUE, not a 500', async () => {
+    const { household, admin } = await createHouseholdWithAdmin();
+    await createSubscriptionRow(household.id, { providerSubscriptionId: 'sub_pdx', status: 'past_due' });
+    const res = await plan(admin, { interval: 'month', seats: 6 });
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('PAYMENT_ISSUE');
   });
 });
