@@ -12862,6 +12862,104 @@ Acceptance:
 
 ---
 
-## Waves 10–12
+## Wave 10: End-to-end against the Stripe dev sandbox (spec §13.3)
 
-Not yet detailed. Wave 10 (Stripe sandbox end-to-end, spec §13.3), Wave 11 (Apple/Google IAP server scaffolding, spec §16) and Wave 12 (documentation, final suite, push) will be written as their own plan sections before they start.
+Executed by an implementer subagent plus the orchestrator (who completes hosted Checkout pages in Chrome). Everything runs on `rootaroo_impl` with `server/.env.impl` loaded, the dev server on port 3000, and `stripe listen --latest --forward-to localhost:3000/api/v1/billing/webhooks/stripe/test` (its `whsec` kept only in `server/.env.impl`). `--latest` makes forwarded events use the same API version as production endpoints.
+
+### Task 10.1: E2E harness (`server/scripts/e2e/`)
+- `harness.ts`: seeds a fresh user, household and admin token through the real API (signup, then household create), with helpers `checkout(interval, seats)`, `status()`, `sync(sessionId)`, `planChange()`, `portal()`, `adminGet(path)`, `dbSnapshot(householdId)` (billing_* rows as JSON), `waitFor(predicate, timeoutMs)`.
+- `lifecycle.ts`: lifecycle scenarios that don't need the hosted page. It creates a Stripe customer **with a test clock**, attaches `pm_card_visa` or `pm_card_chargeCustomerFail`, links the customer to the household through `billing_customers`, and creates the subscription through the API with `metadata {householdId, purchasedByUserId, env:'dev'}`. Our webhook, worker and `upsertSubscription` path is still exercised end to end. Advancing the test clock simulates renewals. Check test clock usage at docs.stripe.com/billing/testing/test-clocks.md.
+- Each scenario writes its JSON results (API responses, DB snapshot, ledger rows, event types seen) to `docs/superpowers/evidence/e2e/<scenario>.json`. Never write keys or URLs that carry tokens.
+
+### Task 10.2: Scenarios
+| # | Scenario | Driver | Assertions |
+|---|---|---|---|
+| E1 | Checkout 5 members monthly, card 4242 | orchestrator in Chrome | entitlement active; seats 5; ledger `payment` matched to household and purchaser; fee/net filled (now or after reconcile) |
+| E2 | Checkout 7 members yearly | Chrome | price `rootaroo_hh7_year` 12775; seats 7 |
+| E3 | 3DS card 4000 0025 0000 3155 | Chrome | active after authentication |
+| E4 | Declined 4000 0000 0000 9995 | Chrome | no subscription; still 402 |
+| E5 | Renewal, failure, grace, blocked, recovery | test clock | past_due with grace_until = invoice finalized + 7 days; allowed during grace; blocked after; restored after payment method update and invoice pay |
+| E6 | Seat increase 5 to 7 and interval month to year | API (`/billing/plan`) | proration invoice paid; seats change only after payment; plan_change_version increments |
+| E7 | Failed upgrade leaves pending_update, then it expires | test clock + failing card | seats unchanged; admin notified on expiry |
+| E8 | Cancel at period end (API equivalent of the portal) | API | access until period end; blocked after clock advance |
+| E9 | Partial and full refund | API | ledger refund rows with status; summary net correct |
+| E10 | Dispute 4000 0000 0000 0259 | Chrome or API | ledger dispute row; review item; staff alert recorded |
+| E11 | Missed webhook | stop listener, pay, restart | checkout sweep or reconcile repairs state; run row recorded |
+| E12 | Planted drift | corrupt status, seats or cancel flag in DB | reconcile auto_fixed items |
+| E13 | Test cohort bypass and mode isolation | admin cohort API | test cohort allowed with no subscription; a test subscription cannot unlock a live-cohort household |
+| E14 | Duplicate subscriptions | two Checkout sessions, or the API | healthy one kept; other cancelled; overlap refund only; review item |
+| E15 | Staff API | none | transactions filtered by household/user; CSV; summary arithmetic matches ledger; review queue resolve; event replay |
+
+### Wave 10 gate
+- Every scenario passes with its evidence JSON committed. `docs/superpowers/evidence/w10-e2e.md` summarises pass/fail per scenario.
+- The full unit and integration suites are still green.
+- Any defect found gets a failing test, then a fix, then the affected scenario re-run.
+
+---
+
+## Wave 11: Apple IAP and Google Play Billing (spec §16)
+
+Server side is complete and tested with fixtures. The app side is wired behind routing. Real purchases need the owner's devices and store accounts (checklists below).
+
+### Task 11.1: Provider-neutral purchase interface
+`modules/billing/iap/types.ts` defines `VerifiedPurchase { provider, livemode, productId, seats, interval, originalTransactionId or purchaseToken, status, expiresAt, householdId }`. The household ID comes from `appAccountToken` (Apple) or `obfuscatedAccountId` (Google). Upserts go through a new `upsertStoreSubscription(vp)`, which reuses the entitlement, grace, duplicate (review-only for store providers) and ledger paths. Product IDs are `rootaroo.hh{5..10}.{month|year}`.
+
+### Task 11.2: Apple
+- App Store Server Notifications V2 receiver `POST /api/v1/billing/webhooks/apple`: verify the JWS signature chain (x5c) against Apple Root CA G3 (vendored PEM), check the bundle ID and environment (Sandbox maps to livemode=false, Production to true), persist to `billing_events`, and process through the worker.
+- `POST /api/v1/billing/iap/apple/verify {signedTransaction}` (admin only): verify the JWS, check `appAccountToken` equals the household ID, upsert.
+- App Store Server API client (JWT ES256 with `APPLE_IAP_KEY_ID`, `APPLE_IAP_ISSUER_ID`, `APPLE_IAP_PRIVATE_KEY`) for `getAllSubscriptionStatuses`, used by reconcile.
+- Fixture tests: valid and invalid chain, wrong bundle, sandbox vs production, and the notification types SUBSCRIBED, DID_RENEW, DID_FAIL_TO_RENEW with grace, EXPIRED, REFUND and DID_CHANGE_RENEWAL_PREF.
+
+### Task 11.3: Google
+- RTDN Pub/Sub push receiver `POST /api/v1/billing/webhooks/google`: verify the Google-signed OIDC bearer token (audience is the configured URL, email is the configured push service account), decode the message, then fetch the truth from the Play Developer API `purchases.subscriptionsv2.get` (service-account JWT). License-test purchases (`testPurchase`) map to livemode=false.
+- `POST /api/v1/billing/iap/google/verify {purchaseToken, productId}` (admin only): verify, check `obfuscatedExternalAccountId` equals the household ID, acknowledge the purchase, upsert.
+- Fixture tests for each notification type and the acknowledgement path.
+
+### Task 11.4: Reconciliation, staff API and cohort for store providers
+Reconcile store subscriptions through their APIs. The staff API lists them. `cohort --force` handles store subscriptions by raising a review item (we can't cancel them).
+
+### Task 11.5: Mobile IAP integration
+Add the IAP library (verify the current recommendation against Expo SDK 54 docs, for example `expo-iap`), then:
+- `purchaseFlow` dispatches on `purchaseMethod` (`apple_iap` or `google_play`); on success, send the receipt or token to the verify endpoint.
+- Restore purchases.
+- Send the storefront or billing country in `X-Store-Country`.
+- Manage subscription opens the store's page.
+- Jest tests with the module mocked.
+
+Requires a new EAS dev-client build.
+
+### Task 11.6: Device checklists
+`docs/billing/device-test-checklist.md`, covering:
+- Apple: sandbox tester, StoreKit configuration file, purchase, renew, cancel and refund, and ASSN delivery to a tunnel.
+- Google: license tester, internal testing track, purchase, renew and cancel, and RTDN delivery.
+- Cross-provider: duplicates.
+
+Marked owner-run.
+
+### Wave 11 gate
+Unit and integration suites green; fixture coverage of every notification type; mobile tests green; checklists committed. New env vars documented in `.env.example` (names only).
+
+---
+
+## Wave 12: Documentation, final verification, push
+
+### Task 12.1: Documentation
+- `docs/billing/README.md`: architecture, money flows, env vars per environment, local dev setup (Docker MySQL and Redis, `stripe listen --latest`), how to run each test layer.
+- `docs/billing/runbooks.md`, one runbook per spec §15 item: key rotation, webhook secret rotation, review queue, refunds and disputes, cohort changes, price changes and migrations, routing changes.
+- `docs/superpowers/evidence/README.md`: evidence index.
+- A short root README pointing to these.
+
+### Task 12.2: Final verification
+On a fresh, clean local database built from migrations only:
+- full unit, integration and coverage runs;
+- tsc, lint, mobile tests, Android bundle export;
+- the secret scan over the full branch diff;
+- `git grep rootaru`.
+
+Record everything in `docs/superpowers/evidence/w12-final.md`.
+
+### Task 12.3: Acceptance (owner DB)
+Only after the owner confirms: take a schema dump of the owner's `rootaroo_dev`, run migrations, run the smoke subset (status, plans, checkout session creation, webhook trigger), and record the results.
+
+### Task 12.4: Push
+`git push -u origin feat/billing`, then report the branch and its evidence. No PR unless the owner asks.
