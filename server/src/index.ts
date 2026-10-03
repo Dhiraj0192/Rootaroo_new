@@ -11,6 +11,7 @@ import { startCalendarSyncJob } from './jobs/calendar-sync';
 import { startOverduePointsReductionJob } from './jobs/overdue-points';
 import { startPurgeScheduledDeletionsJob } from './jobs/purge-scheduled-deletions';
 import { startPingExpiryJob } from './jobs/ping-expiry';
+import { startBillingEventSweepJob } from './jobs/billing-event-sweep';
 import { setIO } from './shared/utils/socket';
 import {
   socketAuthMiddleware,
@@ -83,6 +84,7 @@ async function start(): Promise<void> {
     startOverduePointsReductionJob();
     startPurgeScheduledDeletionsJob();
     startPingExpiryJob();
+    startBillingEventSweepJob();
 
     server.listen(env.port, () => {
       logger.info(`
