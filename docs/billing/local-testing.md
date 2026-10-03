@@ -311,4 +311,49 @@ npx tsx scripts/dev/seed-billing.ts --reset 2>&1 | grep -v '^Executing'
 
 ## Android emulator
 
-(filled in by orchestrator)
+Tested on a 6 GB Windows laptop. Memory is the main constraint: do not run the Gradle build while the emulator is up.
+
+**One-time build (about 30 to 60 min the first time, a few minutes after that)**
+1. Stop the emulator, Metro and the dev server; keep Docker running.
+2. In `mobile/`, regenerate the native project (it is gitignored). `LOCAL_NO_FCM=1` tells `app.config.js` to skip
+   `google-services.json`, so push notifications are off in this build:
+   ```powershell
+   $env:ANDROID_HOME='E:\Softwares\Android\SDK'; $env:LOCAL_NO_FCM='1'
+   npx expo prebuild --platform android --clean --no-install
+   ```
+3. Low-memory settings in `mobile/android/gradle.properties` (reapply after every prebuild):
+   `reactNativeArchitectures=x86_64`, `org.gradle.parallel=false`, `org.gradle.workers.max=2`,
+   `kotlin.compiler.execution.strategy=in-process`.
+4. On JDK 17.0.2 the generated `gradlew.bat` fails with "-classpath requires class path specification". Remove
+   ` -classpath "%CLASSPATH%"` from its last java line (newer JDKs don't need this).
+5. Build:
+   ```powershell
+   cd android; $env:JAVA_HOME='C:\Program Files\Java\jdk-17.0.2'
+   .\gradlew.bat app:assembleDebug -x lint -x test -PreactNativeArchitectures=x86_64
+   ```
+   The APK is written to `android/app/build/outputs/apk/debug/app-debug.apk`.
+
+**Each test session**
+```bash
+emulator -avd Pixel_6 -skin 1080x2400 -no-boot-anim -no-audio -no-snapshot-save -memory 2048
+adb install -r mobile/android/app/build/outputs/apk/debug/app-debug.apk
+adb reverse tcp:3000 tcp:3000   # API and the Checkout return page on localhost:3000
+adb reverse tcp:8081 tcp:8081   # Metro
+cd server && set -a && . ./.env.impl && set +a && npm run dev
+cd mobile && LOCAL_NO_FCM=1 npx expo start --dev-client
+```
+The app talks to `10.0.2.2:3000` (the emulator's alias for the host) unless `EXPO_PUBLIC_API_URL` is set. In dev,
+routing sends every platform to `stripe_checkout`, so the emulator shows the Stripe path. Store IAP needs a real device
+with a Play-signed build (see `device-test-checklist.md`).
+
+**What to try**
+
+| Login (see section 3) | Expect |
+|---|---|
+| `seed+a-admin` | Paywall shows `/billing/plans` prices. Subscribe opens Stripe Checkout in a browser tab; pay with 4242; it returns through `rootaroo://billing` and the app unlocks after sync |
+| `seed+a-member1` | Member paywall ("ask your household admin"), no purchase button |
+| `seed+b-admin` | Unlocked. The Subscription screen shows monthly, 5 seats. Manage opens the portal, which fails for seeded fake Stripe ids; use a household bought through Checkout to test the portal |
+| `seed+f-admin` | Grace-period state, still usable |
+| `seed+g-admin`, `seed+i-admin` | Paywall (grace expired, canceled) |
+| `seed+j-admin` | Test cohort: unlocked with no subscription |
+| fresh signup | Full flow: create a household, hit the paywall, check out |
