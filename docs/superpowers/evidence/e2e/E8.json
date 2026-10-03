@@ -1,0 +1,118 @@
+{
+  "scenario": "E8",
+  "title": "Cancel at period end (portal equivalent), access until the end, blocked after",
+  "pass": true,
+  "startedAt": "2026-10-03T11:23:21.440Z",
+  "assertions": [
+    {
+      "name": "cancel_at_period_end stored, still allowed (reason active)",
+      "ok": true,
+      "detail": {
+        "allowed": true,
+        "reason": "active",
+        "mode": "test",
+        "subscription": {
+          "id": "9d555d7f-84e5-45dd-b4b8-347858f08b52",
+          "provider": "stripe",
+          "status": "active",
+          "seats": 5,
+          "interval": "month",
+          "currentPeriodEnd": "2026-11-03T11:23:21.000Z",
+          "cancelAtPeriodEnd": true
+        },
+        "graceUntil": null,
+        "seatsAllowed": 5
+      }
+    },
+    {
+      "name": "after the period end: canceled, blocked (402)",
+      "ok": true,
+      "detail": {
+        "allowed": false,
+        "reason": "subscription_required",
+        "mode": "test",
+        "subscription": null,
+        "graceUntil": null,
+        "seatsAllowed": 5
+      }
+    }
+  ],
+  "data": {
+    "snapshot": {
+      "subscriptions": [
+        {
+          "id": "9d555d7f-84e5-45dd-b4b8-347858f08b52",
+          "householdId": "fab35e40-ae8b-417d-9d21-7bdc5f1c5cee",
+          "provider": "stripe",
+          "livemode": false,
+          "providerSubscriptionId": "sub_1UMR2F0dWk0w8nqYrNycNqGO",
+          "status": "canceled",
+          "interval": "month",
+          "seats": 5,
+          "priceId": "price_1UMD3t0dWk0w8nqYoXd7ZLev",
+          "priceSet": "2026-10",
+          "unitAmount": 899,
+          "currency": "usd",
+          "currentPeriodStart": "2026-10-03T11:23:21.000Z",
+          "currentPeriodEnd": "2026-11-03T11:23:21.000Z",
+          "cancelAtPeriodEnd": true,
+          "canceledAt": "2026-10-03T11:23:21.000Z",
+          "endedAt": "2026-11-03T11:23:21.000Z",
+          "pendingUpdate": null,
+          "graceUntil": null,
+          "purchasedByUserId": "8333608a-82ef-440e-8806-da409821a116",
+          "eventWatermark": 1791026613,
+          "lastSyncedAt": "2026-10-03T11:23:35.000Z",
+          "planChangeVersion": 0,
+          "createdAt": "2026-10-03T11:23:27.000Z",
+          "updatedAt": "2026-10-03T11:23:35.000Z"
+        }
+      ],
+      "customers": [
+        {
+          "id": "f96c054b-2bbd-4c04-b08b-545a3b3b0a0d",
+          "householdId": "fab35e40-ae8b-417d-9d21-7bdc5f1c5cee",
+          "provider": "stripe",
+          "livemode": false,
+          "providerCustomerId": "cus_VNBPh0LT78x92U",
+          "billingEmail": "e2e-e8-musazu8w-2e63@example.test",
+          "createdAt": "2026-10-03T11:23:22.000Z",
+          "updatedAt": "2026-10-03T11:23:28.000Z"
+        }
+      ],
+      "transactions": [
+        {
+          "id": "c7bc9880-0e8a-4ace-b30d-47342f346603",
+          "provider": "stripe",
+          "livemode": false,
+          "type": "payment",
+          "status": "paid",
+          "billingReason": "subscription_create",
+          "amount": 899,
+          "fee": 0,
+          "net": 899,
+          "disputeFee": null,
+          "fundsState": null,
+          "currency": "usd",
+          "householdId": "fab35e40-ae8b-417d-9d21-7bdc5f1c5cee",
+          "userId": "8333608a-82ef-440e-8806-da409821a116",
+          "subscriptionId": "9d555d7f-84e5-45dd-b4b8-347858f08b52",
+          "matchStatus": "matched",
+          "householdNameSnapshot": "E2E E8 Household",
+          "payerEmailSnapshot": "e2e-e8-musazu8w-2e63@example.test",
+          "providerObjectId": "in_1UMR2F0dWk0w8nqYCePikGnC",
+          "providerInvoiceId": "in_1UMR2F0dWk0w8nqYCePikGnC",
+          "providerChargeId": "ch_3UMR2G0dWk0w8nqY1GKYj1S4",
+          "receiptUrl": "<stripe-url:pay.stripe.com>",
+          "description": "1 × Rootaroo Household: 5 members (at $8.99 / month)",
+          "occurredAt": "2026-10-03T11:23:21.000Z",
+          "lastEventId": "evt_1UMR2I0dWk0w8nqYEmTrLfLn",
+          "createdAt": "2026-10-03T11:23:28.000Z",
+          "updatedAt": "2026-10-03T11:23:28.000Z"
+        }
+      ],
+      "checkoutSessions": [],
+      "reviewItems": []
+    }
+  }
+}

@@ -1,0 +1,173 @@
+{
+  "scenario": "E7",
+  "title": "Failed upgrade leaves pending_update; it expires; admin notified",
+  "pass": true,
+  "startedAt": "2026-10-03T11:41:23.239Z",
+  "assertions": [
+    {
+      "name": "plan change returns pendingUpdate",
+      "ok": true,
+      "detail": {
+        "changed": true,
+        "pendingUpdate": true,
+        "hostedInvoiceUrl": true,
+        "entitlement": {
+          "allowed": true,
+          "reason": "active",
+          "mode": "test",
+          "subscription": {
+            "id": "01f12be5-19a1-4cd8-8b7e-d80365c2bc3b",
+            "provider": "stripe",
+            "status": "active",
+            "seats": 5,
+            "interval": "month",
+            "currentPeriodEnd": "2026-11-03T11:41:23.000Z",
+            "cancelAtPeriodEnd": false
+          },
+          "graceUntil": null,
+          "seatsAllowed": 5
+        }
+      }
+    },
+    {
+      "name": "seats unchanged (5) while the payment is outstanding",
+      "ok": true,
+      "detail": {
+        "seats": 5
+      }
+    },
+    {
+      "name": "second change refused with PLAN_CHANGE_PENDING (409)",
+      "ok": true,
+      "detail": {
+        "status": 409
+      }
+    },
+    {
+      "name": "Stripe holds a pending_update with an expiry",
+      "ok": true
+    },
+    {
+      "name": "after expiry: seats still 5, pending_update cleared",
+      "ok": true
+    },
+    {
+      "name": "admin notified (billing_plan_change_failed)",
+      "ok": true,
+      "detail": {
+        "title": "Your plan change did not go through"
+      }
+    },
+    {
+      "name": "B: seats move to 6 only after the invoice is paid",
+      "ok": true
+    }
+  ],
+  "data": {
+    "snapshot": {
+      "subscriptions": [
+        {
+          "id": "01f12be5-19a1-4cd8-8b7e-d80365c2bc3b",
+          "householdId": "2d8445a2-88e5-444d-bc45-9249415c1380",
+          "provider": "stripe",
+          "livemode": false,
+          "providerSubscriptionId": "sub_1UMRJj0dWk0w8nqY6GrgdP9D",
+          "status": "active",
+          "interval": "month",
+          "seats": 5,
+          "priceId": "price_1UMD3t0dWk0w8nqYoXd7ZLev",
+          "priceSet": "2026-10",
+          "unitAmount": 899,
+          "currency": "usd",
+          "currentPeriodStart": "2026-10-03T11:41:23.000Z",
+          "currentPeriodEnd": "2026-11-03T11:41:23.000Z",
+          "cancelAtPeriodEnd": false,
+          "canceledAt": null,
+          "endedAt": null,
+          "pendingUpdate": null,
+          "graceUntil": null,
+          "purchasedByUserId": "7c07a624-9f86-4499-af33-57d706d2d60b",
+          "eventWatermark": 1791027700,
+          "lastSyncedAt": "2026-10-03T11:41:42.000Z",
+          "planChangeVersion": 1,
+          "createdAt": "2026-10-03T11:41:31.000Z",
+          "updatedAt": "2026-10-03T11:41:42.000Z"
+        }
+      ],
+      "customers": [
+        {
+          "id": "37e47e5e-650a-46c0-a1c2-d28874aa849b",
+          "householdId": "2d8445a2-88e5-444d-bc45-9249415c1380",
+          "provider": "stripe",
+          "livemode": false,
+          "providerCustomerId": "cus_VNBhiaojOkG77f",
+          "billingEmail": "e2e-e7-musbn0yx-8cda@example.test",
+          "createdAt": "2026-10-03T11:41:25.000Z",
+          "updatedAt": "2026-10-03T11:41:33.000Z"
+        }
+      ],
+      "transactions": [
+        {
+          "id": "2f173394-291a-4724-a67b-85a8ec43dc61",
+          "provider": "stripe",
+          "livemode": false,
+          "type": "payment",
+          "status": "paid",
+          "billingReason": "subscription_create",
+          "amount": 899,
+          "fee": 0,
+          "net": 899,
+          "disputeFee": null,
+          "fundsState": null,
+          "currency": "usd",
+          "householdId": "2d8445a2-88e5-444d-bc45-9249415c1380",
+          "userId": "7c07a624-9f86-4499-af33-57d706d2d60b",
+          "subscriptionId": "01f12be5-19a1-4cd8-8b7e-d80365c2bc3b",
+          "matchStatus": "matched",
+          "householdNameSnapshot": "E2E E7 Household",
+          "payerEmailSnapshot": "e2e-e7-musbn0yx-8cda@example.test",
+          "providerObjectId": "in_1UMRJj0dWk0w8nqYnJCidHN0",
+          "providerInvoiceId": "in_1UMRJj0dWk0w8nqYnJCidHN0",
+          "providerChargeId": "ch_3UMRJj0dWk0w8nqY07Pci1I8",
+          "receiptUrl": "<stripe-url:pay.stripe.com>",
+          "description": "1 × Rootaroo Household: 5 members (at $8.99 / month)",
+          "occurredAt": "2026-10-03T11:41:23.000Z",
+          "lastEventId": "evt_1UMRJm0dWk0w8nqYd5nK0PmN",
+          "createdAt": "2026-10-03T11:41:32.000Z",
+          "updatedAt": "2026-10-03T11:41:32.000Z"
+        },
+        {
+          "id": "ea16d77e-84bc-48ad-851c-f66fdc602993",
+          "provider": "stripe",
+          "livemode": false,
+          "type": "failed_payment",
+          "status": "failed",
+          "billingReason": "subscription_update",
+          "amount": 398,
+          "fee": null,
+          "net": null,
+          "disputeFee": null,
+          "fundsState": null,
+          "currency": "usd",
+          "householdId": "2d8445a2-88e5-444d-bc45-9249415c1380",
+          "userId": "7c07a624-9f86-4499-af33-57d706d2d60b",
+          "subscriptionId": "01f12be5-19a1-4cd8-8b7e-d80365c2bc3b",
+          "matchStatus": "matched",
+          "householdNameSnapshot": "E2E E7 Household",
+          "payerEmailSnapshot": "e2e-e7-musbn0yx-8cda@example.test",
+          "providerObjectId": "in_1UMRJp0dWk0w8nqY70wh65ab",
+          "providerInvoiceId": "in_1UMRJp0dWk0w8nqY70wh65ab",
+          "providerChargeId": null,
+          "receiptUrl": null,
+          "description": "Unused time on Rootaroo Household: 5 members after 03 Oct 2026",
+          "occurredAt": "2026-10-03T11:41:23.000Z",
+          "lastEventId": "evt_1UMRJv0dWk0w8nqYL5dHmu6T",
+          "createdAt": "2026-10-03T11:41:41.000Z",
+          "updatedAt": "2026-10-03T11:41:41.000Z"
+        }
+      ],
+      "checkoutSessions": [],
+      "reviewItems": []
+    }
+  }
+}

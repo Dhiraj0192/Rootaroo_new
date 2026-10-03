@@ -1,0 +1,181 @@
+{
+  "scenario": "E12",
+  "title": "Planted drift repaired by reconciliation",
+  "pass": true,
+  "startedAt": "2026-10-03T11:40:16.584Z",
+  "assertions": [
+    {
+      "name": "drift planted: blocked locally",
+      "ok": true
+    },
+    {
+      "name": "reconciliation run accepted",
+      "ok": true,
+      "detail": {
+        "status": 200
+      }
+    },
+    {
+      "name": "status, seats and cancel flag restored from Stripe",
+      "ok": true
+    },
+    {
+      "name": "auto_fixed subscription_drift item lists the changed fields",
+      "ok": true,
+      "detail": {
+        "id": "83801910-4ee8-46e7-8bd9-1690d869244e",
+        "runId": "11c4cd57-5e9d-4815-91ad-a6ce68487d61",
+        "livemode": false,
+        "kind": "subscription_drift",
+        "entityType": "subscription",
+        "entityId": "3613fae6-5066-48a3-bcc0-6faae70f4965",
+        "providerObjectId": "sub_1UMRId0dWk0w8nqYwCVsTajL",
+        "before": {
+          "seats": 9,
+          "status": "canceled",
+          "cancelAtPeriodEnd": true
+        },
+        "after": {
+          "seats": 5,
+          "status": "active",
+          "cancelAtPeriodEnd": false
+        },
+        "resolution": "auto_fixed",
+        "resolvedBy": "system",
+        "resolutionNote": null,
+        "resolvedAt": "2026-10-03T11:40:44.000Z",
+        "createdAt": "2026-10-03T11:40:44.000Z",
+        "updatedAt": "2026-10-03T11:40:44.000Z"
+      }
+    }
+  ],
+  "data": {
+    "item": {
+      "id": "83801910-4ee8-46e7-8bd9-1690d869244e",
+      "runId": "11c4cd57-5e9d-4815-91ad-a6ce68487d61",
+      "livemode": false,
+      "kind": "subscription_drift",
+      "entityType": "subscription",
+      "entityId": "3613fae6-5066-48a3-bcc0-6faae70f4965",
+      "providerObjectId": "sub_1UMRId0dWk0w8nqYwCVsTajL",
+      "before": {
+        "seats": 9,
+        "status": "canceled",
+        "cancelAtPeriodEnd": true
+      },
+      "after": {
+        "seats": 5,
+        "status": "active",
+        "cancelAtPeriodEnd": false
+      },
+      "resolution": "auto_fixed",
+      "resolvedBy": "system",
+      "resolutionNote": null,
+      "resolvedAt": "2026-10-03T11:40:44.000Z",
+      "createdAt": "2026-10-03T11:40:44.000Z",
+      "updatedAt": "2026-10-03T11:40:44.000Z"
+    },
+    "snapshot": {
+      "subscriptions": [
+        {
+          "id": "3613fae6-5066-48a3-bcc0-6faae70f4965",
+          "householdId": "d6f7f762-17b4-4242-8781-c6c0b382cdc4",
+          "provider": "stripe",
+          "livemode": false,
+          "providerSubscriptionId": "sub_1UMRId0dWk0w8nqYwCVsTajL",
+          "status": "active",
+          "interval": "month",
+          "seats": 5,
+          "priceId": "price_1UMD3t0dWk0w8nqYoXd7ZLev",
+          "priceSet": "2026-10",
+          "unitAmount": 899,
+          "currency": "usd",
+          "currentPeriodStart": "2026-10-03T11:40:19.000Z",
+          "currentPeriodEnd": "2026-11-03T11:40:19.000Z",
+          "cancelAtPeriodEnd": false,
+          "canceledAt": null,
+          "endedAt": null,
+          "pendingUpdate": null,
+          "graceUntil": null,
+          "purchasedByUserId": "fd18e89d-2a4c-44c5-9ba2-f7ef9b8cede3",
+          "eventWatermark": 1791027621,
+          "lastSyncedAt": "2026-10-03T11:40:44.000Z",
+          "planChangeVersion": 0,
+          "createdAt": "2026-10-03T11:40:23.000Z",
+          "updatedAt": "2026-10-03T11:40:44.000Z"
+        }
+      ],
+      "customers": [
+        {
+          "id": "f7807ea1-3460-441d-84f4-55e2346b63c0",
+          "householdId": "d6f7f762-17b4-4242-8781-c6c0b382cdc4",
+          "provider": "stripe",
+          "livemode": false,
+          "providerCustomerId": "cus_VNBfTTmwZCElHy",
+          "billingEmail": "e2e-e12-musblljf-815b@example.test",
+          "createdAt": "2026-10-03T11:40:18.000Z",
+          "updatedAt": "2026-10-03T11:40:24.000Z"
+        }
+      ],
+      "transactions": [
+        {
+          "id": "e01abe8b-9f17-4241-b198-e2d4549dd0a0",
+          "provider": "stripe",
+          "livemode": false,
+          "type": "payment",
+          "status": "paid",
+          "billingReason": "subscription_create",
+          "amount": 899,
+          "fee": 0,
+          "net": 899,
+          "disputeFee": null,
+          "fundsState": null,
+          "currency": "usd",
+          "householdId": "d6f7f762-17b4-4242-8781-c6c0b382cdc4",
+          "userId": "fd18e89d-2a4c-44c5-9ba2-f7ef9b8cede3",
+          "subscriptionId": "3613fae6-5066-48a3-bcc0-6faae70f4965",
+          "matchStatus": "matched",
+          "householdNameSnapshot": "E2E E12 Household",
+          "payerEmailSnapshot": "e2e-e12-musblljf-815b@example.test",
+          "providerObjectId": "in_1UMRId0dWk0w8nqYghSHw4km",
+          "providerInvoiceId": "in_1UMRId0dWk0w8nqYghSHw4km",
+          "providerChargeId": "ch_3UMRIe0dWk0w8nqY1fzwiRpd",
+          "receiptUrl": "<stripe-url:pay.stripe.com>",
+          "description": "1 × Rootaroo Household: 5 members (at $8.99 / month)",
+          "occurredAt": "2026-10-03T11:40:19.000Z",
+          "lastEventId": null,
+          "createdAt": "2026-10-03T11:40:24.000Z",
+          "updatedAt": "2026-10-03T11:40:46.000Z"
+        }
+      ],
+      "checkoutSessions": [],
+      "reviewItems": [
+        {
+          "id": "83801910-4ee8-46e7-8bd9-1690d869244e",
+          "runId": "11c4cd57-5e9d-4815-91ad-a6ce68487d61",
+          "livemode": false,
+          "kind": "subscription_drift",
+          "entityType": "subscription",
+          "entityId": "3613fae6-5066-48a3-bcc0-6faae70f4965",
+          "providerObjectId": "sub_1UMRId0dWk0w8nqYwCVsTajL",
+          "before": {
+            "seats": 9,
+            "status": "canceled",
+            "cancelAtPeriodEnd": true
+          },
+          "after": {
+            "seats": 5,
+            "status": "active",
+            "cancelAtPeriodEnd": false
+          },
+          "resolution": "auto_fixed",
+          "resolvedBy": "system",
+          "resolutionNote": null,
+          "resolvedAt": "2026-10-03T11:40:44.000Z",
+          "createdAt": "2026-10-03T11:40:44.000Z",
+          "updatedAt": "2026-10-03T11:40:44.000Z"
+        }
+      ]
+    }
+  }
+}
