@@ -9,6 +9,8 @@ import { sendEmail } from '../../shared/utils/mailer';
 import { getSignedUrl } from '../../shared/utils/s3';
 import { sendSms } from '../../shared/utils/sms';
 import logger from '../../shared/utils/logger';
+import { onPurchaserDeleted } from '../billing/deletion';
+import { raiseReviewItem } from '../billing/review';
 import { jwtVerify, createRemoteJWKSet } from 'jose';
 import { hashOtpCode, MAX_OTP_ATTEMPTS } from '../../shared/utils/otp';
 import { UnauthorizedError, ConflictError, NotFoundError, AppError } from '../../shared/utils/errors';
@@ -602,6 +604,13 @@ async function finalizeUserDeletion(user: User): Promise<void> {
     email: `deleted-${user.id}@deleted.rootaroo.local`,
     phone: null,
     googleId: null,
+  });
+
+  // §5.11: ledger anonymisation, cancel-at-period-end for subscriptions they paid for.
+  // Failure must not block account deletion; it is surfaced for staff review instead.
+  await onPurchaserDeleted(user.id).catch(async (err) => {
+    logger.error(`[Billing] purchaser deletion hook failed for ${user.id}:`, err);
+    await raiseReviewItem({ livemode: false, kind: 'purchaser_deletion_failed', entityType: 'user', entityId: user.id, after: { error: (err as Error).message } }).catch(() => undefined);
   });
 
   // Soft-delete the user (paranoid)

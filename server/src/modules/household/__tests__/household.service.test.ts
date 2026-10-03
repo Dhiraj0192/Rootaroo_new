@@ -51,6 +51,13 @@ jest.mock('../../billing/entitlement', () => ({
   clearEntitlementCache: jest.fn().mockResolvedValue(undefined),
 }));
 import { assertSeatAvailable, clearEntitlementCache } from '../../billing/entitlement';
+jest.mock('../../billing/deletion', () => ({
+  onHouseholdDeletionScheduled: jest.fn().mockResolvedValue(undefined),
+  onHouseholdDeletionCancelled: jest.fn().mockResolvedValue(undefined),
+  onHouseholdPurged: jest.fn().mockResolvedValue(undefined),
+  syncBillingEmail: jest.fn().mockResolvedValue(undefined),
+}));
+import { onHouseholdDeletionScheduled, onHouseholdDeletionCancelled, syncBillingEmail } from '../../billing/deletion';
 import { PaymentRequiredError } from '../../billing/errors';
 
 const userId = '550e8400-e29b-41d4-a716-446655440001';
@@ -322,6 +329,7 @@ describe('Household Service — Member Management', () => {
       expect(adminMembership.update).toHaveBeenCalledWith({ role: 'member' });
       expect(targetMembership.update).toHaveBeenCalledWith({ role: 'admin' });
       expect(result.role).toBe('member');
+      expect(syncBillingEmail).toHaveBeenCalledWith(householdId);
     });
 
     it('should throw ForbiddenError if requester is not admin', async () => {
@@ -659,6 +667,7 @@ describe('Household Service — Member Management', () => {
       expect(household.save).toHaveBeenCalled();
       expect(request.status).toBe('approved');
       expect(request.reviewerNote).toBe('looks fine');
+      expect(onHouseholdDeletionScheduled).toHaveBeenCalledWith(request.householdId);
     });
 
     it('should throw NotFoundError for an unknown request id', async () => {
@@ -714,6 +723,7 @@ describe('Household Service — Member Management', () => {
 
       expect(household.scheduledDeletionAt).toBeNull();
       expect(household.save).toHaveBeenCalled();
+      expect(onHouseholdDeletionCancelled).toHaveBeenCalledWith(householdId);
     });
 
     it('should throw ForbiddenError for a non-admin', async () => {

@@ -17,6 +17,9 @@ jest.mock('../../../database/models', () => ({
 }));
 
 import * as models from '../../../database/models';
+jest.mock('../../billing/deletion', () => ({ onPurchaserDeleted: jest.fn().mockResolvedValue(undefined) }));
+jest.mock('../../billing/review', () => ({ raiseReviewItem: jest.fn().mockResolvedValue(undefined) }));
+import { onPurchaserDeleted } from '../../billing/deletion';
 import { sendEmail } from '../../../shared/utils/mailer';
 import { sendSms } from '../../../shared/utils/sms';
 import { jwtVerify } from 'jose';
@@ -529,6 +532,7 @@ describe('Auth Service — Account Deletion', () => {
       await confirmDeletion('u1', { password: 'password123' });
       expect(models.RefreshToken.destroy).toHaveBeenCalledWith({ where: { userId: 'u1' } });
       expect(user.destroy).toHaveBeenCalled();
+      expect(onPurchaserDeleted).toHaveBeenCalledWith('u1');
     });
 
     it('should throw if the 30-day grace period has not been scheduled or has not elapsed yet', async () => {
