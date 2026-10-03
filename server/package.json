@@ -18,6 +18,7 @@
     "test:watch": "jest --watch",
     "test:int": "jest -c jest.int.config.js --runInBand",
     "test:coverage": "jest --coverage",
+    "test:billing-coverage": "node --max-old-space-size=8192 ./node_modules/jest/bin/jest.js -c jest.coverage.config.js --runInBand --coverage",
     "db:migrate": "npx sequelize-cli db:migrate",
     "db:migrate:undo": "npx sequelize-cli db:migrate:undo",
     "db:seed": "npx sequelize-cli db:seed:all",

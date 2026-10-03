@@ -1,5 +1,6 @@
 /** Integration tests: real MySQL (rootaroo_test). Run with `npm run test:int`. */
 module.exports = {
+  displayName: 'int',
   preset: 'ts-jest',
   testEnvironment: 'node',
   roots: ['<rootDir>/src'],

@@ -52,3 +52,18 @@ export const resolveSchema: ValidationSchemas = {
   body: z.object({ resolution: z.enum(['resolved', 'ignored']), note: z.string().min(1).max(1000) }),
 };
 export const replayParamsSchema: ValidationSchemas = { params: z.object({ id: z.string().min(1).max(255) }) };
+
+export const cohortSchema: ValidationSchemas = {
+  params: z.object({ id: z.string().uuid() }),
+  body: z.object({ cohort: z.enum(['live', 'test']), reason: z.string().min(3).max(500), force: z.boolean().optional().default(false) }),
+};
+
+export const routingSchema: ValidationSchemas = {
+  body: z.object({
+    rules: z.array(z.object({
+      platform: z.enum(['ios', 'android', 'web']),
+      country: z.string().regex(/^(\*|[A-Z]{2})$/),
+      method: z.enum(['stripe_checkout', 'apple_iap', 'google_play', 'none']),
+    })).min(1).max(500),
+  }),
+};

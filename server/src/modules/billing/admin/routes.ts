@@ -3,7 +3,7 @@ import { validate } from '../../../shared/middleware/validate';
 import { auditLog, requireBillingAdminKey } from './auth';
 import * as ctrl from './controller';
 import {
-  idParamSchema, itemsQuerySchema, replayParamsSchema, resolveSchema, runBodySchema, runsQuerySchema,
+  cohortSchema, idParamSchema, itemsQuerySchema, replayParamsSchema, resolveSchema, routingSchema, runBodySchema, runsQuerySchema,
   subscriptionsQuerySchema, summaryQuerySchema, transactionsQuerySchema,
 } from './validation';
 
@@ -182,5 +182,65 @@ router.get('/reconciliation/items', validate(itemsQuerySchema), ctrl.items);
 router.post('/reconciliation/run', validate(runBodySchema), ctrl.runNow);
 router.post('/reconciliation/items/:id/resolve', validate(resolveSchema), ctrl.resolve);
 router.post('/events/:id/replay', validate(replayParamsSchema), ctrl.replay);
+
+/**
+ * @openapi
+ * /billing-admin/households/{id}/cohort:
+ *   post:
+ *     tags: [BillingAdmin]
+ *     summary: Change a household's billing cohort (live/test). Audited; refused with an active subscription or open checkout unless force.
+ *     security: [{ billingAdminKey: [] }]
+ *     parameters:
+ *       - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [cohort, reason]
+ *             properties:
+ *               cohort: { type: string, enum: [live, test] }
+ *               reason: { type: string }
+ *               force: { type: boolean, description: "Sets cancel_at_period_end and expires open sessions" }
+ *     responses:
+ *       200: { description: "{ changed, from, to, canceledSubscriptions, expiredSessions }" }
+ *       400: { description: Invalid body }
+ *       404: { description: Household not found }
+ *       409: { description: "COHORT_CHANGE_BLOCKED { subscriptions, openSessions }" }
+ * /billing-admin/routing:
+ *   get:
+ *     tags: [BillingAdmin]
+ *     summary: Current routing rules
+ *     security: [{ billingAdminKey: [] }]
+ *     responses:
+ *       200: { description: "Rule[]" }
+ *   put:
+ *     tags: [BillingAdmin]
+ *     summary: Replace all routing rules in one transaction (audited)
+ *     security: [{ billingAdminKey: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [rules]
+ *             properties:
+ *               rules:
+ *                 type: array
+ *                 items:
+ *                   type: object
+ *                   properties:
+ *                     platform: { type: string, enum: [ios, android, web] }
+ *                     country: { type: string, example: US }
+ *                     method: { type: string, enum: [stripe_checkout, apple_iap, google_play, none] }
+ *     responses:
+ *       200: { description: "Rule[]" }
+ *       400: { description: Invalid or duplicate rule }
+ */
+router.post('/households/:id/cohort', validate(cohortSchema), ctrl.cohort);
+router.get('/routing', ctrl.routing);
+router.put('/routing', validate(routingSchema), ctrl.putRouting);
 
 export default router;

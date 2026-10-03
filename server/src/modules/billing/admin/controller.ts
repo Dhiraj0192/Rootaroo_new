@@ -86,3 +86,25 @@ export async function replay(req: Request, res: Response, next: NextFunction) {
     res.status(200).json({ success: true, data: await service.replayEvent(req.params.id) });
   } catch (e) { next(e); }
 }
+
+export async function cohort(req: Request, res: Response, next: NextFunction) {
+  try {
+    const out = await service.changeCohort(req.params.id, req.body);
+    res.locals.auditNote = { from: out.from, to: out.to, reason: req.body.reason, force: req.body.force };
+    res.status(200).json({ success: true, data: out });
+  } catch (e) {
+    res.locals.auditNote = { to: req.body?.cohort, reason: req.body?.reason, force: req.body?.force, refused: true };
+    next(e);
+  }
+}
+
+export async function routing(_req: Request, res: Response, next: NextFunction) {
+  try { res.status(200).json({ success: true, data: await service.getRouting() }); } catch (e) { next(e); }
+}
+
+export async function putRouting(req: Request, res: Response, next: NextFunction) {
+  try {
+    res.locals.auditNote = { rules: req.body.rules.length };
+    res.status(200).json({ success: true, data: await service.putRouting(req.body.rules) });
+  } catch (e) { next(e); }
+}

@@ -1,8 +1,16 @@
 import { Op, WhereOptions } from 'sequelize';
-import { BillingCustomer, BillingEvent, BillingReconciliationItem, BillingReconciliationRun, BillingSubscription, BillingTransaction, Household, HouseholdMember, User } from '../../../database/models';
-import { getEntitlement } from '../entitlement';
+import { BillingCheckoutSession, BillingCustomer, BillingEvent, BillingReconciliationItem, BillingReconciliationRun, BillingSubscription, BillingTransaction, Household, HouseholdMember, User } from '../../../database/models';
+import { clearEntitlementCache, getEntitlement } from '../entitlement';
 import { enqueueEvent } from '../worker';
-import type { Entitlement } from '../types';
+import { checkoutLockName } from '../checkout';
+import { getStripe } from '../config';
+import { BillingConflictError } from '../errors';
+import { withLock } from '../locks';
+import { livemodeOf, resolveMode } from '../mode';
+import { clearRoutingCache, loadRules, replaceRoutingRules, RuleRow } from '../routing';
+import { upsertSubscription } from '../sync';
+import { ALLOWED_STATUSES, BillingCohort, Entitlement } from '../types';
+import logger from '../../../shared/utils/logger';
 import type { LedgerType } from '../../../database/models/BillingTransaction';
 import { AppError, NotFoundError, ValidationError } from '../../../shared/utils/errors';
 
@@ -220,4 +228,58 @@ export async function replayEvent(idOrProviderId: string): Promise<BillingEvent>
   if (claimed === 0) throw new AppError(409, 'This event is being processed right now. Try again in a moment.', 'EVENT_PROCESSING');
   enqueueEvent(row.id);
   return (await BillingEvent.findByPk(row.id))!;
+}
+
+export interface CohortChange { changed: boolean; from: BillingCohort; to: BillingCohort; canceledSubscriptions: string[]; expiredSessions: string[] }
+
+/** L9: refused while an allowed subscription or an open checkout exists in the household's current mode, unless forced. */
+export async function changeCohort(householdId: string, body: { cohort: BillingCohort; reason: string; force?: boolean }): Promise<CohortChange> {
+  const household = await Household.findByPk(householdId, { paranoid: false });
+  if (!household) throw new NotFoundError('Household');
+  const from = household.billingCohort;
+  if (from === body.cohort) return { changed: false, from, to: body.cohort, canceledSubscriptions: [], expiredSessions: [] };
+
+  const mode = resolveMode(household);
+  const livemode = livemodeOf(mode);
+  // Same lock as checkout creation, so a session cannot be opened between the check and the switch.
+  return withLock(checkoutLockName(householdId, mode), 60_000, async () => {
+    const subs = await BillingSubscription.findAll({ where: { householdId, livemode, status: { [Op.in]: [...ALLOWED_STATUSES] } } });
+    const sessions = await BillingCheckoutSession.findAll({ where: { householdId, livemode, status: { [Op.in]: ['open', 'creating'] } } });
+    if ((subs.length > 0 || sessions.length > 0) && !body.force) {
+      throw new BillingConflictError('COHORT_CHANGE_BLOCKED', 'This household has an active subscription or an open checkout in its current mode. Pass force to proceed.',
+        { subscriptions: subs.length, openSessions: sessions.length });
+    }
+
+    const canceledSubscriptions: string[] = [];
+    const expiredSessions: string[] = [];
+    if (body.force) {
+      const stripe = getStripe(mode);
+      for (const sub of subs) {
+        if (sub.provider !== 'stripe' || sub.cancelAtPeriodEnd) continue;
+        await stripe.subscriptions.update(sub.providerSubscriptionId, { cancel_at_period_end: true }, { idempotencyKey: `cohort:${sub.providerSubscriptionId}:${Date.now()}` });
+        await upsertSubscription(sub.providerSubscriptionId, mode);
+        canceledSubscriptions.push(sub.providerSubscriptionId);
+      }
+      for (const session of sessions) {
+        if (session.providerSessionId) {
+          await stripe.checkout.sessions.expire(session.providerSessionId).catch((err: Error) => logger.warn(`[Billing] expire ${session.providerSessionId}: ${err.message}`));
+          expiredSessions.push(session.providerSessionId);
+        }
+        await session.update({ status: 'expired' });
+      }
+    }
+
+    await household.update({ billingCohort: body.cohort });
+    await clearEntitlementCache(householdId);
+    return { changed: true, from, to: body.cohort, canceledSubscriptions, expiredSessions };
+  }, { waitMs: 10_000 });
+}
+
+export async function getRouting(): Promise<RuleRow[]> {
+  clearRoutingCache();
+  return loadRules();
+}
+
+export function putRouting(rules: RuleRow[]): Promise<RuleRow[]> {
+  return replaceRoutingRules(rules, 'billing-key');
 }
