@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { validate } from '../../../shared/middleware/validate';
 import { auditLog, requireBillingAdminKey } from './auth';
 import * as ctrl from './controller';
-import { idParamSchema, transactionsQuerySchema } from './validation';
+import { idParamSchema, subscriptionsQuerySchema, summaryQuerySchema, transactionsQuerySchema } from './validation';
 
 const router = Router();
 
@@ -70,5 +70,47 @@ router.get('/ping', ctrl.ping);
 router.get('/transactions', validate(transactionsQuerySchema), ctrl.transactions);
 router.get('/transactions.csv', validate(transactionsQuerySchema), ctrl.transactionsCsv);
 router.get('/transactions/:id', validate(idParamSchema), ctrl.transaction);
+
+/**
+ * @openapi
+ * /billing-admin/summary:
+ *   get:
+ *     tags: [BillingAdmin]
+ *     summary: "Revenue summary: net = gross - succeeded refunds - withdrawn dispute amounts - fees - dispute fees; MRR; subscription counts"
+ *     security: [{ billingAdminKey: [] }]
+ *     parameters:
+ *       - { in: query, name: mode, schema: { type: string, enum: [test, live], default: live } }
+ *       - { in: query, name: from, schema: { type: string, format: date-time } }
+ *       - { in: query, name: to, schema: { type: string, format: date-time } }
+ *     responses:
+ *       200: { description: Summary }
+ *       400: { description: Invalid parameters }
+ * /billing-admin/subscriptions:
+ *   get:
+ *     tags: [BillingAdmin]
+ *     summary: Subscriptions by mode and status
+ *     security: [{ billingAdminKey: [] }]
+ *     parameters:
+ *       - { in: query, name: mode, schema: { type: string, enum: [test, live], default: live } }
+ *       - { in: query, name: status, schema: { type: string } }
+ *       - { in: query, name: cursor, schema: { type: string } }
+ *       - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+ *     responses:
+ *       200: { description: "{ success, data, nextCursor }" }
+ *       400: { description: Invalid parameters }
+ * /billing-admin/households/{id}:
+ *   get:
+ *     tags: [BillingAdmin]
+ *     summary: Cohort, entitlement, subscriptions in every mode (labelled), customers, members, recent transactions
+ *     security: [{ billingAdminKey: [] }]
+ *     parameters:
+ *       - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+ *     responses:
+ *       200: { description: Household billing view }
+ *       404: { description: Not found }
+ */
+router.get('/summary', validate(summaryQuerySchema), ctrl.summary);
+router.get('/subscriptions', validate(subscriptionsQuerySchema), ctrl.subscriptions);
+router.get('/households/:id', validate(idParamSchema), ctrl.household);
 
 export default router;

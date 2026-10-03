@@ -24,3 +24,20 @@ export const transactionsQuerySchema: ValidationSchemas = {
 };
 
 export const idParamSchema: ValidationSchemas = { params: z.object({ id: z.string().uuid() }) };
+
+export const summaryQuerySchema: ValidationSchemas = {
+  query: z.object({
+    mode: modeSchema,
+    from: z.coerce.date().default(() => new Date(Date.now() - 30 * 86400_000)),
+    to: z.coerce.date().default(() => new Date()),
+  }),
+};
+
+export const subscriptionsQuerySchema: ValidationSchemas = {
+  query: z.object({
+    mode: modeSchema,
+    status: z.enum(['incomplete', 'incomplete_expired', 'trialing', 'active', 'past_due', 'unpaid', 'canceled', 'paused']).optional(),
+    cursor: cursorSchema,
+    limit: limitSchema,
+  }),
+};

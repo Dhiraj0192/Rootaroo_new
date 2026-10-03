@@ -29,3 +29,22 @@ export async function transactionsCsv(req: Request, res: Response, next: NextFun
     next(e);
   }
 }
+
+export async function summary(req: Request, res: Response, next: NextFunction) {
+  try {
+    const q = req.query as unknown as { mode: 'test' | 'live'; from: Date; to: Date };
+    res.status(200).json({ success: true, data: await service.getSummary(q.mode, q.from, q.to) });
+  } catch (e) { next(e); }
+}
+
+export async function subscriptions(req: Request, res: Response, next: NextFunction) {
+  try {
+    const q = req.query as unknown as { mode: 'test' | 'live'; status?: string; cursor?: string; limit: number };
+    const out = await service.listSubscriptions(q.mode, q.status, q.cursor, q.limit);
+    res.status(200).json({ success: true, data: out.data, nextCursor: out.nextCursor });
+  } catch (e) { next(e); }
+}
+
+export async function household(req: Request, res: Response, next: NextFunction) {
+  try { res.status(200).json({ success: true, data: await service.getHouseholdBilling(req.params.id) }); } catch (e) { next(e); }
+}

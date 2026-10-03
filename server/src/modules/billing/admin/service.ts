@@ -1,5 +1,7 @@
 import { Op, WhereOptions } from 'sequelize';
-import { BillingSubscription, BillingTransaction, Household } from '../../../database/models';
+import { BillingCustomer, BillingSubscription, BillingTransaction, Household, HouseholdMember, User } from '../../../database/models';
+import { getEntitlement } from '../entitlement';
+import type { Entitlement } from '../types';
 import type { LedgerType } from '../../../database/models/BillingTransaction';
 import { NotFoundError, ValidationError } from '../../../shared/utils/errors';
 
@@ -71,7 +73,7 @@ export async function listTransactions(f: TxFilters): Promise<{ data: Transactio
   return { data: page.map(toView), nextCursor: rows.length > f.limit && last ? encodeCursor(last.occurredAt, last.id) : null };
 }
 
-export async function getTransaction(id: string) {
+export async function getTransaction(id: string): Promise<TransactionView & { subscription: Record<string, unknown> | null; household: Record<string, unknown> | null }> {
   const t = await BillingTransaction.findByPk(id);
   if (!t) throw new NotFoundError('Transaction');
   const subscription = t.subscriptionId ? await BillingSubscription.findByPk(t.subscriptionId) : null;
@@ -106,4 +108,74 @@ export async function writeTransactionsCsv(f: TxFilters, write: (chunk: string) 
     if (!page.nextCursor) return count;
     cursor = page.nextCursor;
   }
+}
+
+export interface Summary {
+  mode: 'test' | 'live'; from: string; to: string; currency: 'usd';
+  gross: number; refunds: number; disputes: number; fees: number; disputeFees: number; net: number; mrr: number;
+  counts: { active: number; pastDue: number; inGrace: number; failedCyclePayments: number };
+}
+
+export async function getSummary(mode: 'test' | 'live', from: Date, to: Date, now: Date = new Date()): Promise<Summary> {
+  const livemode = mode === 'live';
+  const inRange = { livemode, occurredAt: { [Op.between]: [from, to] } };
+  const sum = async (field: 'amount' | 'fee' | 'disputeFee', where: Record<string, unknown>) =>
+    Number((await BillingTransaction.sum(field, { where: { ...inRange, ...where } })) ?? 0);
+
+  const gross = await sum('amount', { type: 'payment' });
+  const refunds = await sum('amount', { type: 'refund', status: 'succeeded' });
+  const disputes = await sum('amount', { type: 'dispute', fundsState: 'withdrawn' });
+  const fees = await sum('fee', { type: 'payment' });
+  const disputeFees = await sum('disputeFee', { type: 'dispute' });
+  const failedCyclePayments = await BillingTransaction.count({ where: { ...inRange, type: 'failed_payment', billingReason: 'subscription_cycle' } });
+
+  const subs = await BillingSubscription.findAll({ where: { livemode, status: { [Op.in]: ['active', 'trialing', 'past_due'] } } });
+  const healthy = subs.filter((s) => s.status === 'active' || s.status === 'trialing');
+  const pastDue = subs.filter((s) => s.status === 'past_due');
+  const inGrace = pastDue.filter((s) => s.graceUntil && s.graceUntil.getTime() > now.getTime());
+  const mrr = [...healthy, ...inGrace].reduce((acc, s) => acc + (s.interval === 'year' ? Math.round((s.unitAmount ?? 0) / 12) : s.unitAmount ?? 0), 0);
+
+  return {
+    mode, from: from.toISOString(), to: to.toISOString(), currency: 'usd',
+    gross, refunds, disputes, fees, disputeFees, net: gross - refunds - disputes - fees - disputeFees, mrr,
+    counts: { active: healthy.length, pastDue: pastDue.length, inGrace: inGrace.length, failedCyclePayments },
+  };
+}
+
+export async function listSubscriptions(mode: 'test' | 'live', status: string | undefined, cursor: string | undefined, limit: number): Promise<{ data: Record<string, unknown>[]; nextCursor: string | null }> {
+  const where: Record<string | symbol, unknown> = { livemode: mode === 'live' };
+  if (status) where.status = status;
+  const c = decodeCursor(cursor);
+  if (c) where[Op.or] = [{ updatedAt: { [Op.lt]: c.at } }, { updatedAt: c.at, id: { [Op.lt]: c.id } }];
+  const rows = await BillingSubscription.findAll({ where: where as WhereOptions, order: [['updatedAt', 'DESC'], ['id', 'DESC']], limit: limit + 1 });
+  const page = rows.slice(0, limit);
+  const last = page[page.length - 1];
+  return {
+    data: page.map((s) => ({ ...s.toJSON(), mode: s.livemode ? 'live' : 'test' })),
+    nextCursor: rows.length > limit && last ? encodeCursor(last.updatedAt, last.id) : null,
+  };
+}
+
+export interface HouseholdBillingView {
+  household: Record<string, unknown>; entitlement: Entitlement; subscriptions: Record<string, unknown>[]; customers: Record<string, unknown>[];
+  members: { userId: string; role: string; displayName: string | null; email: string | null }[]; recentTransactions: TransactionView[];
+}
+
+export async function getHouseholdBilling(householdId: string): Promise<HouseholdBillingView> {
+  const household = await Household.findByPk(householdId, { paranoid: false });
+  if (!household) throw new NotFoundError('Household');
+  const [subs, customers, members, recent] = await Promise.all([
+    BillingSubscription.findAll({ where: { householdId }, order: [['createdAt', 'DESC']] }),
+    BillingCustomer.findAll({ where: { householdId } }),
+    HouseholdMember.findAll({ where: { householdId }, include: [{ model: User, as: 'user', required: false, paranoid: false }] }),
+    BillingTransaction.findAll({ where: { householdId }, order: [['occurredAt', 'DESC']], limit: 20 }),
+  ]);
+  return {
+    household: { id: household.id, name: household.name, billingCohort: household.billingCohort, deletedAt: household.deletedAt, scheduledDeletionAt: household.scheduledDeletionAt },
+    entitlement: await getEntitlement(householdId, { bypassCache: true }),
+    subscriptions: subs.map((s) => ({ ...s.toJSON(), mode: s.livemode ? 'live' : 'test' })),
+    customers: customers.map((c) => ({ ...c.toJSON(), mode: c.livemode ? 'live' : 'test' })),
+    members: members.map((m) => ({ userId: m.userId, role: m.role, displayName: m.user?.displayName ?? null, email: m.user?.email ?? null })),
+    recentTransactions: recent.map(toView),
+  };
 }
