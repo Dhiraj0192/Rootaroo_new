@@ -14,3 +14,4 @@ jest.mock('expo-linear-gradient', () => {
   const { View } = require('react-native');
   return { LinearGradient: (props) => React.createElement(View, props) };
 });
+jest.mock('react-native-safe-area-context', () => require('react-native-safe-area-context/jest/mock').default);
