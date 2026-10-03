@@ -1,3 +1,5 @@
+> **Superseded:** E1 to E4 were completed and pass (see `E1.json` to `E4.json` and `../w10-e2e.md`). This file is kept for history.
+
 # Pending: hosted Checkout scenarios (E1, E2, E3, E4)
 
 The claude-in-chrome extension was not connected during Wave 10, so the four scenarios that need the
