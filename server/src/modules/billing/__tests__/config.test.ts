@@ -35,6 +35,15 @@ describe('loadBillingConfig', () => {
     expect(cfg.modes.live).toBeNull();
   });
 
+  it('requires ToS consent by default; the flag can only be turned off outside production', () => {
+    expect(loadBillingConfig(base()).requireTosConsent).toBe(true);
+    const off = loadBillingConfig(base({ BILLING_REQUIRE_TOS_CONSENT: 'false' }));
+    expect(off.requireTosConsent).toBe(false);
+    expect(off.warnings.join(' ')).toMatch(/Terms of Service/);
+    expect(() => loadBillingConfig(prod({ BILLING_REQUIRE_TOS_CONSENT: 'false' }))).toThrow(/BILLING_REQUIRE_TOS_CONSENT/);
+    expect(() => loadBillingConfig(base({ BILLING_REQUIRE_TOS_CONSENT: 'maybe' }))).toThrow(/true or false/);
+  });
+
   it('accepts two comma-separated webhook secrets for rotation', () => {
     const cfg = loadBillingConfig(base({ STRIPE_TEST_WEBHOOK_SECRETS: `${fakeWebhookSecret('a')}, ${fakeWebhookSecret('b')}` }));
     expect(cfg.modes.test!.webhookSecrets).toEqual([fakeWebhookSecret('a'), fakeWebhookSecret('b')]);

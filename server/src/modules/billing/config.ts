@@ -15,6 +15,8 @@ export interface BillingConfig {
   graceDays: number;
   publicBaseUrl: string;
   integrationId: string;
+  /** Checkout shows a required Terms of Service checkbox. Needs a ToS URL in the Stripe dashboard. */
+  requireTosConsent: boolean;
   adminKey: string;
   adminIpAllowlist: string[];
   modes: Record<BillingMode, ModeConfig | null>;
@@ -74,6 +76,12 @@ export function loadBillingConfig(src: NodeJS.ProcessEnv): BillingConfig {
     errors.push('STRIPE_INTEGRATION_ID must be rootaroo_app_checkout_<8 lowercase letters>');
   }
 
+  const tosRaw = (src.BILLING_REQUIRE_TOS_CONSENT || 'true').toLowerCase();
+  if (!['true', 'false'].includes(tosRaw)) errors.push('BILLING_REQUIRE_TOS_CONSENT must be true or false');
+  const requireTosConsent = tosRaw !== 'false';
+  if (isProd && !requireTosConsent) errors.push('BILLING_REQUIRE_TOS_CONSENT must not be false in production');
+  if (!requireTosConsent) warnings.push('BILLING_REQUIRE_TOS_CONSENT=false: Checkout will not show the Terms of Service checkbox');
+
   if (!testKey) warnings.push('STRIPE_TEST_SECRET_KEY is not set: test mode disabled (test-cohort households still bypass the paywall)');
   else if (testSecrets.length === 0) warnings.push('STRIPE_TEST_WEBHOOK_SECRETS is not set: test webhooks will be rejected');
 
@@ -85,6 +93,7 @@ export function loadBillingConfig(src: NodeJS.ProcessEnv): BillingConfig {
     graceDays,
     publicBaseUrl,
     integrationId,
+    requireTosConsent,
     adminKey,
     adminIpAllowlist: list(src.ADMIN_BILLING_IP_ALLOWLIST),
     modes: {
