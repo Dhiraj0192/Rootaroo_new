@@ -45,3 +45,28 @@ Both rows were completed within the same second. Server and listener were stoppe
 ## Open issues
 - Unit-only billing coverage 55% vs 80% target (see above).
 - Webhook listener API version differs from pinned version (informational).
+
+## Review fixes
+Code-review findings fixed test-first on `feat/billing`. Commits: A `6998deeb`, B `7c8d87dd`, C `1d081cf3`, D `0481d214`, E (this commit: flake fix and evidence).
+
+| # | Finding | Commit | Test(s) |
+|---|---|---|---|
+| 1 | Replayable `hh-delete` idempotency key | A | `deletion.int.test.ts` "schedule -> cancel -> reschedule within 24 h never replays a cached Stripe response" |
+| 2 | Fire-and-forget deletion hooks lose failures; no drift check | A | `deletion.int.test.ts` "reportDeletionHookFailure raises a needs_review item"; `household.service.test.ts` "raises a review item ... scheduled/cancelled hook fails"; `reconcile.int.test.ts` "deletion drift" (2 tests) |
+| 3 | `invoice.paid` / `payment_failed` recorded before upsert | B | `handlers.test.ts` "upsert the subscription BEFORE recording the invoice"; `ledger.test.ts` "fills null userId/subscriptionId ..." |
+| 4 | Deleted purchaser's email stored in ledger | B | `ledger.int.test.ts` "ledger: deleted purchasers" (5 tests incl. `anonymizeUserLedger` by email snapshot) |
+| 5 | Checkout allowed with past_due / lost customer | C | `checkout.int.test.ts` "existing-subscription guards" (3 tests) |
+| 6 | Duplicate refund scope and notification text | D | `duplicates.int.test.ts` "does not refund an invoice that was paid before the keeper existed", "refunds an invoice paid inside the overlap window", "tells the admin when the refund failed" |
+| 7 | Duplicate resolution unlocked, direct writes | D | `duplicates.int.test.ts` "concurrent resolutions cancel once and send one email", "cancelling does not recurse", `lastSyncedAt` assertion in the D3 test |
+| 8 | `changePlan` with a pending update; non-deterministic key | C | `planPortal.int.test.ts` "pending update and idempotency" (4 tests) |
+| 9 | Customer-create key not tied to params | C | `checkout.int.test.ts` "creates a session ..." (key = hash of params) |
+| 10 | Sweep overwrote rows that finished meanwhile | D | `worker.int.test.ts` "the sweep does not clobber a row that finished after it was read"; `worker.test.ts` sweep test |
+| 11 | Purchaser-deletion failure used `livemode: false` | A | `deletion.int.test.ts` "reportPurchaserDeletionFailure ..." (2 tests); `auth.service.test.ts` "passes the original email ... reports a failure" |
+| 12 | Lock TTL expiry and MySQL fallback pool starvation | D | `locks.test.ts` "withLock heartbeat and MySQL slots" (2 tests) |
+
+Notes:
+- Finding 8 uses the requested key `plan:{subId}:{interval}:{seats}:{currentPeriodStart}`. Repeating the exact same change within one period and 24 h (A to B, B to A, A to B) replays Stripe's cached response; the 409 guard and the no-op check make this unlikely, but it is a known limit of that key shape.
+- Finding 1 drops the key entirely; the local `cancelAtPeriodEnd === value` check plus `billing:hhdel:{household}` lock serialise flips.
+
+### Flaky `webhooks.int.test.ts`
+Reproduced once in three full `test:int` runs (run 2): `resetDb()` in `beforeEach` failed on `TRUNCATE` in "400 on a bad or missing signature". Root cause: the preceding tests (valid event, rotation secret, concurrent duplicates) respond 200 and leave the event in the in-process background worker, which was still querying MySQL when the next test truncated tables. Fix: `beforeEach` awaits `__drainForTests()` before `resetDb()`. Runs 1 and 3 were green (163/163).

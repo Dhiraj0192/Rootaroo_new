@@ -21,6 +21,8 @@ let s: StripeMock;
 
 beforeAll(() => setupAssociations());
 beforeEach(async () => {
+  // Several tests respond 200 and leave the event in the background worker; TRUNCATE in resetDb must not race it.
+  await __drainForTests();
   await resetDb();
   s = installStripeMock('test', testBillingConfig({ modes: { test: { secretKey: fakeKey('sk_test'), webhookSecrets: [SECRET_A, SECRET_B] }, live: null } }));
 });
