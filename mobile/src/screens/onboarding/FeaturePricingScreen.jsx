@@ -1,14 +1,16 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Animated, Easing } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Animated, Easing, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useIsFocused } from '@react-navigation/native';
 import Svg, { Path } from 'react-native-svg';
 import FeatureTourShell from './FeatureTourShell';
 import { Eyebrow } from './tourPrimitives';
 import { useReducedMotion } from './useReducedMotion';
-import { pricing, oldWay, PRICE, derivePricing } from './featureTourContent';
+import { pricing, oldWay, derivePricing } from './featureTourContent';
 import { updateSignupProgress } from '../../shared/store/signupProgress';
 import { useAuthStore } from '../../shared/store/authStore';
+import { useBillingStore } from '../../shared/store/billingStore';
+import { seatRange } from '../../shared/billing/pricing';
 import { colors, fonts, radius, goldButton, withAlpha } from '../../shared/theme';
 
 // Two groups, not eight — the "what you'd pay elsewhere / what you pay here"
@@ -27,18 +29,18 @@ const SLIDE_PX = 32;
  * Skip — it's the screen with a real decision on it (plan, household size),
  * so it only ever proceeds when the user actually presses Continue.
  *
- * NOTE: this screen takes no payment. There is no billing, subscription or
- * in-app-purchase code in the app or the server, so its CTA does what the
- * previous three CTAs do — finishes the flow and drops the user on Home. The
- * plan toggle and household-size stepper are live (the maths is the design's,
- * in featureTourContent.derivePricing) so the screen is ready to wire to a
- * real store transaction later; charging for this would need Apple/Google
- * in-app purchase, not a card form.
+ * Prices are the server's (GET /billing/plans via the billing store); the app holds
+ * no price constants. Payment is wired in the purchase step that follows.
  */
 export default function FeaturePricingScreen({ navigation }) {
+  const status = useBillingStore((s) => s.status);
+  const plans = status?.plans ?? null;
+  const range = plans ? seatRange(plans, status?.memberCount ?? 1) : { min: 5, max: 10, overCap: false };
   const [plan, setPlan] = useState('year');
-  const [size, setSize] = useState(PRICE.includedSeats);
-  const p = derivePricing(plan, size);
+  const [size, setSize] = useState(range.min);
+  useEffect(() => { useBillingStore.getState().refresh(); }, []);
+  useEffect(() => { setSize((s) => Math.min(Math.max(s, range.min), range.max)); }, [range.min, range.max]);
+  const p = plans ? derivePricing(plan, Math.min(size, range.max), plans) : null;
 
   const isFocused = useIsFocused();
   const reduceMotion = useReducedMotion();
@@ -96,6 +98,14 @@ export default function FeaturePricingScreen({ navigation }) {
     useAuthStore.getState().triggerTour();
     useAuthStore.getState().completeSetup();
   };
+
+  if (!p) {
+    return (
+      <FeatureTourShell step={3} navigation={navigation} contentPadding={22} ctaLabel={'Loading prices…'} onContinue={() => {}}>
+        <ActivityIndicator style={{ marginTop: 80 }} color={colors.gold} />
+      </FeatureTourShell>
+    );
+  }
 
   return (
     <FeatureTourShell
@@ -205,15 +215,15 @@ export default function FeaturePricingScreen({ navigation }) {
           <View style={styles.stepper}>
             <StepperButton
               sign="minus"
-              disabled={size <= PRICE.minSeats}
-              onPress={() => setSize((s) => Math.max(PRICE.minSeats, s - 1))}
+              disabled={size <= range.min}
+              onPress={() => setSize((s) => Math.max(range.min, s - 1))}
               label="Remove a member"
             />
             <Text style={styles.stepperValue}>{size}</Text>
             <StepperButton
               sign="plus"
-              disabled={size >= PRICE.maxSeats}
-              onPress={() => setSize((s) => Math.min(PRICE.maxSeats, s + 1))}
+              disabled={size >= range.max}
+              onPress={() => setSize((s) => Math.min(range.max, s + 1))}
               label="Add a member"
             />
           </View>
