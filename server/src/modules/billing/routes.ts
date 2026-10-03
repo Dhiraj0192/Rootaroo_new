@@ -3,7 +3,7 @@ import { authenticate } from '../../shared/middleware/auth';
 import { validate } from '../../shared/middleware/validate';
 import * as ctrl from './controller';
 import { billingReturn } from './returnPage';
-import { checkoutSchema, syncParamsSchema } from './validation';
+import { checkoutSchema, planChangeSchema, syncParamsSchema } from './validation';
 
 const router = Router();
 
@@ -92,6 +92,38 @@ router.post('/checkout', validate(checkoutSchema), ctrl.checkout);
  */
 router.post('/checkout/:sessionId/sync', validate(syncParamsSchema), ctrl.sync);
 router.get('/status', ctrl.status);
+
+/**
+ * @openapi
+ * /billing/portal:
+ *   post:
+ *     tags: [Billing]
+ *     summary: Open the Stripe customer portal (admin only)
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: "{ url }" }
+ *       409: { description: NO_ACTIVE_SUBSCRIPTION }
+ * /billing/plan:
+ *   post:
+ *     tags: [Billing]
+ *     summary: Change household size and/or interval (admin only, Stripe subscriptions only)
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [interval, seats]
+ *             properties:
+ *               interval: { type: string, enum: [month, year] }
+ *               seats: { type: integer, minimum: 5, maximum: 10 }
+ *     responses:
+ *       200: { description: "{ changed, pendingUpdate, hostedInvoiceUrl, entitlement }" }
+ *       409: { description: "SEATS_BELOW_MEMBERS | NO_ACTIVE_SUBSCRIPTION | PURCHASE_METHOD_MISMATCH | PAYMENT_ISSUE" }
+ */
+router.post('/portal', ctrl.portal);
+router.post('/plan', validate(planChangeSchema), ctrl.plan);
 
 export default router;
 

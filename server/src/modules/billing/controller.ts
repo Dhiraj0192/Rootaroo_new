@@ -3,6 +3,8 @@ import { AuthenticatedRequest } from '../../shared/middleware/auth';
 import { loadCallerContext } from './context';
 import { getPlansForMode } from './plans';
 import { createCheckout, getBillingStatus, syncCheckout } from './checkout';
+import { openPortal } from './portal';
+import { changePlan } from './plan';
 import { parseClientContext } from './routing';
 
 export function getUserId(req: Request): string {
@@ -32,4 +34,12 @@ export async function status(req: Request, res: Response, next: NextFunction) {
   try {
     res.status(200).json({ success: true, data: await getBillingStatus(getUserId(req), parseClientContext(req)) });
   } catch (e) { next(e); }
+}
+
+export async function portal(req: Request, res: Response, next: NextFunction) {
+  try { res.status(200).json({ success: true, data: await openPortal(getUserId(req)) }); } catch (e) { next(e); }
+}
+
+export async function plan(req: Request, res: Response, next: NextFunction) {
+  try { res.status(200).json({ success: true, data: await changePlan(getUserId(req), req.body) }); } catch (e) { next(e); }
 }

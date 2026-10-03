@@ -1,5 +1,9 @@
+import { BillingCustomer } from '../../database/models';
 import logger from '../../shared/utils/logger';
 import { getBillingConfig, getStripe } from './config';
+import { requireAdminContext } from './context';
+import { BillingConflictError } from './errors';
+import { livemodeOf } from './mode';
 import type { BillingMode } from './types';
 
 const configIds = new Map<BillingMode, string | null>();
@@ -24,4 +28,11 @@ export async function createPortalUrl(mode: BillingMode, customerId: string): Pr
     ...(configuration ? { configuration } : {}),
   });
   return session.url;
+}
+
+export async function openPortal(userId: string): Promise<{ url: string }> {
+  const ctx = await requireAdminContext(userId);
+  const customer = await BillingCustomer.findOne({ where: { householdId: ctx.household.id, provider: 'stripe', livemode: livemodeOf(ctx.mode) } });
+  if (!customer) throw new BillingConflictError('NO_ACTIVE_SUBSCRIPTION', 'There is no billing account for this household yet');
+  return { url: await createPortalUrl(ctx.mode, customer.providerCustomerId) };
 }
