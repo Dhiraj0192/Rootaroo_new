@@ -19,3 +19,6 @@ npm-debug.*
 # Never commit any env variant (only .env.example is tracked)
 .env.*
 !.env.example
+
+# coverage output
+coverage/
