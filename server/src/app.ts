@@ -30,6 +30,7 @@ import pingRouter from './modules/ping/routes';
 import placeRouter from './modules/place/routes';
 import journalRouter from './modules/journal/routes';
 import adminRouter from './modules/admin/routes';
+import billingAdminRouter from './modules/billing/admin/routes';
 import weatherRouter from './modules/weather/routes';
 import swaggerUi from 'swagger-ui-express';
 import { swaggerSpec } from './config/swagger';
@@ -160,6 +161,7 @@ app.use('/api/v1/places', placeRouter);
 app.use('/api/v1/journal', journalRouter);
 app.use('/api/v1/billing', billingRouter);
 app.use('/api/v1/admin', adminRouter);
+app.use('/api/v1/billing-admin', billingAdminRouter);
 app.use('/api/v1/weather', weatherRouter);
 
 // ── Swagger Docs ──
