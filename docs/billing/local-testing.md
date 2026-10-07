@@ -19,6 +19,8 @@ npm run dev                                       # runs migrations, then tsx wa
 Notes:
 - `.env.impl` is not committed. Do not print or paste it. The shell variables it loads (`ADMIN_BILLING_API_KEY`, `STRIPE_TEST_SECRET_KEY`, ...) are what the curl examples below use.
 - Run every `curl` below in a shell that has loaded `.env.impl` the same way.
+- Billing is off unless `.env.impl` sets `BILLING_ENABLED=true`. Off, there is no paywall and every household reads as
+  `billing_disabled`; set it to test the paywall, checkout and seat cap.
 - `NODE_ENV` is not `production`, so every household resolves to billing mode `test` (sandbox Stripe, `livemode=false`).
 
 ## 2. Run the seed

@@ -84,8 +84,11 @@ Pub/Sub RTDN push, OIDC verified). Each is off (503) until its env vars are set.
   objects with a different tag are ignored by the worker and reconcile.
 - Webhooks and reconcile take the mode from the endpoint/job (`event.livemode`), never from the household.
 - Every billing row stores `livemode`; Redis keys include the mode.
+- `BILLING_ENABLED` (default `false`) is a pre-launch switch. Off: no paywall (entitlement reason `billing_disabled`, 10 seats),
+  no billing jobs, and production starts without live keys. On: everything below applies. It is removed at go-live
+  ([`docs/TRACKER.md`](../TRACKER.md)).
 - Startup refuses: live variables outside production, test keys in live variables and vice versa, missing live keys in
-  production, `BILLING_ENV_TAG` other than `prod` in production, a too-short `ADMIN_BILLING_API_KEY`.
+  production when `BILLING_ENABLED=true`, `BILLING_ENV_TAG` other than `prod` in production, a too-short `ADMIN_BILLING_API_KEY`.
 - Cohorts: `billing_cohort` on the household (`live` default, `test`). Changing it is a staff action (runbook) and is refused
   while an allowed subscription or open checkout exists unless `force`.
 
@@ -117,10 +120,11 @@ Defined in `server/.env.example` (never commit values). Real values live in the 
 | Variable | Dev / CI | Staging | Production |
 |---|---|---|---|
 | `NODE_ENV` | development / test | staging | production |
+| `BILLING_ENABLED` | `true` to test billing (integration tests force it on) | `true` to test billing | `false` until go-live, then `true` |
 | `BILLING_ENV_TAG` | `dev` | `staging` | `prod` (required) |
 | `STRIPE_TEST_SECRET_KEY` | dev sandbox key | staging sandbox key | prod-test sandbox key (test cohort) |
 | `STRIPE_TEST_WEBHOOK_SECRETS` | from `stripe listen` | endpoint secret(s) | endpoint secret(s) |
-| `STRIPE_LIVE_SECRET_KEY`, `STRIPE_LIVE_WEBHOOK_SECRETS` | must be unset | must be unset | required |
+| `STRIPE_LIVE_SECRET_KEY`, `STRIPE_LIVE_WEBHOOK_SECRETS` | must be unset | must be unset | required when `BILLING_ENABLED=true` |
 | `STRIPE_BOOTSTRAP_TEST_KEY`, `STRIPE_BOOTSTRAP_LIVE_KEY` | optional, bootstrap only | optional | optional |
 | `BILLING_PUBLIC_BASE_URL` | defaults to `SERVER_BASE_URL` | https origin | https origin (required) |
 | `ADMIN_BILLING_API_KEY` (32+ chars), `ADMIN_BILLING_IP_ALLOWLIST` | set for staff API | set | set (allowlist recommended) |
@@ -156,8 +160,8 @@ Run targeted files, not whole suites, on constrained machines. All commands from
 
 ## 6. Known limitations and open items
 
-- Adaptive Pricing: Checkout can show prices in the buyer's local currency. If the product must always show the catalog
-  currency, consider creating sessions with `adaptive_pricing.enabled=false`.
+- Checkout charges in USD only: sessions are created with `adaptive_pricing.enabled=false`, so Stripe never converts to the
+  buyer's local currency.
 - Hosted Checkout opens in a browser tab by design (store-policy reasons). Stripe PaymentSheet is a possible follow-up.
 - Store IAP (Apple/Google) can only be fully verified on real devices with sandbox/test accounts.
 - Subscriptions created on Stripe test clocks are not visible to reconciliation; the e2e scripts cover them directly.

@@ -257,6 +257,10 @@ Complete in order; all items are release gates (spec section 15 plus the above r
 - [ ] Alert path verified (a test reconcile summary or alert email reaches `ADMIN_EMAIL`).
 - [ ] One live end-to-end purchase with a real card on an internal household, refunded afterwards; ledger and summary checked.
 - [ ] Runbooks read by the on-call staff.
+- [ ] Switch billing on: set `BILLING_ENABLED=true` with the live keys in place and restart; confirm the startup log shows
+      `enabled=true` and a household without a subscription gets 402.
+- [ ] Pre-launch households: delete them, or move the ones testers keep to cohort `test` (section 5).
+- [ ] Remove the `BILLING_ENABLED` switch from the code in the next commit (see [`docs/TRACKER.md`](../TRACKER.md)).
 
 **Rollback of go-live:** money already taken is not reversed by config. To stop new live sales, set routing to `none` for the affected
 platforms (section 7). Do not remove the live keys in production (startup requires them and webhooks/reconcile for existing subscribers
