@@ -11,7 +11,7 @@ export async function notifyUser(
   title: string,
   body: string,
   data?: Record<string, unknown>,
-  options?: { skipPush?: boolean },
+  options?: { skipPush?: boolean; skipHistory?: boolean },
 ): Promise<void> {
   try {
     await sendToUser(userId, type, title, body, data, options);

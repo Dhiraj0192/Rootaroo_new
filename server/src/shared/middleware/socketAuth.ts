@@ -15,6 +15,7 @@ export interface SocketUserData {
   billingAllowed?: boolean;
   billingCheckedAt?: number;
   billingHouseholdId?: string;
+  viewingConversationId?: string | null;
 }
 
 export interface AuthenticatedSocket extends Socket {

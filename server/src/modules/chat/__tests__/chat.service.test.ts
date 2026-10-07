@@ -48,6 +48,11 @@ jest.mock('../../../database/models', () => {
   };
 });
 
+jest.mock('../push', () => ({
+  broadcastToParticipants: jest.fn().mockResolvedValue(undefined),
+  notifyChatMessage: jest.fn().mockResolvedValue(undefined),
+}));
+
 jest.mock('../../../shared/utils/socket', () => ({
   getIO: jest.fn(() => ({
     to: jest.fn(() => ({

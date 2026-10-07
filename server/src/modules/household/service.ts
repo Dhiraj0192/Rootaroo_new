@@ -258,6 +258,16 @@ export async function joinViaCode(userId: string, body: JoinHouseholdBody): Prom
   // the transaction.
   await addToHouseholdConversation(household.id, userId);
 
+  // Fire-and-forget: a notification failure must never fail the join.
+  void (async () => {
+    const joiner = await User.findByPk(userId);
+    await notificationService.notifyHousehold(
+      household.id, 'member_joined', 'New family member',
+      `${joiner?.displayName || 'Someone'} joined the household`,
+      { type: 'member_joined', userId }, userId,
+    );
+  })().catch((e: Error) => logger.warn('[Push] Member joined notify failed:', e.message));
+
   const memberCount = await HouseholdMember.count({
     where: { householdId: household.id },
   });

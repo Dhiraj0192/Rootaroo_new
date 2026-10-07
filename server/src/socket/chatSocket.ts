@@ -3,6 +3,7 @@ import {
   AuthenticatedSocket,
   requireHouseholdAccess,
 } from '../shared/middleware/socketAuth';
+import { ConversationParticipant } from '../database/models';
 import logger from '../shared/utils/logger';
 import { isSocketEntitled } from '../modules/billing/socketGate';
 
@@ -34,6 +35,20 @@ export function registerChatSocket(io: SocketIOServer): void {
       socket.to(`household:${data.householdId}`).emit('chat:stop-typing', {
         userId: socket.data.userId,
       });
+    });
+
+    // ── Open conversation tracking (suppresses push for the viewer) ──
+    socket.on('chat:viewing', async (data: { conversationId: string }) => {
+      if (!data?.conversationId || typeof data.conversationId !== 'string') return;
+      const participant = await ConversationParticipant.findOne({
+        where: { conversationId: data.conversationId, userId: socket.data.userId },
+      });
+      if (!participant) return;
+      socket.data.viewingConversationId = data.conversationId;
+    });
+
+    socket.on('chat:left', () => {
+      socket.data.viewingConversationId = null;
     });
 
     // ── Message read receipt ──

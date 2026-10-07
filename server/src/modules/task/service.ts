@@ -341,6 +341,13 @@ export async function completeTask(
   task.completedAt = new Date();
   await task.save();
 
+  if (task.createdBy !== userId) {
+    const completerName = assignees.find((a) => a.id === userId)?.displayName || 'Someone';
+    notificationService.sendToUser(task.createdBy, 'task_completed', 'Task done',
+      `${completerName} finished: ${task.title}`, { type: 'task_completed', taskId: task.id as string }
+    ).catch((e: Error) => logger.warn('[Push] Task completed notify failed:', e.message));
+  }
+
   // FR-068: Clone recurring task
   if (task.recurrence !== 'none') {
     const nextDueDate = computeNextDueDate(

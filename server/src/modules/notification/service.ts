@@ -32,6 +32,8 @@ const TYPE_TO_PREFERENCE_FIELD: Partial<Record<string, keyof NotificationPrefere
   ping_response: 'pingRequest',
   calendar: 'calendarEvent',
   chat: 'chatMessage',
+  task_completed: 'taskCompleted',
+  member_joined: 'memberJoined',
 };
 
 // ── Device Token Management ── (DB-backed)
@@ -212,8 +214,9 @@ export async function updatePreferences(
 
 /**
  * Send a push notification to a specific user.
- * Always creates a NotificationHistory record, and delivers via Expo's
- * push service unless `skipPush` is set or the user's preferences opt out.
+ * Creates a NotificationHistory record (unless `skipHistory`, used for chat
+ * so messages don't flood the list), and delivers via Expo's push service
+ * unless `skipPush` is set or the user's preferences opt out.
  */
 export async function sendToUser(
   userId: string,
@@ -221,18 +224,19 @@ export async function sendToUser(
   title: string,
   body?: string,
   data?: Record<string, unknown>,
-  options?: { skipPush?: boolean },
+  options?: { skipPush?: boolean; skipHistory?: boolean },
 ): Promise<void> {
-  // Always persist to history
-  await NotificationHistory.create({
-    id: uuidv4(),
-    userId,
-    type,
-    title,
-    body: body || null,
-    data: data || null,
-    isRead: false,
-  });
+  if (!options?.skipHistory) {
+    await NotificationHistory.create({
+      id: uuidv4(),
+      userId,
+      type,
+      title,
+      body: body || null,
+      data: data || null,
+      isRead: false,
+    });
+  }
 
   // Respect the user's notification preferences before pushing — history
   // is always recorded above regardless, so the item still shows up in
@@ -247,7 +251,9 @@ export async function sendToUser(
   if (!options?.skipPush) {
     const tokens = await getUserTokens(userId);
     if (tokens.length > 0) {
-      sendExpoPush(tokens, title, body || '', (data || {}) as Record<string, string>)
+      // Badge mirrors the in-app unread count.
+      const badge = await NotificationHistory.count({ where: { userId, isRead: false } });
+      sendExpoPush(tokens, title, body || '', (data || {}) as Record<string, string>, { badge })
         .catch((e: Error) => logger.error('[ExpoPush] Delivery failed:', e.message));
     }
   }

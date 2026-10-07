@@ -7,6 +7,7 @@ import { setupAssociations } from './database/models';
 import './config/redis';
 import { startGroceryArchiveJob } from './jobs/grocery-archive';
 import { startEventReminderJob } from './jobs/event-reminder';
+import { startPushReceiptsJob } from './jobs/push-receipts';
 import { startCalendarSyncJob } from './jobs/calendar-sync';
 import { startOverduePointsReductionJob } from './jobs/overdue-points';
 import { startPurgeScheduledDeletionsJob } from './jobs/purge-scheduled-deletions';
@@ -83,6 +84,7 @@ async function start(): Promise<void> {
     // Start scheduled jobs
     startGroceryArchiveJob();
     startEventReminderJob();
+    startPushReceiptsJob();
     startCalendarSyncJob();
     startOverduePointsReductionJob();
     startPurgeScheduledDeletionsJob();
