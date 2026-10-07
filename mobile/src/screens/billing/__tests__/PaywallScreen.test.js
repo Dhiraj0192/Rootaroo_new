@@ -113,4 +113,15 @@ describe('PaywallScreen', () => {
     fireEvent.press(getByLabelText('Subscribe'));
     expect(await findByText('Confirming your payment…')).toBeTruthy();
   });
+
+  it('keeps settings, account deletion and help reachable from the paywall', () => {
+    setStatus();
+    const navigation = { navigate: jest.fn() };
+    const { getByLabelText } = render(<PaywallScreen navigation={navigation} />);
+    for (const [label, screen] of [['Household settings', 'HouseholdSettings'], ['Profile and account', 'EditProfile'],
+      ['Delete account', 'AccountDeletion'], ['Help center', 'HelpCenter'], ['Privacy policy', 'PrivacyPolicy']]) {
+      fireEvent.press(getByLabelText(label));
+      expect(navigation.navigate).toHaveBeenLastCalledWith(screen);
+    }
+  });
 });

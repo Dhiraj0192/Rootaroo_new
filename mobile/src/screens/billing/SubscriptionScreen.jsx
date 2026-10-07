@@ -8,11 +8,15 @@ import { openBillingPortal, describeCheckoutError, restorePurchases } from '../.
 import { manageStoreSubscription } from '../../shared/billing/iap';
 import { formatCents, seatRange } from '../../shared/billing/pricing';
 import PlanPicker from './components/PlanPicker';
-import { colors, fonts } from '../../shared/theme';
+import { colors, fonts, radius } from '../../shared/theme';
 
+const NO_SUB_TEXT = {
+  test_cohort: 'Test household: no subscription needed.',
+  billing_disabled: "Subscriptions aren't open yet. Everything is free for now.",
+};
 const PROVIDER_LABEL = { stripe: 'Paid with card (Stripe)', apple: 'Paid through the App Store', google: 'Paid through Google Play' };
 
-export default function SubscriptionScreen() {
+export default function SubscriptionScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const status = useBillingStore((s) => s.status);
   const [editing, setEditing] = useState(false);
@@ -61,7 +65,12 @@ export default function SubscriptionScreen() {
   const date = sub?.currentPeriodEnd ? new Date(sub.currentPeriodEnd).toLocaleDateString() : null;
   return (
     <ScrollView style={styles.screen} contentContainerStyle={{ paddingTop: insets.top + 16, paddingBottom: insets.bottom + 32, paddingHorizontal: 20 }}>
-      <Text style={styles.title}>Subscription</Text>
+      <View style={styles.header}>
+        <TouchableOpacity style={styles.backBtn} onPress={() => navigation?.goBack()} accessibilityRole="button" accessibilityLabel="Back">
+          <Text style={styles.backIcon}>‹</Text>
+        </TouchableOpacity>
+        <Text style={styles.title}>Subscription</Text>
+      </View>
       {sub ? (
         <View style={styles.card}>
           <Text style={styles.big}>{`${sub.seats} members · ${sub.interval === 'year' ? 'yearly' : 'monthly'}`}</Text>
@@ -72,7 +81,7 @@ export default function SubscriptionScreen() {
           {sub.pendingUpdate ? <Text style={styles.warn}>A plan change is waiting for payment.</Text> : null}
         </View>
       ) : (
-        <Text style={styles.line}>{status.entitlement.reason === 'test_cohort' ? 'Test household: no subscription needed.' : 'No subscription yet.'}</Text>
+        <Text style={styles.line}>{NO_SUB_TEXT[status.entitlement.reason] ?? 'No subscription yet.'}</Text>
       )}
 
       {status.isAdmin ? (
@@ -104,7 +113,14 @@ function Action({ label, onPress, disabled }) {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.canvas },
-  title: { fontFamily: fonts.display, color: colors.ink, fontSize: 26, fontWeight: '800', marginBottom: 16 },
+  header: { flexDirection: 'row', alignItems: 'center', gap: 14, marginBottom: 16 },
+  backBtn: {
+    width: 42, height: 42, borderRadius: radius.card, backgroundColor: colors.surface,
+    borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center',
+  },
+  // The glyph sits optically right of centre in this face.
+  backIcon: { fontSize: 26, fontWeight: '700', color: colors.ink, lineHeight: 28, marginLeft: -2 },
+  title: { fontFamily: fonts.display, color: colors.ink, fontSize: 26, fontWeight: '800' },
   card: { backgroundColor: colors.canvasGray, borderRadius: 18, padding: 18, marginTop: 8 },
   big: { fontFamily: fonts.bodyBold, color: colors.ink, fontSize: 18, fontWeight: '800' },
   line: { fontFamily: fonts.bodySemiBold, color: colors.textSecondary, marginTop: 8 },

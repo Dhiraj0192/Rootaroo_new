@@ -84,4 +84,18 @@ describe('SubscriptionScreen', () => {
     expect(queryByText('Manage subscription')).toBeNull();
     expect(queryByText('Change plan')).toBeNull();
   });
+
+  it('has a back button like the other More screens', () => {
+    useBillingStore.setState({ status: active() });
+    const navigation = { goBack: jest.fn() };
+    const { getByLabelText } = render(<SubscriptionScreen navigation={navigation} />);
+    fireEvent.press(getByLabelText('Back'));
+    expect(navigation.goBack).toHaveBeenCalled();
+  });
+
+  it('says subscriptions are not open yet while billing is switched off', () => {
+    useBillingStore.setState({ status: statusFixture({ entitlement: { allowed: true, reason: 'billing_disabled', seatsAllowed: 10 }, subscription: null }) });
+    const { getByText } = render(<SubscriptionScreen />);
+    expect(getByText("Subscriptions aren't open yet. Everything is free for now.")).toBeTruthy();
+  });
 });

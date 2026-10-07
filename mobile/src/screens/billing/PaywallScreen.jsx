@@ -9,9 +9,10 @@ import { startPurchase, restorePurchases, canStartPurchase, STORE_METHODS, openB
 import { fetchStorePrices } from '../../shared/billing/iap';
 import { TERMS_URL, PRIVACY_URL } from '../../shared/billing/legalLinks';
 import PlanPicker from './components/PlanPicker';
+import PaywallMenu from './components/PaywallMenu';
 import { colors, fonts } from '../../shared/theme';
 
-export default function PaywallScreen() {
+export default function PaywallScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const status = useBillingStore((s) => s.status);
   const plans = status?.plans;
@@ -68,7 +69,9 @@ export default function PaywallScreen() {
       {!plans ? <ActivityIndicator color={colors.gold} style={{ marginTop: 40 }} /> : (
         <View style={{ marginTop: 24 }}>
           {range.overCap ? (
-            <Text style={styles.warn}>{`Your household has ${status.memberCount} members, and the largest plan is ${plans.seatsMax}. Remove members in Household settings to subscribe.`}</Text>
+            <TouchableOpacity onPress={() => navigation?.navigate('HouseholdSettings')} accessibilityRole="link">
+              <Text style={styles.warn}>{`Your household has ${status.memberCount} members, and the largest plan is ${plans.seatsMax}. Remove members in Household settings to subscribe.`}</Text>
+            </TouchableOpacity>
           ) : (
             <PlanPicker plans={plans} interval={choice.interval} seats={seats} range={range} onChange={setChoice} storePrices={storePrices} />
           )}
@@ -94,6 +97,7 @@ export default function PaywallScreen() {
       ) : null}
 
       <TouchableOpacity onPress={restore} accessibilityRole="button" accessibilityLabel="Restore purchases"><Text style={styles.link}>Restore purchases</Text></TouchableOpacity>
+      <PaywallMenu navigation={navigation} />
       <View style={styles.legal}>
         <TouchableOpacity onPress={() => WebBrowser.openBrowserAsync(TERMS_URL)}><Text style={styles.small}>Terms</Text></TouchableOpacity>
         <TouchableOpacity onPress={() => WebBrowser.openBrowserAsync(PRIVACY_URL)}><Text style={styles.small}>Privacy</Text></TouchableOpacity>

@@ -136,6 +136,12 @@ function PaywallNavigator() {
       {isAdmin
         ? <PaywallStack.Screen name="Paywall" component={PaywallScreen} />
         : <PaywallStack.Screen name="PaywallMember" component={PaywallMemberScreen} />}
+      {/* Reachable without a subscription (PaywallMenu): settings, account deletion, help. */}
+      <PaywallStack.Screen name="HouseholdSettings" component={HouseholdSettingsScreen} />
+      <PaywallStack.Screen name="EditProfile" component={EditProfileScreen} />
+      <PaywallStack.Screen name="AccountDeletion" component={AccountDeletionScreen} />
+      <PaywallStack.Screen name="HelpCenter" component={HelpCenterScreen} />
+      <PaywallStack.Screen name="PrivacyPolicy" component={PrivacyPolicyScreen} />
     </PaywallStack.Navigator>
   );
 }

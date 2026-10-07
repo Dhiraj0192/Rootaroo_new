@@ -17,4 +17,12 @@ describe('PaywallMemberScreen', () => {
     fireEvent.press(getByText('Retry'));
     expect(refresh).toHaveBeenCalled();
   });
+
+  it('lets a member reach account deletion while paywalled', () => {
+    useBillingStore.setState({ status: statusFixture({ isAdmin: false, adminNames: [] }) });
+    const navigation = { navigate: jest.fn() };
+    const { getByLabelText } = render(<PaywallMemberScreen navigation={navigation} />);
+    fireEvent.press(getByLabelText('Delete account'));
+    expect(navigation.navigate).toHaveBeenCalledWith('AccountDeletion');
+  });
 });
