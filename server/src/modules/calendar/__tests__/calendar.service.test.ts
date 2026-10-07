@@ -37,6 +37,7 @@ jest.mock('../../../database/models', () => ({
     findAll: jest.fn(),
     findOne: jest.fn(),
     findByPk: jest.fn(),
+    update: jest.fn(),
   },
   EventInvitee: {
     bulkCreate: jest.fn(),
@@ -195,6 +196,23 @@ describe('updateEvent (FR-187)', () => {
     expect(result.title).toBe('Admin edit');
   });
 
+  it('re-arms the reminder when the date or start time changes', async () => {
+    const event = fakeEvent({ reminderSentAt: new Date('2026-08-03T17:00:00Z') });
+    (modelsMock.CalendarEvent.findOne as jest.Mock).mockResolvedValue(event);
+    (modelsMock.CalendarEvent.findByPk as jest.Mock).mockResolvedValue(event);
+    await updateEvent(eventId, userId, { startsAt: '2026-08-03T19:00:00.000Z', endsAt: '2026-08-03T21:00:00.000Z' });
+    expect(event.reminderSentAt).toBeNull();
+  });
+
+  it('keeps the reminder state when only the title changes', async () => {
+    const sentAt = new Date('2026-08-03T17:00:00Z');
+    const event = fakeEvent({ reminderSentAt: sentAt });
+    (modelsMock.CalendarEvent.findOne as jest.Mock).mockResolvedValue(event);
+    (modelsMock.CalendarEvent.findByPk as jest.Mock).mockResolvedValue(event);
+    await updateEvent(eventId, userId, { title: 'Renamed' });
+    expect(event.reminderSentAt).toBe(sentAt);
+  });
+
   it('blocks a non-creator non-admin from editing (FR-188)', async () => {
     const event = fakeEvent({ createdBy: adminId }); // creator is admin, not caller
     (modelsMock.CalendarEvent.findOne as jest.Mock).mockResolvedValue(event);
@@ -285,6 +303,37 @@ describe('notifyUpcomingEvents (FR-186)', () => {
   beforeEach(() => {
     jest.useFakeTimers();
     jest.setSystemTime(FIXED_NOW);
+    (modelsMock.CalendarEvent.update as jest.Mock).mockResolvedValue([1]);
+  });
+
+  it('only considers events whose reminder has not been sent', async () => {
+    (modelsMock.CalendarEvent.findAll as jest.Mock).mockResolvedValue([]);
+    await notifyUpcomingEvents();
+    expect(modelsMock.CalendarEvent.findAll).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ reminderSentAt: null }) }),
+    );
+  });
+
+  it('claims each reminder atomically before sending, so overlapping runs send it once', async () => {
+    (modelsMock.CalendarEvent.findAll as jest.Mock).mockResolvedValue([
+      fakeEvent({ title: 'Standup', eventDate: '2026-08-10', startTime: '23:45:00' }),
+    ]);
+    const sent = await notifyUpcomingEvents();
+    expect(sent).toBe(1);
+    expect(modelsMock.CalendarEvent.update).toHaveBeenCalledWith(
+      { reminderSentAt: FIXED_NOW },
+      { where: { id: eventId, reminderSentAt: null } },
+    );
+  });
+
+  it('skips an event another run already claimed', async () => {
+    (modelsMock.CalendarEvent.findAll as jest.Mock).mockResolvedValue([
+      fakeEvent({ title: 'Standup', eventDate: '2026-08-10', startTime: '23:45:00' }),
+    ]);
+    (modelsMock.CalendarEvent.update as jest.Mock).mockResolvedValue([0]);
+    const sent = await notifyUpcomingEvents();
+    expect(sent).toBe(0);
+    expect(notifications.notifyHousehold).not.toHaveBeenCalled();
   });
 
   afterEach(() => {

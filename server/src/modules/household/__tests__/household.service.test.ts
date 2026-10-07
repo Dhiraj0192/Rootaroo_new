@@ -44,7 +44,7 @@ jest.mock('../../../shared/services/notifications', () => ({
   notifyHousehold: jest.fn().mockResolvedValue(undefined),
   notifyUser: jest.fn().mockResolvedValue(undefined),
 }));
-import { notifyUser } from '../../../shared/services/notifications';
+import { notifyUser, notifyHousehold } from '../../../shared/services/notifications';
 
 jest.mock('../../billing/entitlement', () => ({
   assertSeatAvailable: jest.fn().mockResolvedValue(undefined),
@@ -175,6 +175,23 @@ describe('Household Service — Invitations', () => {
       await joinViaCode(otherUserId, { code: 'INVITE99' });
       expect(assertSeatAvailable).toHaveBeenCalledWith(householdId, expect.anything());
       expect(clearEntitlementCache).toHaveBeenCalledWith(householdId);
+    });
+
+    it('tells the rest of the household that someone joined', async () => {
+      arrangeValidInvite();
+      (models.User.findByPk as jest.Mock).mockResolvedValue({ id: otherUserId, displayName: 'Mina' });
+      await joinViaCode(otherUserId, { code: 'INVITE99' });
+      expect(notifyHousehold).toHaveBeenCalledWith(
+        householdId, 'member_joined', 'New family member', 'Mina joined the household',
+        { type: 'member_joined', userId: otherUserId }, otherUserId,
+      );
+    });
+
+    it('does not announce a join that failed', async () => {
+      arrangeValidInvite();
+      (assertSeatAvailable as jest.Mock).mockRejectedValueOnce(new PaymentRequiredError('SEAT_LIMIT', 'full'));
+      await expect(joinViaCode(otherUserId, { code: 'INVITE99' })).rejects.toBeTruthy();
+      expect(notifyHousehold).not.toHaveBeenCalledWith(householdId, 'member_joined', expect.anything(), expect.anything(), expect.anything(), expect.anything());
     });
 
     it('propagates 402 SEAT_LIMIT and creates no membership', async () => {

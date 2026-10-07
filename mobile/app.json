@@ -52,6 +52,12 @@
       "expo-notifications",
       "expo-file-system",
       [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Rootaroo uses Face ID to unlock your journal."
+        }
+      ],
+      [
         "expo-location",
         {
           "locationWhenInUsePermission": "Rootaroo uses your location when you check in or answer a household ping. It is never tracked in the background."
