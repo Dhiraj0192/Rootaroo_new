@@ -3,6 +3,7 @@ import { chatApi } from '../api/chat';
 
 export const useChatStore = create((set, get) => ({
   messages: [],
+  activeConversationId: null,
   cursor: null,
   hasMore: true,
   loading: false,
@@ -13,7 +14,7 @@ export const useChatStore = create((set, get) => ({
   replyTo: null,
 
   fetchMessages: async (conversationId) => {
-    set({ loading: true, error: null, messages: [], cursor: null, hasMore: true });
+    set({ loading: true, error: null, messages: [], cursor: null, hasMore: true, activeConversationId: conversationId });
     try {
       const data = await chatApi.list({ conversationId, limit: 30 });
       set({
@@ -133,6 +134,8 @@ export const useChatStore = create((set, get) => ({
 
   prependMessage: (message) => {
     set((state) => {
+      // The socket delivers every conversation's messages; only the open one belongs here.
+      if (state.activeConversationId && message.conversationId !== state.activeConversationId) return state;
       // Prevent duplicates from socket echo-back
       if (state.messages.some((m) => m.id === message.id)) return state;
       return { messages: [message, ...state.messages] };

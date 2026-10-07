@@ -2,6 +2,8 @@ import { getSocket } from '../socket';
 import { useChatStore } from '../store/chatStore';
 
 let listenersAttached = false;
+let viewingConversationId = null;
+let viewingListenerSocket = null;
 
 export function registerChatSocket() {
   const socket = getSocket();
@@ -59,4 +61,31 @@ export function unregisterChatSocket() {
   socket.off('reaction_removed');
   socket.off('chat:typing');
   socket.off('chat:stop-typing');
+}
+
+// Tells the server which conversation is open so it can skip pushes for it.
+export function setViewingConversation(conversationId) {
+  viewingConversationId = conversationId || null;
+  const socket = getSocket();
+  if (!socket) return;
+
+  if (viewingListenerSocket !== socket) {
+    viewingListenerSocket = socket;
+    socket.on('connect', () => {
+      if (viewingConversationId) {
+        socket.emit('chat:viewing', { conversationId: viewingConversationId });
+      }
+    });
+  }
+
+  if (viewingConversationId) {
+    socket.emit('chat:viewing', { conversationId: viewingConversationId });
+  } else {
+    socket.emit('chat:left');
+  }
+}
+
+export function __resetChatViewingForTests() {
+  viewingConversationId = null;
+  viewingListenerSocket = null;
 }

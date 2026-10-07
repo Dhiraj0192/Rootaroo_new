@@ -1,5 +1,6 @@
 import React, { useEffect, useCallback, useRef, useMemo, useState } from 'react';
 import {
+  AppState,
   View,
   Text,
   StyleSheet,
@@ -15,10 +16,10 @@ import {
 } from 'react-native';
 import { showAlert } from '../shared/services/themedAlert';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import * as Clipboard from 'expo-clipboard';
 import { useChatStore } from '../shared/store/chatStore';
-import { registerChatSocket, unregisterChatSocket } from '../shared/socket/chatSocket';
+import { registerChatSocket, unregisterChatSocket, setViewingConversation } from '../shared/socket/chatSocket';
 import { connectSocket } from '../shared/socket';
 import { useAuthStore } from '../shared/store/authStore';
 import { colors, fonts, goldButton, radius, withAlpha } from '../shared/theme';
@@ -200,6 +201,26 @@ export default function ChatScreen({ route }) {
   const [editingMessage, setEditingMessage] = useState(null);
   const [previewMedia, setPreviewMedia] = useState(null);
   const [showScrollButton, setShowScrollButton] = useState(false);
+  // Server skips pushes for the conversation on screen. Cleared while backgrounded.
+  const isFocusedRef = useRef(false);
+  useFocusEffect(
+    useCallback(() => {
+      isFocusedRef.current = true;
+      setViewingConversation(conversationId);
+      return () => {
+        isFocusedRef.current = false;
+        setViewingConversation(null);
+      };
+    }, [conversationId]),
+  );
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (s) => {
+      if (s === 'background') setViewingConversation(null);
+      else if (s === 'active' && isFocusedRef.current) setViewingConversation(conversationIdRef.current);
+    });
+    return () => sub.remove();
+  }, []);
+
   useEffect(() => {
     conversationIdRef.current = conversationId;
     if (token) {

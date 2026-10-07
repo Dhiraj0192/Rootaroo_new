@@ -17,6 +17,7 @@ import SubscriptionScreen from '../screens/billing/SubscriptionScreen';
 import GraceBanner from '../screens/billing/components/GraceBanner';
 import { connectSocket, disconnectSocket } from '../shared/socket';
 import { registerForPushNotificationsAsync } from '../shared/pushNotifications';
+import { syncBadge } from '../shared/notificationRouting';
 import SplashScreen from '../screens/SplashScreen';
 import WelcomeScreen from '../screens/WelcomeScreen';
 import ChooseMethodScreen from '../screens/ChooseMethodScreen';
@@ -599,6 +600,13 @@ export default function RootNavigator() {
   // the session's token still exists.
   useEffect(() => {
     if (isAuthenticated) registerForPushNotificationsAsync();
+  }, [isAuthenticated]);
+
+  // Badge follows the server's unread count whenever the app comes forward.
+  useEffect(() => {
+    if (!isAuthenticated) return undefined;
+    const sub = AppState.addEventListener('change', (s) => { if (s === 'active') syncBadge(); });
+    return () => sub.remove();
   }, [isAuthenticated]);
 
   // Re-lock the journal after a minute in the background.
