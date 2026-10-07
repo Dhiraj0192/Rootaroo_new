@@ -1,5 +1,6 @@
 'use strict';
 
+const { createTableIfMissing, addIndexIfMissing } = require('../migrationHelpers');
 /** Spec 5.6, 5.8-5.10: ledger, price notices, reconciliation, audit log. */
 const timestamps = (Sequelize) => ({
   created_at: { type: Sequelize.DATE, allowNull: false, defaultValue: Sequelize.literal('CURRENT_TIMESTAMP') },
@@ -8,7 +9,7 @@ const timestamps = (Sequelize) => ({
 
 module.exports = {
   async up(queryInterface, Sequelize) {
-    await queryInterface.createTable('billing_transactions', {
+    await createTableIfMissing(queryInterface, 'billing_transactions', {
       id: { type: Sequelize.UUID, defaultValue: Sequelize.UUIDV4, primaryKey: true },
       provider: { type: Sequelize.ENUM('stripe', 'apple', 'google'), allowNull: false },
       livemode: { type: Sequelize.BOOLEAN, allowNull: false },
@@ -36,12 +37,12 @@ module.exports = {
       last_event_id: { type: Sequelize.STRING(255), allowNull: true },
       ...timestamps(Sequelize),
     });
-    await queryInterface.addIndex('billing_transactions', ['provider', 'livemode', 'type', 'provider_object_id'], { unique: true, name: 'uq_billing_transactions_identity' });
-    await queryInterface.addIndex('billing_transactions', ['livemode', 'occurred_at'], { name: 'idx_billing_transactions_mode_time' });
-    await queryInterface.addIndex('billing_transactions', ['household_id', 'occurred_at'], { name: 'idx_billing_transactions_household_time' });
-    await queryInterface.addIndex('billing_transactions', ['user_id'], { name: 'idx_billing_transactions_user' });
+    await addIndexIfMissing(queryInterface, 'billing_transactions', ['provider', 'livemode', 'type', 'provider_object_id'], { unique: true, name: 'uq_billing_transactions_identity' });
+    await addIndexIfMissing(queryInterface, 'billing_transactions', ['livemode', 'occurred_at'], { name: 'idx_billing_transactions_mode_time' });
+    await addIndexIfMissing(queryInterface, 'billing_transactions', ['household_id', 'occurred_at'], { name: 'idx_billing_transactions_household_time' });
+    await addIndexIfMissing(queryInterface, 'billing_transactions', ['user_id'], { name: 'idx_billing_transactions_user' });
 
-    await queryInterface.createTable('billing_price_notices', {
+    await createTableIfMissing(queryInterface, 'billing_price_notices', {
       id: { type: Sequelize.UUID, defaultValue: Sequelize.UUIDV4, primaryKey: true },
       subscription_id: { type: Sequelize.UUID, allowNull: false, references: { model: 'billing_subscriptions', key: 'id' }, onUpdate: 'CASCADE', onDelete: 'RESTRICT' },
       from_price_id: { type: Sequelize.STRING(255), allowNull: false },
@@ -53,9 +54,9 @@ module.exports = {
       reason: { type: Sequelize.STRING(500), allowNull: true },
       ...timestamps(Sequelize),
     });
-    await queryInterface.addIndex('billing_price_notices', ['subscription_id', 'to_price_set'], { unique: true, name: 'uq_billing_price_notices_sub_set' });
+    await addIndexIfMissing(queryInterface, 'billing_price_notices', ['subscription_id', 'to_price_set'], { unique: true, name: 'uq_billing_price_notices_sub_set' });
 
-    await queryInterface.createTable('billing_reconciliation_runs', {
+    await createTableIfMissing(queryInterface, 'billing_reconciliation_runs', {
       id: { type: Sequelize.UUID, defaultValue: Sequelize.UUIDV4, primaryKey: true },
       livemode: { type: Sequelize.BOOLEAN, allowNull: false },
       kind: { type: Sequelize.ENUM('daily', 'weekly', 'manual'), allowNull: false },
@@ -66,7 +67,7 @@ module.exports = {
       ...timestamps(Sequelize),
     });
 
-    await queryInterface.createTable('billing_reconciliation_items', {
+    await createTableIfMissing(queryInterface, 'billing_reconciliation_items', {
       id: { type: Sequelize.UUID, defaultValue: Sequelize.UUIDV4, primaryKey: true },
       run_id: { type: Sequelize.UUID, allowNull: true, references: { model: 'billing_reconciliation_runs', key: 'id' }, onUpdate: 'CASCADE', onDelete: 'SET NULL' },
       livemode: { type: Sequelize.BOOLEAN, allowNull: false },
@@ -82,10 +83,10 @@ module.exports = {
       resolved_at: { type: Sequelize.DATE, allowNull: true },
       ...timestamps(Sequelize),
     });
-    await queryInterface.addIndex('billing_reconciliation_items', ['resolution', 'created_at'], { name: 'idx_billing_recon_items_resolution' });
-    await queryInterface.addIndex('billing_reconciliation_items', ['kind', 'provider_object_id'], { name: 'idx_billing_recon_items_kind_object' });
+    await addIndexIfMissing(queryInterface, 'billing_reconciliation_items', ['resolution', 'created_at'], { name: 'idx_billing_recon_items_resolution' });
+    await addIndexIfMissing(queryInterface, 'billing_reconciliation_items', ['kind', 'provider_object_id'], { name: 'idx_billing_recon_items_kind_object' });
 
-    await queryInterface.createTable('admin_audit_log', {
+    await createTableIfMissing(queryInterface, 'admin_audit_log', {
       id: { type: Sequelize.UUID, defaultValue: Sequelize.UUIDV4, primaryKey: true },
       surface: { type: Sequelize.ENUM('admin', 'billing-admin'), allowNull: false },
       key_label: { type: Sequelize.STRING(64), allowNull: false },
@@ -97,7 +98,7 @@ module.exports = {
       ip: { type: Sequelize.STRING(64), allowNull: true },
       created_at: { type: Sequelize.DATE, allowNull: false, defaultValue: Sequelize.literal('CURRENT_TIMESTAMP') },
     });
-    await queryInterface.addIndex('admin_audit_log', ['surface', 'created_at'], { name: 'idx_admin_audit_log_surface_time' });
+    await addIndexIfMissing(queryInterface, 'admin_audit_log', ['surface', 'created_at'], { name: 'idx_admin_audit_log_surface_time' });
   },
 
   async down(queryInterface) {

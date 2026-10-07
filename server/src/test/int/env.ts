@@ -9,6 +9,7 @@ if (!process.env.DB_NAME.endsWith('_test')) {
   throw new Error(`Refusing to run integration tests against ${process.env.DB_NAME}`);
 }
 process.env.BILLING_ENV_TAG = process.env.BILLING_ENV_TAG || 'dev';
+process.env.BILLING_ENABLED = 'true';
 // Integration tests never call Stripe: tests install a mock client (installStripeMock).
 process.env.STRIPE_TEST_SECRET_KEY = ['sk', 'test', 'integrationharness0000'].join('_');
 process.env.STRIPE_TEST_WEBHOOK_SECRETS = ['whsec', 'integrationharness0000'].join('_');

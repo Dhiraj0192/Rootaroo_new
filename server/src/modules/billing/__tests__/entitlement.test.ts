@@ -35,6 +35,15 @@ describe('computeEntitlement (§7.1)', () => {
     }
   }
 
+  it('BILLING_ENABLED off -> every household allowed with 10 seats; omitted means enforce', () => {
+    for (const cohort of ['live', 'test'] as const) {
+      expect(computeEntitlement({ cohort, mode: 'live', subscriptions: [], now: NOW, billingEnabled: false }))
+        .toEqual({ allowed: true, reason: 'billing_disabled', mode: 'live', subscription: null, graceUntil: null, seatsAllowed: 10 });
+    }
+    expect(computeEntitlement({ cohort: 'live', mode: 'live', subscriptions: [], now: NOW, billingEnabled: true }).allowed).toBe(false);
+    expect(computeEntitlement({ cohort: 'live', mode: 'live', subscriptions: [], now: NOW }).allowed).toBe(false);
+  });
+
   it('no subscription -> subscription_required with 5 seats', () => {
     expect(computeEntitlement({ cohort: 'live', mode: 'live', subscriptions: [], now: NOW }))
       .toEqual({ allowed: false, reason: 'subscription_required', mode: 'live', subscription: null, graceUntil: null, seatsAllowed: 5 });

@@ -154,7 +154,8 @@ async function createCheckoutLocked(ctx: CallerContext, body: CheckoutBody, now:
   let session: Stripe.Checkout.Session;
   try {
     // Parameters verified against https://docs.stripe.com/api/checkout/sessions/create.md:
-    // origin_context (mobile_app|web), integration_identifier, expires_at (30 min to 24 h), custom_text.submit.
+    // origin_context (mobile_app|web), integration_identifier, expires_at (30 min to 24 h), custom_text.submit,
+    // adaptive_pricing (off: Checkout always charges in USD, never converts to the buyer's local currency).
     session = await stripe.checkout.sessions.create({
       mode: 'subscription',
       customer: stripeCustomerId,
@@ -165,6 +166,7 @@ async function createCheckoutLocked(ctx: CallerContext, body: CheckoutBody, now:
       origin_context: 'mobile_app',
       expires_at: expiresAt,
       allow_promotion_codes: false,
+      adaptive_pricing: { enabled: false },
       ...(cfg.requireTosConsent ? { consent_collection: { terms_of_service: 'required' as const } } : {}),
       custom_text: { submit: { message: autoRenewDisclosure(price.amount, body.interval) } },
       success_url: `${cfg.publicBaseUrl}/api/v1/billing/return/success?session_id={CHECKOUT_SESSION_ID}`,

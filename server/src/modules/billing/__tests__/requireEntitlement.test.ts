@@ -5,10 +5,15 @@ jest.mock('../../../database/models', () => ({
 }));
 import * as models from '../../../database/models';
 import { requireEntitlement } from '../entitlement';
+import { __setBillingConfigForTests } from '../config';
+import { testBillingConfig } from '../../../test/billing/config';
 
 const run = (req: any) => new Promise<unknown>((resolve) => requireEntitlement(req, {} as any, resolve));
 
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => {
+  jest.clearAllMocks();
+  __setBillingConfigForTests(testBillingConfig());
+});
 
 describe('requireEntitlement', () => {
   const req = () => ({ user: { userId: 'u1' } });
@@ -32,5 +37,15 @@ describe('requireEntitlement', () => {
     const r: any = req();
     expect(await run(r)).toBeUndefined();
     expect(r.billing).toMatchObject({ householdId: 'h1', role: 'member', entitlement: { reason: 'test_cohort' } });
+  });
+
+  it('lets a live household without a subscription through when BILLING_ENABLED is off', async () => {
+    __setBillingConfigForTests(testBillingConfig({ enabled: false }));
+    (models.HouseholdMember.findOne as jest.Mock).mockResolvedValue({ householdId: 'h1', role: 'admin' });
+    (models.Household.findByPk as jest.Mock).mockResolvedValue({ id: 'h1', billingCohort: 'live' });
+    (models.BillingSubscription.findAll as jest.Mock).mockResolvedValue([]);
+    const r: any = req();
+    expect(await run(r)).toBeUndefined();
+    expect(r.billing).toMatchObject({ entitlement: { allowed: true, reason: 'billing_disabled', seatsAllowed: 10 } });
   });
 });

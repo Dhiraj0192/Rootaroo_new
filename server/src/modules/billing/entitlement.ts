@@ -4,6 +4,7 @@ import { Household, BillingSubscription, HouseholdMember } from '../../database/
 import { AuthenticatedRequest } from '../../shared/middleware/auth';
 import { NotFoundError } from '../../shared/utils/errors';
 import { NoHouseholdError, PaymentRequiredError } from './errors';
+import { getBillingConfig } from './config';
 import { cacheDel, cacheGetJson, cacheSetJson, entitlementKey } from './cache';
 import { SEATS_INCLUDED, SEATS_MAX } from './catalog';
 import { livemodeOf, resolveMode } from './mode';
@@ -41,6 +42,8 @@ function view(s: SubscriptionSnapshot): EntitlementSubscription {
 
 export function computeEntitlement(input: {
   cohort: BillingCohort; mode: BillingMode; subscriptions: SubscriptionSnapshot[]; now: Date;
+  /** BILLING_ENABLED; omitted means enforce. */
+  billingEnabled?: boolean;
 }): Entitlement {
   const { cohort, mode, now } = input;
   const candidates = input.subscriptions
@@ -49,6 +52,10 @@ export function computeEntitlement(input: {
   const healthy = candidates.find((s) => s.status === 'active' || s.status === 'trialing');
   const pastDue = candidates.find((s) => s.status === 'past_due');
 
+  if (input.billingEnabled === false) {
+    const best = healthy ?? pastDue;
+    return { allowed: true, reason: 'billing_disabled', mode, subscription: best ? view(best) : null, graceUntil: null, seatsAllowed: SEATS_MAX };
+  }
   if (cohort === 'test') {
     const best = healthy ?? pastDue;
     return { allowed: true, reason: 'test_cohort', mode, subscription: best ? view(best) : null, graceUntil: null, seatsAllowed: SEATS_MAX };
@@ -77,7 +84,7 @@ export async function getEntitlement(householdId: string, opts: { bypassCache?: 
   const rows = await BillingSubscription.findAll({
     where: { householdId, livemode: livemodeOf(mode), status: { [Op.in]: [...ALLOWED_STATUSES] } },
   });
-  const ent = computeEntitlement({ cohort: household.billingCohort, mode, subscriptions: rows.map(toSnapshot), now: new Date() });
+  const ent = computeEntitlement({ cohort: household.billingCohort, mode, subscriptions: rows.map(toSnapshot), now: new Date(), billingEnabled: getBillingConfig().enabled });
   await cacheSetJson(key, ent, ENTITLEMENT_TTL_SEC);
   return ent;
 }
@@ -96,7 +103,7 @@ export async function isEntitledBatch(householdIds: string[], now: Date = new Da
   for (const h of households) {
     const mode = resolveMode(h);
     const mine = subs.filter((s) => s.householdId === h.id && s.livemode === livemodeOf(mode)).map(toSnapshot);
-    if (computeEntitlement({ cohort: h.billingCohort, mode, subscriptions: mine, now }).allowed) allowed.add(h.id);
+    if (computeEntitlement({ cohort: h.billingCohort, mode, subscriptions: mine, now, billingEnabled: getBillingConfig().enabled }).allowed) allowed.add(h.id);
   }
   return allowed;
 }
@@ -132,7 +139,7 @@ export async function seatsAllowedInTransaction(householdId: string, transaction
     where: { householdId, livemode: livemodeOf(mode), status: { [Op.in]: [...ALLOWED_STATUSES] } },
     transaction,
   });
-  const ent = computeEntitlement({ cohort: household.billingCohort, mode, subscriptions: rows.map(toSnapshot), now: new Date() });
+  const ent = computeEntitlement({ cohort: household.billingCohort, mode, subscriptions: rows.map(toSnapshot), now: new Date(), billingEnabled: getBillingConfig().enabled });
   return Math.min(ent.seatsAllowed, SEATS_MAX);
 }
 

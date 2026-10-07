@@ -9,7 +9,7 @@ export type SubscriptionStatus =
 /** Statuses that can grant access (past_due only while in grace). */
 export const ALLOWED_STATUSES: readonly SubscriptionStatus[] = ['active', 'trialing', 'past_due'];
 
-export type EntitlementReason = 'test_cohort' | 'active' | 'grace' | 'subscription_required';
+export type EntitlementReason = 'billing_disabled' | 'test_cohort' | 'active' | 'grace' | 'subscription_required';
 
 export interface EntitlementSubscription {
   id: string;

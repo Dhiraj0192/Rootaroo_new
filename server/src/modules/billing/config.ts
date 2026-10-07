@@ -12,6 +12,11 @@ export type EnvTag = 'dev' | 'staging' | 'prod';
 export interface ModeConfig { secretKey: string; webhookSecrets: string[] }
 export interface BillingConfig {
   nodeEnv: string;
+  /**
+   * Pre-launch switch (BILLING_ENABLED, default false). Off: no paywall, no seat cap, no billing jobs,
+   * and production starts without live keys. Delete at go-live (docs/TRACKER.md).
+   */
+  enabled: boolean;
   envTag: EnvTag;
   graceDays: number;
   publicBaseUrl: string;
@@ -40,6 +45,11 @@ export function loadBillingConfig(src: NodeJS.ProcessEnv): BillingConfig {
   const errors: string[] = [];
   const warnings: string[] = [];
 
+  const enabledRaw = (src.BILLING_ENABLED || 'false').toLowerCase();
+  if (!['true', 'false'].includes(enabledRaw)) errors.push('BILLING_ENABLED must be true or false');
+  const enabled = enabledRaw === 'true';
+  if (!enabled) warnings.push('BILLING_ENABLED is not true: paywall, seat cap and billing jobs are off');
+
   const envTag = (src.BILLING_ENV_TAG || (isProd ? '' : 'dev')) as EnvTag;
   if (!['dev', 'staging', 'prod'].includes(envTag)) errors.push('BILLING_ENV_TAG must be dev, staging or prod');
   if (isProd && envTag !== 'prod') errors.push("BILLING_ENV_TAG must be 'prod' in production");
@@ -55,7 +65,7 @@ export function loadBillingConfig(src: NodeJS.ProcessEnv): BillingConfig {
     errors.push('webhook secrets must look like whsec_...');
   }
   if (!isProd && (liveKey || liveSecrets.length > 0)) errors.push('STRIPE_LIVE_* must not be set outside production');
-  if (isProd && (!liveKey || liveSecrets.length === 0)) {
+  if (isProd && enabled && (!liveKey || liveSecrets.length === 0)) {
     errors.push('production requires STRIPE_LIVE_SECRET_KEY and STRIPE_LIVE_WEBHOOK_SECRETS');
   }
 
@@ -90,6 +100,7 @@ export function loadBillingConfig(src: NodeJS.ProcessEnv): BillingConfig {
 
   return {
     nodeEnv,
+    enabled,
     envTag,
     graceDays,
     publicBaseUrl,
@@ -137,7 +148,7 @@ export function assertBillingConfigAtStartup(): void {
   try {
     const cfg = getBillingConfig();
     for (const w of cfg.warnings) logger.warn(`[Billing] ${w}`);
-    logger.info(`[Billing] env=${cfg.envTag} test=${cfg.modes.test ? 'on' : 'off'} live=${cfg.modes.live ? 'on' : 'off'}`);
+    logger.info(`[Billing] enabled=${cfg.enabled} env=${cfg.envTag} test=${cfg.modes.test ? 'on' : 'off'} live=${cfg.modes.live ? 'on' : 'off'}`);
     assertIapConfig();
   } catch (err) {
     // eslint-disable-next-line no-console

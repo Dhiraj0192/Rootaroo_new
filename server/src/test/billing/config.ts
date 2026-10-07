@@ -4,6 +4,7 @@ import { fakeKey, fakeWebhookSecret } from './secrets';
 export function testBillingConfig(overrides: Partial<BillingConfig> = {}): BillingConfig {
   return {
     nodeEnv: 'test',
+    enabled: true,
     envTag: 'dev',
     graceDays: 7,
     publicBaseUrl: 'https://api.example.test',

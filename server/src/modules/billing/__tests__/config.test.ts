@@ -16,6 +16,7 @@ const base = (extra: Record<string, string | undefined> = {}): NodeJS.ProcessEnv
 
 const prod = (extra: Record<string, string | undefined> = {}): NodeJS.ProcessEnv => ({
   NODE_ENV: 'production',
+  BILLING_ENABLED: 'true',
   BILLING_ENV_TAG: 'prod',
   BILLING_PUBLIC_BASE_URL: 'https://api.rootaroo.com',
   STRIPE_TEST_SECRET_KEY: fakeKey('rk_test'),
@@ -64,6 +65,18 @@ describe('loadBillingConfig', () => {
   it('refuses production without live key or secrets', () => {
     expect(() => loadBillingConfig(prod({ STRIPE_LIVE_SECRET_KEY: undefined }))).toThrow(/requires STRIPE_LIVE/);
     expect(() => loadBillingConfig(prod({ STRIPE_LIVE_WEBHOOK_SECRETS: '' }))).toThrow(/requires STRIPE_LIVE/);
+  });
+
+  it('BILLING_ENABLED defaults to false; off, production starts without live keys but keeps the other guards', () => {
+    expect(loadBillingConfig(base()).enabled).toBe(false);
+    expect(loadBillingConfig(base({ BILLING_ENABLED: 'true' })).enabled).toBe(true);
+    const off = loadBillingConfig(prod({ BILLING_ENABLED: undefined, STRIPE_LIVE_SECRET_KEY: undefined, STRIPE_LIVE_WEBHOOK_SECRETS: undefined }));
+    expect(off.enabled).toBe(false);
+    expect(off.modes.live).toBeNull();
+    expect(off.warnings.join(' ')).toMatch(/BILLING_ENABLED/);
+    expect(() => loadBillingConfig(prod({ BILLING_ENABLED: 'false', BILLING_ENV_TAG: 'dev' }))).toThrow(/must be 'prod'/);
+    expect(() => loadBillingConfig(base({ BILLING_ENABLED: 'false', STRIPE_LIVE_SECRET_KEY: fakeKey('sk_live') }))).toThrow(/outside production/);
+    expect(() => loadBillingConfig(base({ BILLING_ENABLED: 'yes' }))).toThrow(/BILLING_ENABLED must be true or false/);
   });
 
   it('refuses production unless BILLING_ENV_TAG is prod', () => {

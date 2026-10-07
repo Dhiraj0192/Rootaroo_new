@@ -1,5 +1,6 @@
 'use strict';
 
+const { createTableIfMissing, addIndexIfMissing } = require('../migrationHelpers');
 /** Spec 5.2-5.5: customers, subscriptions, checkout sessions, webhook events. */
 const timestamps = (Sequelize) => ({
   created_at: { type: Sequelize.DATE, allowNull: false, defaultValue: Sequelize.literal('CURRENT_TIMESTAMP') },
@@ -14,7 +15,7 @@ const STATUSES = ['incomplete', 'incomplete_expired', 'trialing', 'active', 'pas
 
 module.exports = {
   async up(queryInterface, Sequelize) {
-    await queryInterface.createTable('billing_customers', {
+    await createTableIfMissing(queryInterface, 'billing_customers', {
       id: { type: Sequelize.UUID, defaultValue: Sequelize.UUIDV4, primaryKey: true },
       household_id: householdFk(Sequelize),
       provider: { type: Sequelize.ENUM(...PROVIDERS), allowNull: false },
@@ -23,10 +24,10 @@ module.exports = {
       billing_email: { type: Sequelize.STRING(255), allowNull: true },
       ...timestamps(Sequelize),
     });
-    await queryInterface.addIndex('billing_customers', ['household_id', 'provider', 'livemode'], { unique: true, name: 'uq_billing_customers_household_mode' });
-    await queryInterface.addIndex('billing_customers', ['provider', 'livemode', 'provider_customer_id'], { unique: true, name: 'uq_billing_customers_provider_id' });
+    await addIndexIfMissing(queryInterface, 'billing_customers', ['household_id', 'provider', 'livemode'], { unique: true, name: 'uq_billing_customers_household_mode' });
+    await addIndexIfMissing(queryInterface, 'billing_customers', ['provider', 'livemode', 'provider_customer_id'], { unique: true, name: 'uq_billing_customers_provider_id' });
 
-    await queryInterface.createTable('billing_subscriptions', {
+    await createTableIfMissing(queryInterface, 'billing_subscriptions', {
       id: { type: Sequelize.UUID, defaultValue: Sequelize.UUIDV4, primaryKey: true },
       household_id: householdFk(Sequelize),
       provider: { type: Sequelize.ENUM(...PROVIDERS), allowNull: false },
@@ -54,10 +55,10 @@ module.exports = {
       last_synced_at: { type: Sequelize.DATE, allowNull: true },
       ...timestamps(Sequelize),
     });
-    await queryInterface.addIndex('billing_subscriptions', ['provider', 'livemode', 'provider_subscription_id'], { unique: true, name: 'uq_billing_subscriptions_provider_id' });
-    await queryInterface.addIndex('billing_subscriptions', ['household_id', 'livemode', 'status'], { name: 'idx_billing_subscriptions_household_mode_status' });
+    await addIndexIfMissing(queryInterface, 'billing_subscriptions', ['provider', 'livemode', 'provider_subscription_id'], { unique: true, name: 'uq_billing_subscriptions_provider_id' });
+    await addIndexIfMissing(queryInterface, 'billing_subscriptions', ['household_id', 'livemode', 'status'], { name: 'idx_billing_subscriptions_household_mode_status' });
 
-    await queryInterface.createTable('billing_checkout_sessions', {
+    await createTableIfMissing(queryInterface, 'billing_checkout_sessions', {
       id: { type: Sequelize.UUID, primaryKey: true },
       household_id: householdFk(Sequelize),
       livemode: { type: Sequelize.BOOLEAN, allowNull: false },
@@ -73,9 +74,9 @@ module.exports = {
       expires_at: { type: Sequelize.DATE, allowNull: true },
       ...timestamps(Sequelize),
     });
-    await queryInterface.addIndex('billing_checkout_sessions', ['household_id', 'livemode', 'status'], { name: 'idx_billing_checkout_household_mode_status' });
+    await addIndexIfMissing(queryInterface, 'billing_checkout_sessions', ['household_id', 'livemode', 'status'], { name: 'idx_billing_checkout_household_mode_status' });
 
-    await queryInterface.createTable('billing_events', {
+    await createTableIfMissing(queryInterface, 'billing_events', {
       id: { type: Sequelize.UUID, defaultValue: Sequelize.UUIDV4, primaryKey: true },
       provider: { type: Sequelize.ENUM(...PROVIDERS), allowNull: false },
       livemode: { type: Sequelize.BOOLEAN, allowNull: false },
@@ -90,7 +91,7 @@ module.exports = {
       processed_at: { type: Sequelize.DATE, allowNull: true },
       ...timestamps(Sequelize),
     });
-    await queryInterface.addIndex('billing_events', ['status', 'updated_at'], { name: 'idx_billing_events_status_updated' });
+    await addIndexIfMissing(queryInterface, 'billing_events', ['status', 'updated_at'], { name: 'idx_billing_events_status_updated' });
   },
 
   async down(queryInterface) {

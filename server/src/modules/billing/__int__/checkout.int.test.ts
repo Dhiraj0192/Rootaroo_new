@@ -44,6 +44,7 @@ describe('POST /billing/checkout', () => {
       line_items: [{ price: 'price_202610_7_year', quantity: 1 }],
       subscription_data: { metadata: { householdId: household.id, purchasedByUserId: admin.id, env: 'dev' } },
       metadata: { householdId: household.id, env: 'dev' }, origin_context: 'mobile_app', allow_promotion_codes: false,
+      adaptive_pricing: { enabled: false },
       consent_collection: { terms_of_service: 'required' },
       custom_text: { submit: { message: 'Renews automatically at $127.75 per year until cancelled. Cancel anytime in Manage subscription.' } },
       success_url: 'https://api.example.test/api/v1/billing/return/success?session_id={CHECKOUT_SESSION_ID}',

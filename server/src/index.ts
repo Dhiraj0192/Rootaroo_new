@@ -22,7 +22,7 @@ import {
 } from './shared/middleware/socketAuth';
 import { registerChatSocket } from './socket/chatSocket';
 import logger from './shared/utils/logger';
-import { assertBillingConfigAtStartup } from './modules/billing/config';
+import { assertBillingConfigAtStartup, getBillingConfig } from './modules/billing/config';
 import { assertNoUploadsInProduction } from './shared/middleware/uploads';
 import { startCatalogBustSubscriber } from './modules/billing/catalog';
 
@@ -87,10 +87,12 @@ async function start(): Promise<void> {
     startOverduePointsReductionJob();
     startPurgeScheduledDeletionsJob();
     startPingExpiryJob();
-    startBillingEventSweepJob();
-    startBillingCheckoutSweepJob();
-    startBillingReconcileJobs();
-    startBillingPriceNoticesJob();
+    if (getBillingConfig().enabled) {
+      startBillingEventSweepJob();
+      startBillingCheckoutSweepJob();
+      startBillingReconcileJobs();
+      startBillingPriceNoticesJob();
+    }
 
     server.listen(env.port, () => {
       logger.info(`
