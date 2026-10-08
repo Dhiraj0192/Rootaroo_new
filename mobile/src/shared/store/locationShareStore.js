@@ -43,6 +43,20 @@ function syncTick(get) {
   }, FOREGROUND_TICK_MS);
 }
 
+// A position update can arrive after the end event (or from a slow request); don't revive the share.
+const RECENTLY_ENDED_MS = 5 * 60_000;
+const recentlyEnded = new Map();
+
+function wasRecentlyEnded(id) {
+  const at = recentlyEnded.get(id);
+  if (at == null) return false;
+  if (Date.now() - at > RECENTLY_ENDED_MS) {
+    recentlyEnded.delete(id);
+    return false;
+  }
+  return true;
+}
+
 const myId = () => useAuthStore.getState().user?.id;
 
 export const useLocationShareStore = create((set, get) => ({
@@ -109,6 +123,7 @@ export const useLocationShareStore = create((set, get) => ({
   },
 
   onUpdate: (share) => {
+    if (share.endedAt || new Date(share.expiresAt).getTime() <= Date.now() || wasRecentlyEnded(share.id)) return;
     if (share.sharer?.id === myId()) {
       set((s) => (s.mine?.id === share.id ? { mine: share } : s));
       return;
@@ -121,6 +136,7 @@ export const useLocationShareStore = create((set, get) => ({
   },
 
   onEnded: (share) => {
+    recentlyEnded.set(share.id, Date.now());
     set((s) => ({ visible: s.visible.filter((x) => x.id !== share.id) }));
     if (get().mine?.id === share.id) get().clearMine();
   },
