@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { requireAdminApiKey } from '../../shared/middleware/adminApiKey';
 import { auditLog } from '../billing/admin/auth';
 import { validate } from '../../shared/middleware/validate';
-import { reviewActionRequestSchema } from './validation';
+import { reviewActionRequestSchema, setCampaignSchema } from './validation';
 import * as ctrl from './controller';
 
 const router = Router();
@@ -65,5 +65,41 @@ router.get('/requests', ctrl.listRequests);
  */
 router.post('/requests/:id/approve', validate(reviewActionRequestSchema), ctrl.approveRequest);
 router.post('/requests/:id/reject', validate(reviewActionRequestSchema), ctrl.rejectRequest);
+
+/**
+ * @openapi
+ * /admin/campaigns:
+ *   get:
+ *     tags: [Admin]
+ *     summary: Campaign switches (all off by default) and the copy deck for review (admin-only)
+ *     responses:
+ *       200:
+ *         description: "{ all, rules, signedOutNudges, updated, copy }"
+ * /admin/campaigns/{key}:
+ *   put:
+ *     tags: [Admin]
+ *     summary: Switch the master, one rule, or signed-out nudges on or off (admin-only)
+ *     parameters:
+ *       - in: path
+ *         name: key
+ *         required: true
+ *         schema: { type: string, description: "all, a rule name, or signed_out_nudges" }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [enabled]
+ *             properties:
+ *               enabled: { type: boolean }
+ *     responses:
+ *       200:
+ *         description: The new settings
+ *       400:
+ *         description: Unknown campaign or invalid body
+ */
+router.get('/campaigns', ctrl.listCampaigns);
+router.put('/campaigns/:key', validate(setCampaignSchema), ctrl.setCampaign);
 
 export default router;

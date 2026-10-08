@@ -1,26 +1,24 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
+import { campaignsApi } from './api/campaigns';
 
 export const NUDGES_KEY = 'rootaroo_signed_out_nudges';
 
 const DAY_SECONDS = 24 * 60 * 60;
 
-export const SIGNED_OUT_NUDGES = [
-  {
-    days: 2,
-    title: 'Rootaroo',
-    body: "Your family's updates are piling up. Sign back in? 🦘",
-  },
-  {
-    days: 7,
-    title: 'Rootaroo',
-    body: 'Rootaroo keeps the family in sync. Your seat is still warm.',
-  },
-  {
-    days: 21,
-    title: 'Rootaroo',
-    body: 'Chores, plans, check-ins. Your household lives here. Come back anytime 🏡',
-  },
+// One nudge is scheduled per day in NUDGE_DAYS, each with a different line from the pool.
+export const NUDGE_DAYS = [2, 7, 21, 45];
+
+export const SIGNED_OUT_POOL = [
+  { title: 'Rootaroo', body: "Your family's updates are piling up. Sign back in? 🦘" },
+  { title: 'Rootaroo', body: 'Rootaroo keeps the family in sync. Your seat is still warm.' },
+  { title: 'Rootaroo', body: 'Chores, plans, check-ins. Your household lives here. Come back anytime 🏡' },
+  { title: 'Rootaroo', body: 'The grocery list called. It wants its favourite shopper back 🛒' },
+  { title: 'Rootaroo', body: 'Somewhere, a chore is going undone. Just saying. 🧹' },
+  { title: 'Rootaroo', body: 'Your roo is doing laps waiting for you. Hop back in? 🦘' },
+  { title: 'Rootaroo', body: 'Family plans are better with you in them. Sign in to catch up 📅' },
+  { title: 'Rootaroo', body: 'New photos, check-ins, maybe a dinner plan. Come take a look 👀' },
+  { title: 'Rootaroo', body: "One tap and you're back with the family 💛" },
 ];
 
 async function readStoredIds() {
@@ -49,15 +47,39 @@ function enqueue(task) {
   return run;
 }
 
-async function scheduleNow() {
+// Fisher–Yates over a copy, so the pool itself is never reordered.
+function pickDistinct(pool, count, rand) {
+  const copy = [...pool];
+  for (let i = copy.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(rand() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy.slice(0, count);
+}
+
+async function scheduleNow({ api, rand }) {
   try {
     const { status } = await Notifications.getPermissionsAsync();
     if (status !== 'granted') return;
 
+    // Fail closed: if the server cannot confirm nudges are on, send none.
+    let allowed = false;
+    try {
+      allowed = (await api.signedOutAllowed()) === true;
+    } catch {
+      allowed = false;
+    }
+    if (!allowed) {
+      await cancelStoredIds();
+      return;
+    }
+
     await cancelStoredIds();
 
+    const lines = pickDistinct(SIGNED_OUT_POOL, NUDGE_DAYS.length, rand);
     const ids = [];
-    for (const nudge of SIGNED_OUT_NUDGES) {
+    for (let i = 0; i < NUDGE_DAYS.length; i += 1) {
+      const nudge = lines[i];
       const id = await Notifications.scheduleNotificationAsync({
         content: {
           title: nudge.title,
@@ -66,7 +88,7 @@ async function scheduleNow() {
         },
         trigger: {
           type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
-          seconds: nudge.days * DAY_SECONDS,
+          seconds: NUDGE_DAYS[i] * DAY_SECONDS,
           repeats: false,
         },
       });
@@ -86,8 +108,9 @@ async function cancelNow() {
   }
 }
 
-export function scheduleSignedOutNudges() {
-  return enqueue(scheduleNow);
+export function scheduleSignedOutNudges(deps = {}) {
+  const { api = campaignsApi, rand = Math.random } = deps;
+  return enqueue(() => scheduleNow({ api, rand }));
 }
 
 export function cancelSignedOutNudges() {

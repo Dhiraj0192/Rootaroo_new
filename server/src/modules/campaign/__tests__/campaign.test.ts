@@ -1,4 +1,4 @@
-import { COPY, RULES, pickLine } from '../copy';
+import { COPY, RULES, pickLine, type CampaignRule } from '../copy';
 import { selectSends, isQuietHour, CAMPAIGN_WEEKLY_CAP, type Candidate, type RecentSend } from '../select';
 import { runCampaigns } from '../run';
 
@@ -81,6 +81,7 @@ describe('runCampaigns', () => {
       ]),
       recentSends: jest.fn(async () => []),
       tipsOff: jest.fn(async () => new Set<string>()),
+      enabledRules: jest.fn(async () => new Set<CampaignRule>(RULES)),
       lastLine: jest.fn(async () => null),
       send: jest.fn(async () => {}),
       record: jest.fn(async () => {}),
@@ -99,11 +100,43 @@ describe('runCampaigns', () => {
       ]),
       recentSends: jest.fn(async () => []),
       tipsOff: jest.fn(async () => new Set<string>()),
+      enabledRules: jest.fn(async () => new Set<CampaignRule>(RULES)),
       lastLine: jest.fn(async () => null),
       send: jest.fn().mockRejectedValueOnce(new Error('push down')).mockResolvedValue(undefined),
       record: jest.fn(async () => {}),
     };
     expect(await runCampaigns(NOW, deps)).toBe(1);
     expect(deps.record).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends nothing and runs no queries when every campaign is off', async () => {
+    const deps = {
+      gatherCandidates: jest.fn(async () => []),
+      recentSends: jest.fn(async () => []),
+      tipsOff: jest.fn(async () => new Set<string>()),
+      enabledRules: jest.fn(async () => new Set<CampaignRule>()),
+      lastLine: jest.fn(async () => null),
+      send: jest.fn(async () => {}),
+      record: jest.fn(async () => {}),
+    };
+    expect(await runCampaigns(NOW, deps)).toBe(0);
+    expect(deps.gatherCandidates).not.toHaveBeenCalled();
+  });
+
+  it('only sends rules that are switched on', async () => {
+    const deps = {
+      gatherCandidates: jest.fn(async () => [
+        { userId: 'u1', rule: 'task_due_tomorrow' as const, timezone: 'Asia/Kathmandu', vars: { task: 'Bins' } },
+        { userId: 'u2', rule: 'inactive_3d' as const, timezone: 'Asia/Kathmandu', vars: {} },
+      ]),
+      recentSends: jest.fn(async () => []),
+      tipsOff: jest.fn(async () => new Set<string>()),
+      enabledRules: jest.fn(async () => new Set<CampaignRule>(['inactive_3d'])),
+      lastLine: jest.fn(async () => null),
+      send: jest.fn(async () => {}),
+      record: jest.fn(async () => {}),
+    };
+    expect(await runCampaigns(NOW, deps)).toBe(1);
+    expect(deps.send).toHaveBeenCalledWith('u2', 'inactive_3d', expect.any(String));
   });
 });

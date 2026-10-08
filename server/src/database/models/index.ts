@@ -38,6 +38,7 @@ import NotificationHistory from './NotificationHistory';
 import DeviceToken from './DeviceToken';
 import Device from './Device';
 import CampaignSend from './CampaignSend';
+import CampaignSetting from './CampaignSetting';
 import PhoneVerification from './PhoneVerification';
 import PostTag from './PostTag';
 import Conversation from './Conversation';
@@ -97,6 +98,7 @@ const models = {
   DeviceToken,
   Device,
   CampaignSend,
+  CampaignSetting,
   JournalEntry,
   JournalMedia,
   BillingCustomer,
@@ -370,6 +372,7 @@ export {
   DeviceToken,
   Device,
   CampaignSend,
+  CampaignSetting,
   JournalEntry,
   JournalMedia,
   BillingCustomer,

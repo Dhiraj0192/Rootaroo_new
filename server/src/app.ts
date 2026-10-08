@@ -34,6 +34,7 @@ import journalRouter from './modules/journal/routes';
 import adminRouter from './modules/admin/routes';
 import billingAdminRouter from './modules/billing/admin/routes';
 import weatherRouter from './modules/weather/routes';
+import campaignRouter from './modules/campaign/routes';
 import swaggerUi from 'swagger-ui-express';
 import { swaggerSpec } from './config/swagger';
 import logger from './shared/utils/logger';
@@ -167,6 +168,7 @@ app.use('/api/v1/billing', billingRouter);
 app.use('/api/v1/admin', adminRouter);
 app.use('/api/v1/billing-admin', billingAdminRouter);
 app.use('/api/v1/weather', weatherRouter);
+app.use('/api/v1/campaigns', campaignRouter);
 
 // ── Swagger Docs ──
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));

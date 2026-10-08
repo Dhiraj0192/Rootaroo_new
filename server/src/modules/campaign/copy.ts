@@ -18,13 +18,13 @@ export const COPY: Record<CampaignRule, string[]> = {
   ],
   inactive_7d: [
     "It's been a week! The family group chat is getting suspiciously quiet without you.",
-    'A whole week? The dog has been asking about you. (We assume.)',
+    'A whole week? Even the roo has been asking about you. (We assume.)',
     '{household} kept the lights on. Come see what you missed 🏡',
     'Your roo misses you. Hop back in? 🦘',
   ],
   task_due_tomorrow: [
     '"{task}" is due tomorrow. Future-you says thanks in advance 🙏',
-    'Tomorrow\'s problem: "{task}". Today\'s opportunity: also "{task}".',
+    '"{task}" is due tomorrow. Knock it out tonight and sleep easy 😴',
     'Heads up: "{task}" is due tomorrow. Two minutes now beats panic later.',
   ],
   no_checkin_today: [
@@ -48,7 +48,7 @@ const FALLBACKS: Record<string, string> = {
 /** Pick a line, skipping the one this user got last time for the rule, and fill in the placeholders. */
 export function pickLine(
   rule: CampaignRule,
-  vars: Record<string, string>,
+  vars: Record<string, string | undefined>,
   rand: () => number = Math.random,
   lastLine?: string | null,
 ): string {
