@@ -28,6 +28,7 @@ One place for work that is planned, waiting on someone, finished or dropped. Upd
 | T18 | Background location: store review notes and Privacy Policy wording | release, legal | owner, client | Apple and Google ask why "Always" location is needed: sharing runs only while a share the user started is active, and stops at the timer. Add to T4 and the submission notes. |
 | T19 | Rotate the account key and re-seal items when the key moves | e2e, security | engineering | Post-MVP. A moved or restored key is the same key, so a modified app that kept a copy still opens old items. Rotation on move closes that; see "Known limits" in [`docs/e2e/device-transfer.md`](e2e/device-transfer.md). |
 | T16 | Run the push device checklist on iOS and Android | mobile, release | owner | [`docs/push/device-test-checklist.md`](push/device-test-checklist.md). Needs a new development build (journal lock adds a native module). |
+| T20 | A removed member cannot rejoin the same household | server | dev | Membership removal is a soft delete and the leftover row trips the unique (household_id, user_id) index. Found while testing W12. |
 
 ## Go-live steps
 
@@ -75,6 +76,8 @@ In order, after the checklist in [`docs/billing/runbooks.md`](billing/runbooks.m
 | W1 journal lock; W2 push fixes (chat push, live chat delivery, tap routing, badge, receipts, reminder de-dup) | PR #3 |
 | W3 push campaign; W4 service adapters; W9 device registry | PR #4 |
 | W5 location sharing (presets up to 8 h, background, live map, share without a request) | Large PR |
+| W10 private-space key, QR move, guess-capped backup; W11 encrypted journal; W12 shared household vault | PRs #7, #8, W12 PR |
+| Own-uploads-only check; vault key primary keys | PR #6 |
 
 ## Dropped
 
