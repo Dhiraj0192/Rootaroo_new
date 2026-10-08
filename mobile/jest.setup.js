@@ -19,3 +19,5 @@ jest.mock('expo-linear-gradient', () => {
   return { LinearGradient: (props) => React.createElement(View, props) };
 });
 jest.mock('react-native-safe-area-context', () => require('react-native-safe-area-context/jest/mock').default);
+// Native task registry: background location tasks are exercised through their handlers, not the OS.
+jest.mock('expo-task-manager', () => ({ defineTask: jest.fn(), isTaskRegisteredAsync: jest.fn(async () => false) }));

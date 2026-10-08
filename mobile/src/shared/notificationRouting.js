@@ -12,6 +12,7 @@ const ROUTES = {
   check_in: ['MoreStack', 'CheckIn', null],
   ping_request: ['MoreStack', 'CheckIn', null],
   ping_response: ['MoreStack', 'CheckIn', null],
+  location_share_started: ['MoreStack', 'CheckIn', null],
   calendar: ['MoreStack', 'Calendar', null],
   member_joined: ['MoreStack', 'HouseholdSettings', null],
   leave_request: ['MoreStack', 'HouseholdSettings', null],

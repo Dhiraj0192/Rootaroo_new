@@ -33,6 +33,7 @@ describe('routeForNotification', () => {
     [{ type: 'check_in' }, tab('MoreStack', 'CheckIn', undefined)],
     [{ type: 'ping_request', pingRequestId: 'g1' }, tab('MoreStack', 'CheckIn', undefined)],
     [{ type: 'ping_response', pingRequestId: 'g1' }, tab('MoreStack', 'CheckIn', undefined)],
+    [{ type: 'location_share_started', shareId: 's1' }, tab('MoreStack', 'CheckIn', undefined)],
     [{ type: 'calendar', eventId: 'v1' }, tab('MoreStack', 'Calendar', undefined)],
     [{ type: 'member_joined' }, tab('MoreStack', 'HouseholdSettings', undefined)],
     [{ type: 'leave_request' }, tab('MoreStack', 'HouseholdSettings', undefined)],
