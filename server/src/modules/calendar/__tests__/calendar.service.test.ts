@@ -336,6 +336,33 @@ describe('notifyUpcomingEvents (FR-186)', () => {
     expect(notifications.notifyHousehold).not.toHaveBeenCalled();
   });
 
+  it('releases the claim when the send fails, so the next run retries it', async () => {
+    (modelsMock.CalendarEvent.findAll as jest.Mock).mockResolvedValue([
+      fakeEvent({ title: 'Standup', eventDate: '2026-08-10', startTime: '23:45:00' }),
+    ]);
+    (notifications.notifyHousehold as jest.Mock).mockRejectedValueOnce(new Error('push down'));
+    const sent = await notifyUpcomingEvents();
+    expect(sent).toBe(0);
+    expect(modelsMock.CalendarEvent.update).toHaveBeenCalledTimes(2);
+    expect(modelsMock.CalendarEvent.update).toHaveBeenLastCalledWith(
+      { reminderSentAt: null },
+      { where: { id: eventId, reminderSentAt: FIXED_NOW } },
+    );
+  });
+
+  it('sends with throwOnError and keeps the claim on success', async () => {
+    (modelsMock.CalendarEvent.findAll as jest.Mock).mockResolvedValue([
+      fakeEvent({ title: 'Standup', eventDate: '2026-08-10', startTime: '23:45:00' }),
+    ]);
+    const sent = await notifyUpcomingEvents();
+    expect(sent).toBe(1);
+    expect(modelsMock.CalendarEvent.update).toHaveBeenCalledTimes(1);
+    expect(notifications.notifyHousehold).toHaveBeenCalledWith(
+      householdId, 'calendar', 'Event starting soon', expect.any(String),
+      expect.any(Object), undefined, { throwOnError: true },
+    );
+  });
+
   afterEach(() => {
     jest.useRealTimers();
   });
@@ -354,6 +381,8 @@ describe('notifyUpcomingEvents (FR-186)', () => {
       'Event starting soon',
       expect.stringContaining('Standup'),
       expect.objectContaining({ type: 'calendar', eventId }),
+      undefined,
+      { throwOnError: true },
     );
   });
 
@@ -402,6 +431,8 @@ describe('notifyUpcomingEvents (FR-186)', () => {
       'Event starting soon',
       expect.stringContaining('Evening call'),
       expect.objectContaining({ type: 'calendar', eventId }),
+      undefined,
+      { throwOnError: true },
     );
   });
 });

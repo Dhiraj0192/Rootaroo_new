@@ -85,6 +85,43 @@ describe('handleNotificationResponse', () => {
   });
 });
 
+describe('last-notification persistence', () => {
+  const AsyncStorage = require('@react-native-async-storage/async-storage');
+  const { handleColdStartResponse, LAST_NOTIFICATION_KEY } = require('../notificationRouting');
+
+  beforeEach(async () => {
+    await AsyncStorage.clear();
+  });
+
+  it('stores the identifier of a handled tap', async () => {
+    const stored = handleNotificationResponse(ref(true), response({ type: 'calendar' }, 'tap1'));
+    await stored;
+    expect(await AsyncStorage.getItem(LAST_NOTIFICATION_KEY)).toBe('tap1');
+  });
+
+  it('does not navigate for the tap already handled in a previous launch', async () => {
+    await AsyncStorage.setItem(LAST_NOTIFICATION_KEY, 'old');
+    const nav = ref(true);
+    await handleColdStartResponse(nav, response({ type: 'calendar' }, 'old'));
+    expect(nav.navigate).not.toHaveBeenCalled();
+  });
+
+  it('navigates and stores the id for a new tap', async () => {
+    await AsyncStorage.setItem(LAST_NOTIFICATION_KEY, 'old');
+    const nav = ref(true);
+    await handleColdStartResponse(nav, response({ type: 'calendar' }, 'fresh'));
+    expect(nav.navigate).toHaveBeenCalledTimes(1);
+    expect(await AsyncStorage.getItem(LAST_NOTIFICATION_KEY)).toBe('fresh');
+  });
+
+  it('does nothing for a null response', async () => {
+    const nav = ref(true);
+    await handleColdStartResponse(nav, null);
+    expect(nav.navigate).not.toHaveBeenCalled();
+    expect(await AsyncStorage.getItem(LAST_NOTIFICATION_KEY)).toBeNull();
+  });
+});
+
 describe('syncBadge', () => {
   it('sets the app badge to the server unread count', async () => {
     const { syncBadge } = require('../notificationRouting');
