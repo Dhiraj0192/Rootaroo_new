@@ -22,7 +22,6 @@ import Expense from './Expense';
 import ExpenseParticipant from './ExpenseParticipant';
 import Settlement from './Settlement';
 import VaultDocument from './VaultDocument';
-import VaultKey from './VaultKey';
 import VaultDocumentKey from './VaultDocumentKey';
 import ChatMessage from './ChatMessage';
 import ChatReaction from './ChatReaction';
@@ -86,7 +85,6 @@ const models = {
   ExpenseParticipant,
   Settlement,
   VaultDocument,
-  VaultKey,
   VaultDocumentKey,
   ChatMessage,
   ChatReaction,
@@ -193,8 +191,6 @@ export function setupAssociations(): void {
   Household.hasMany(VaultDocument, { foreignKey: 'household_id', as: 'vaultDocuments' });
   VaultDocument.belongsTo(Household, { foreignKey: 'household_id', as: 'household' });
 
-  Household.hasMany(VaultKey, { foreignKey: 'household_id', as: 'vaultKeys' });
-  VaultKey.belongsTo(Household, { foreignKey: 'household_id', as: 'household' });
 
   Household.hasMany(Settlement, { foreignKey: 'household_id', as: 'settlements' });
   Settlement.belongsTo(Household, { foreignKey: 'household_id', as: 'household' });
@@ -312,16 +308,12 @@ export function setupAssociations(): void {
 
   // ── Vault associations ──
   VaultDocument.belongsTo(User, { foreignKey: 'uploaded_by', as: 'uploader' });
-  VaultKey.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
 
   // Per-user wrapped AES keys for vault documents
   VaultDocument.hasMany(VaultDocumentKey, { foreignKey: 'document_id', as: 'documentKeys' });
   VaultDocumentKey.belongsTo(VaultDocument, { foreignKey: 'document_id', as: 'document' });
   VaultDocumentKey.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
   User.hasMany(VaultDocumentKey, { foreignKey: 'user_id', as: 'vaultDocumentKeys' });
-
-  // HouseholdMember ↔ VaultKey (for key status lookups)
-  HouseholdMember.hasOne(VaultKey, { foreignKey: 'user_id', sourceKey: 'userId', as: 'vaultKey' });
 
   // ── Grocery / Todo ──
   GroceryItem.belongsTo(User, { foreignKey: 'assigned_to', as: 'assignee' });
@@ -364,7 +356,6 @@ export {
   ExpenseParticipant,
   Settlement,
   VaultDocument,
-  VaultKey,
   VaultDocumentKey,
   ChatMessage,
   ChatReaction,

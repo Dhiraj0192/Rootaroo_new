@@ -4,6 +4,7 @@ import {
   createHousehold, updateCoverPhoto, removeCoverPhoto,
   requestLeaveHousehold, requestHouseholdDeletion, approveActionRequest, rejectActionRequest,
   getMyPendingActionRequest, getPendingLeaveRequestForAdmin, approveLeaveRequest, rejectLeaveRequest,
+  finalizeDueHouseholdDeletions,
 } from '../service';
 import * as models from '../../../database/models';
 
@@ -12,6 +13,9 @@ jest.mock('../../../shared/utils/s3', () => ({
   deleteObject: jest.fn().mockResolvedValue(undefined),
 }));
 import { deleteObject } from '../../../shared/utils/s3';
+
+jest.mock('../../vault/access', () => ({ onMemberLostVaultAccess: jest.fn().mockResolvedValue(undefined) }));
+import { onMemberLostVaultAccess } from '../../vault/access';
 
 jest.mock('../../../shared/utils/mailer', () => ({
   sendAdminAlertEmail: jest.fn().mockResolvedValue(undefined),
@@ -275,6 +279,16 @@ describe('Household Service — Member Management', () => {
       await expect(removeMember(userId, householdId, otherUserId)).resolves.toBeUndefined();
     });
 
+    it('should remove the keys to the household vault files', async () => {
+      (models.HouseholdMember.findOne as jest.Mock)
+        .mockResolvedValueOnce({ role: 'admin' })
+        .mockResolvedValueOnce({ role: 'member', destroy: jest.fn().mockResolvedValue(undefined) });
+
+      await removeMember(userId, householdId, otherUserId);
+
+      expect(onMemberLostVaultAccess).toHaveBeenCalledWith(otherUserId, householdId);
+    });
+
     it('should throw ForbiddenError if requester is not an admin', async () => {
       (models.HouseholdMember.findOne as jest.Mock).mockResolvedValue({ role: 'member' });
 
@@ -315,6 +329,7 @@ describe('Household Service — Member Management', () => {
 
       await expect(leaveHousehold(userId, householdId)).resolves.toBeUndefined();
       expect(destroy).toHaveBeenCalled();
+      expect(onMemberLostVaultAccess).toHaveBeenCalledWith(userId, householdId);
     });
 
     it('should throw ForbiddenError if admin tries to leave without transferring', async () => {
@@ -394,6 +409,20 @@ describe('Household Service — Member Management', () => {
       expect(update).toHaveBeenCalledWith({ role: 'member' });
       expect(result.role).toBe('member');
       expect(result.userId).toBe(otherUserId);
+      expect(onMemberLostVaultAccess).not.toHaveBeenCalled();
+    });
+
+    it('should remove vault keys when a member becomes a child', async () => {
+      (models.HouseholdMember.findOne as jest.Mock)
+        .mockResolvedValueOnce({ role: 'admin' })
+        .mockResolvedValueOnce({
+          userId: otherUserId, role: 'member', joinedAt: new Date(), update: jest.fn(),
+          user: { displayName: 'Other User', email: 'other@test.com', avatarUrl: null, avatarEmoji: null },
+        });
+
+      await changeMemberRole(userId, householdId, otherUserId, { role: 'child' });
+
+      expect(onMemberLostVaultAccess).toHaveBeenCalledWith(otherUserId, householdId);
     });
 
     it('should throw ForbiddenError if requester is not admin', async () => {
@@ -856,5 +885,20 @@ describe('Household Service — Member Management', () => {
       await expect(rotateInviteCode(userId, householdId))
         .rejects.toThrow('Only the household admin can rotate the invite code');
     });
+  });
+});
+
+describe('finalizeDueHouseholdDeletions vault access', () => {
+  it('removes every member vault key before the household is purged', async () => {
+    const household = { id: householdId, destroy: jest.fn().mockResolvedValue(undefined) };
+    (models.Household as any).findAll = jest.fn().mockResolvedValue([household]);
+    (models.HouseholdMember.findAll as jest.Mock).mockResolvedValue([{ userId }, { userId: otherUserId }]);
+    (models.HouseholdMember.destroy as jest.Mock).mockResolvedValue(2);
+    (onMemberLostVaultAccess as jest.Mock).mockClear();
+
+    await expect(finalizeDueHouseholdDeletions()).resolves.toBe(1);
+
+    expect(onMemberLostVaultAccess).toHaveBeenCalledWith(userId, householdId);
+    expect(onMemberLostVaultAccess).toHaveBeenCalledWith(otherUserId, householdId);
   });
 });

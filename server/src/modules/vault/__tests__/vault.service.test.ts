@@ -2,44 +2,44 @@ import {
   uploadDocument,
   listDocuments,
   getDocumentById,
-  updateDocument,
+  listVaultMembers,
+  listPendingGrants,
+  grantKeys,
+  renameDocument,
+  changeScope,
   deleteDocument,
   hardDeleteDocument,
   getStorageUsage,
-  storeUserKey,
-  getUserKey,
 } from '../service';
-import { NotFoundError, ForbiddenError } from '../../../shared/utils/errors';
+import { NotFoundError, ForbiddenError, ValidationError, ConflictError } from '../../../shared/utils/errors';
 import fs from 'node:fs';
 import path from 'node:path';
 
 const userId = '550e8400-e29b-41d4-a716-446655440001';
 const otherUserId = '660e8400-e29b-41d4-a716-446655440002';
 const adminUserId = '770e8400-e29b-41d4-a716-446655440003';
+const childId = '110e8400-e29b-41d4-a716-446655440006';
+const outsiderId = '220e8400-e29b-41d4-a716-446655440007';
 const householdId = '880e8400-e29b-41d4-a716-446655440004';
 const documentId = '990e8400-e29b-41d4-a716-446655440005';
-
-// ── Model Mocks (factory must be inline for jest.mock hoisting) ──
 
 jest.mock('../../../database/models', () => {
   const mockModel = (name: string) => {
     const cls: any = jest.fn().mockName(name);
     cls.create = jest.fn();
+    cls.bulkCreate = jest.fn();
     cls.findAll = jest.fn();
     cls.findOne = jest.fn();
     cls.findByPk = jest.fn();
     cls.destroy = jest.fn();
-    cls.upsert = jest.fn();
     cls.sum = jest.fn();
     return cls;
   };
   return {
-    sequelize: {
-      transaction: jest.fn(async (cb) => cb({})),
-    },
+    sequelize: { transaction: jest.fn(async (cb) => cb({})) },
     VaultDocument: mockModel('VaultDocument'),
     VaultDocumentKey: mockModel('VaultDocumentKey'),
-    VaultKey: mockModel('VaultKey'),
+    AccountKey: mockModel('AccountKey'),
     User: mockModel('User'),
     HouseholdMember: mockModel('HouseholdMember'),
   };
@@ -51,346 +51,395 @@ jest.mock('../../../shared/utils/s3', () => ({
   getSignedUrl: jest.fn((key: string | null) => Promise.resolve(key ? `https://signed.example.com/${key}` : null)),
 }));
 
-import { VaultDocument, VaultDocumentKey, VaultKey, HouseholdMember } from '../../../database/models';
-import { uploadBuffer, deleteObject } from '../../../shared/utils/s3';
+import { sequelize, VaultDocument, VaultDocumentKey, AccountKey, User, HouseholdMember } from '../../../database/models';
+import { uploadBuffer, deleteObject, getSignedUrl } from '../../../shared/utils/s3';
+
+const roles: Record<string, string> = { [userId]: 'member', [otherUserId]: 'member', [adminUserId]: 'admin', [childId]: 'child' };
+const sealed = 'c2VhbGVkLWtleQ==';
+const meta = 'c2VhbGVkLW1ldGE=';
 
 const mockDoc = (overrides: any = {}) => ({
   id: documentId,
   householdId,
-  name: 'Test Doc',
-  mimeType: 'image/jpeg',
+  scope: 'household',
+  sealedMeta: meta,
   sizeBytes: 1024,
-  encryptedKey: 'enc-key-123',
-  iv: 'iv-123',
-  s3Key: 'vault/test-s3-key',
+  s3Key: `vault/${userId}/abc`,
   uploadedBy: userId,
   createdAt: new Date('2026-07-12T10:00:00Z'),
-  updatedAt: new Date('2026-07-12T10:00:00Z'),
-  get: (key: string) => {
-    if (key === 'uploader') {
-      return { id: userId, displayName: 'Test User', avatarUrl: null, avatarEmoji: null };
-    }
-    return null;
-  },
+  get: (key: string) => (key === 'uploader' ? { id: overrides.uploadedBy ?? userId, displayName: 'Test User' } : null),
   save: jest.fn(),
   destroy: jest.fn(),
   ...overrides,
 });
 
-const mockVaultKey = (overrides: any = {}) => ({
-  userId,
-  householdId,
-  publicKey: 'pub-key-123',
-  privateKeyEncrypted: 'enc-priv-key',
-  createdAt: new Date('2026-07-12T10:00:00Z'),
-  get: () => null,
-  ...overrides,
-});
+/** The `or` list of a findAll where-clause (Sequelize keys it by a symbol). */
+function orOf(where: any): unknown[] {
+  const sym = Object.getOwnPropertySymbols(where).find((s) => s.toString() === 'Symbol(or)')!;
+  return where[sym];
+}
 
 describe('Vault Service', () => {
   beforeEach(() => {
-    jest.clearAllMocks();
-
-    // Default: everyone belongs to the household; only adminUserId holds
-    // the admin role — used both by getUserHousehold (userId-only lookup)
-    // and the DB-backed isCurrentHouseholdAdmin check (F-06).
+    jest.resetAllMocks();
+    (sequelize.transaction as jest.Mock).mockImplementation(async (cb: any) => cb({}));
     (HouseholdMember.findOne as jest.Mock).mockImplementation(({ where }: any) =>
-      Promise.resolve({ householdId, userId: where.userId, role: where.userId === adminUserId ? 'admin' : 'member' }),
+      Promise.resolve(roles[where.userId] ? { householdId, userId: where.userId, role: roles[where.userId] } : null),
     );
+    (HouseholdMember.findAll as jest.Mock).mockResolvedValue(
+      [userId, otherUserId, adminUserId].map((id) => ({ userId: id, role: roles[id] })),
+    );
+    (AccountKey.findAll as jest.Mock).mockResolvedValue(
+      [userId, otherUserId, adminUserId].map((id) => ({ userId: id, publicKey: `pk-${id}` })),
+    );
+    (User.findAll as jest.Mock).mockResolvedValue(
+      [userId, otherUserId, adminUserId].map((id) => ({ id, displayName: `name-${id}` })),
+    );
+    (VaultDocument.sum as jest.Mock).mockResolvedValue(0);
+    (uploadBuffer as jest.Mock).mockResolvedValue({ key: `vault/${userId}/abc` });
+    (deleteObject as jest.Mock).mockResolvedValue(undefined);
+    (getSignedUrl as jest.Mock).mockImplementation((key: string | null) => Promise.resolve(key ? `https://signed.example.com/${key}` : null));
+    (VaultDocument.create as jest.Mock).mockResolvedValue(mockDoc());
+    (VaultDocument.findByPk as jest.Mock).mockResolvedValue(mockDoc());
+    (VaultDocumentKey.findAll as jest.Mock).mockResolvedValue([]);
   });
-
-  // ─── uploadDocument ───
 
   describe('uploadDocument', () => {
-    const uploadBody = {
-      name: 'Test Doc',
-      mimeType: 'image/jpeg',
+    const body = (over: any = {}) => ({
+      scope: 'household' as const,
+      sealedMeta: meta,
       sizeBytes: 1024,
-      encryptedKey: 'enc-key-123',
-      iv: 'iv-123',
-    };
-
-    it('should upload a document and return response', async () => {
-      const fileBuffer = Buffer.from('test');
-      (uploadBuffer as jest.Mock).mockResolvedValue({ key: 'vault/test-s3-key' });
-      const createdDoc = mockDoc();
-      (VaultDocument.create as jest.Mock).mockResolvedValue(createdDoc);
-      (VaultDocumentKey.create as jest.Mock).mockResolvedValue({ documentId, userId, wrappedKey: 'enc-key-123' });
-      (VaultDocument.findByPk as jest.Mock).mockResolvedValue(createdDoc);
-
-      const result = await uploadDocument(userId, uploadBody, fileBuffer);
-
-      expect(uploadBuffer).toHaveBeenCalled();
-      expect(VaultDocument.create).toHaveBeenCalled();
-      expect(VaultDocumentKey.create).toHaveBeenCalled();
-      expect(result.id).toBe(documentId);
-      expect(result.name).toBe('Test Doc');
+      keys: [{ userId, sealedKey: sealed }, { userId: otherUserId, sealedKey: sealed }],
+      ...over,
     });
 
-    it('should reject files over 20MB', async () => {
-      await expect(
-        uploadDocument(userId, { ...uploadBody, sizeBytes: 21 * 1024 * 1024 }, Buffer.from('test'))
-      ).rejects.toThrow(ForbiddenError);
+    it('stores a household file under the uploader folder with a key per recipient', async () => {
+      const result = await uploadDocument(userId, body(), Buffer.from('x'));
+      expect(uploadBuffer).toHaveBeenCalledWith(expect.any(Buffer), `vault/${userId}`, 'application/octet-stream');
+      expect(VaultDocumentKey.bulkCreate).toHaveBeenCalledWith(
+        [
+          expect.objectContaining({ documentId, userId, wrappedKey: sealed }),
+          expect.objectContaining({ documentId, userId: otherUserId, wrappedKey: sealed }),
+        ],
+        expect.anything(),
+      );
+      expect(result).toEqual(expect.objectContaining({ id: documentId, scope: 'household', sealedMeta: meta, householdId }));
+      expect(result).not.toHaveProperty('name');
     });
 
-    it('should reject uploads exceeding household quota', async () => {
-      (uploadBuffer as jest.Mock).mockResolvedValue({ key: 'vault/test-s3-key' });
-      (VaultDocument.sum as jest.Mock).mockResolvedValue(2 * 1024 * 1024 * 1024); // already at 2GB
+    it('allows adults without a key yet to be left out (they become pending)', async () => {
+      await expect(uploadDocument(userId, body({ keys: [{ userId, sealedKey: sealed }] }), Buffer.from('x'))).resolves.toBeDefined();
+    });
 
-      await expect(
-        uploadDocument(userId, uploadBody, Buffer.from('test'))
-      ).rejects.toThrow(ForbiddenError);
+    it('requires the uploader own key', async () => {
+      await expect(uploadDocument(userId, body({ keys: [{ userId: otherUserId, sealedKey: sealed }] }), Buffer.from('x')))
+        .rejects.toThrow(ValidationError);
+      expect(uploadBuffer).not.toHaveBeenCalled();
+    });
+
+    it('personal files take exactly the uploader key', async () => {
+      await expect(uploadDocument(userId, body({ scope: 'personal' }), Buffer.from('x'))).rejects.toThrow(ValidationError);
+      await expect(uploadDocument(userId, body({ scope: 'personal', keys: [{ userId, sealedKey: sealed }] }), Buffer.from('x')))
+        .resolves.toBeDefined();
+    });
+
+    it('refuses a key for a child, an outsider or someone without an account key', async () => {
+      for (const target of [childId, outsiderId]) {
+        await expect(uploadDocument(userId, body({ keys: [{ userId, sealedKey: sealed }, { userId: target, sealedKey: sealed }] }), Buffer.from('x')))
+          .rejects.toThrow(ValidationError);
+      }
+      (AccountKey.findAll as jest.Mock).mockResolvedValue([{ userId, publicKey: 'pk' }]);
+      await expect(uploadDocument(userId, body(), Buffer.from('x'))).rejects.toThrow(ValidationError);
+      expect(uploadBuffer).not.toHaveBeenCalled();
+    });
+
+    it('refuses duplicate recipients', async () => {
+      await expect(uploadDocument(userId, body({ keys: [{ userId, sealedKey: sealed }, { userId, sealedKey: sealed }] }), Buffer.from('x')))
+        .rejects.toThrow(ValidationError);
+    });
+
+    it('a child can only upload personal files', async () => {
+      await expect(uploadDocument(childId, body({ keys: [{ userId: childId, sealedKey: sealed }] }), Buffer.from('x')))
+        .rejects.toThrow(ForbiddenError);
+    });
+
+    it('rejects files over 20MB and uploads over the quota', async () => {
+      await expect(uploadDocument(userId, body({ sizeBytes: 21 * 1024 * 1024 }), Buffer.from('x'))).rejects.toThrow(ForbiddenError);
+      (VaultDocument.sum as jest.Mock).mockResolvedValue(2 * 1024 * 1024 * 1024);
+      await expect(uploadDocument(userId, body(), Buffer.from('x'))).rejects.toThrow(ForbiddenError);
+    });
+
+    it('removes the stored file when the database write fails', async () => {
+      (VaultDocument.create as jest.Mock).mockRejectedValue(new Error('db down'));
+      await expect(uploadDocument(userId, body(), Buffer.from('x'))).rejects.toThrow('db down');
+      expect(deleteObject).toHaveBeenCalledWith(`vault/${userId}/abc`);
     });
   });
 
-  // ─── listDocuments ───
-
   describe('listDocuments', () => {
-    it('should return paginated documents', async () => {
-      const docs = [mockDoc({ id: 'doc1' }), mockDoc({ id: 'doc2' })];
-      (VaultDocument.findAll as jest.Mock).mockResolvedValue(docs);
+    it('shows my personal files plus household files for an adult, with my sealed key and a link', async () => {
+      (VaultDocument.findAll as jest.Mock).mockResolvedValue([mockDoc({ id: 'd1' }), mockDoc({ id: 'd2' })]);
+      (VaultDocumentKey.findAll as jest.Mock).mockResolvedValue([{ documentId: 'd1', userId, wrappedKey: 'mine' }]);
 
       const result = await listDocuments(userId, { limit: 20 });
 
-      expect(result.documents).toHaveLength(2);
+      expect(orOf((VaultDocument.findAll as jest.Mock).mock.calls[0][0].where)).toEqual([
+        { scope: 'personal', uploadedBy: userId },
+        { scope: 'household', householdId },
+      ]);
+      expect(result.documents[0]).toEqual(expect.objectContaining({
+        id: 'd1', mySealedKey: 'mine', pending: false, downloadUrl: expect.stringContaining('https://signed'),
+      }));
+      expect(result.documents[1]).toEqual(expect.objectContaining({ id: 'd2', mySealedKey: null, pending: true, downloadUrl: null }));
+      expect(result.documents[0].uploadedBy).toEqual({ id: userId, displayName: 'Test User' });
       expect(result.hasMore).toBe(false);
-      expect(result.nextCursor).toBeNull();
+    });
+
+    it('never asks for household files when the caller is a child', async () => {
+      (VaultDocument.findAll as jest.Mock).mockResolvedValue([]);
+      await listDocuments(childId, {});
+      expect(orOf((VaultDocument.findAll as jest.Mock).mock.calls[0][0].where)).toEqual([{ scope: 'personal', uploadedBy: childId }]);
+    });
+
+    it('paginates with a cursor', async () => {
+      const docs = [1, 2, 3].map((n) => mockDoc({ id: `d${n}`, createdAt: new Date(2026, 0, 10 - n) }));
+      (VaultDocument.findAll as jest.Mock).mockResolvedValue(docs);
+      const result = await listDocuments(userId, { limit: 2 });
+      expect(result.documents).toHaveLength(2);
+      expect(result.hasMore).toBe(true);
+      expect(result.nextCursor).toBe(docs[1].createdAt.toISOString());
     });
   });
-
-  // ─── getDocumentById ───
 
   describe('getDocumentById', () => {
-    it('should return a document by ID', async () => {
+    it('returns a visible document', async () => {
       (VaultDocument.findOne as jest.Mock).mockResolvedValue(mockDoc());
-
+      (VaultDocumentKey.findAll as jest.Mock).mockResolvedValue([{ documentId, userId, wrappedKey: 'mine' }]);
       const result = await getDocumentById(documentId, userId);
-
-      expect(result.id).toBe(documentId);
-      expect(result.name).toBe('Test Doc');
+      expect(result).toEqual(expect.objectContaining({ id: documentId, mySealedKey: 'mine', pending: false }));
     });
 
-    it('should throw NotFoundError for non-existent document', async () => {
+    it('404s when it is not visible to the caller', async () => {
       (VaultDocument.findOne as jest.Mock).mockResolvedValue(null);
-
-      await expect(getDocumentById(documentId, userId)).rejects.toThrow(NotFoundError);
+      await expect(getDocumentById(documentId, childId)).rejects.toThrow(NotFoundError);
     });
   });
 
-  // ─── updateDocument ───
+  describe('listVaultMembers', () => {
+    it('lists adults with their public keys', async () => {
+      const result = await listVaultMembers(userId);
+      expect(result).toEqual(expect.arrayContaining([{ userId, displayName: `name-${userId}`, publicKey: `pk-${userId}` }]));
+      expect(result).toHaveLength(3);
+    });
 
-  describe('updateDocument', () => {
-    it('should allow the uploader to rename', async () => {
+    it('leaves out adults with no account key yet', async () => {
+      (AccountKey.findAll as jest.Mock).mockResolvedValue([{ userId, publicKey: 'pk' }]);
+      expect(await listVaultMembers(userId)).toHaveLength(1);
+    });
+  });
+
+  describe('listPendingGrants', () => {
+    it('lists documents I can open where an adult with a key still lacks one', async () => {
+      (VaultDocumentKey.findAll as jest.Mock)
+        .mockResolvedValueOnce([{ documentId, userId, wrappedKey: 'mine' }])
+        .mockResolvedValueOnce([
+          { documentId, userId, wrappedKey: 'mine' },
+          { documentId, userId: otherUserId, wrappedKey: 'theirs' },
+        ]);
+      (VaultDocument.findAll as jest.Mock).mockResolvedValue([mockDoc()]);
+
+      const result = await listPendingGrants(userId);
+
+      expect(result).toEqual([
+        { documentId, mySealedKey: 'mine', missing: [{ userId: adminUserId, publicKey: `pk-${adminUserId}` }] },
+      ]);
+    });
+
+    it('omits documents where everyone already has a key', async () => {
+      const all = [userId, otherUserId, adminUserId].map((id) => ({ documentId, userId: id, wrappedKey: 'k' }));
+      (VaultDocumentKey.findAll as jest.Mock).mockResolvedValueOnce([all[0]]).mockResolvedValueOnce(all);
+      (VaultDocument.findAll as jest.Mock).mockResolvedValue([mockDoc()]);
+      expect(await listPendingGrants(userId)).toEqual([]);
+    });
+
+    it('is empty for a child', async () => {
+      expect(await listPendingGrants(childId)).toEqual([]);
+    });
+  });
+
+  describe('grantKeys', () => {
+    beforeEach(() => {
+      (VaultDocument.findByPk as jest.Mock).mockResolvedValue(mockDoc());
+      (VaultDocumentKey.findOne as jest.Mock).mockResolvedValue({ documentId, userId, wrappedKey: 'mine' });
+    });
+
+    it('seals the file for an adult who has none', async () => {
+      (VaultDocumentKey.findAll as jest.Mock).mockResolvedValue([{ documentId, userId, wrappedKey: 'mine' }]);
+      await grantKeys(documentId, userId, [{ userId: otherUserId, sealedKey: sealed }]);
+      expect(VaultDocumentKey.bulkCreate).toHaveBeenCalledWith(
+        [expect.objectContaining({ documentId, userId: otherUserId, wrappedKey: sealed })],
+        expect.anything(),
+      );
+    });
+
+    it('is forbidden for someone who cannot open the file', async () => {
+      (VaultDocumentKey.findOne as jest.Mock).mockResolvedValue(null);
+      await expect(grantKeys(documentId, otherUserId, [{ userId: adminUserId, sealedKey: sealed }])).rejects.toThrow(ForbiddenError);
+    });
+
+    it('404s for a file that does not exist', async () => {
+      (VaultDocument.findByPk as jest.Mock).mockResolvedValue(null);
+      await expect(grantKeys(documentId, userId, [{ userId: otherUserId, sealedKey: sealed }])).rejects.toThrow(NotFoundError);
+    });
+
+    it('refuses personal files', async () => {
+      (VaultDocument.findByPk as jest.Mock).mockResolvedValue(mockDoc({ scope: 'personal' }));
+      await expect(grantKeys(documentId, userId, [{ userId: otherUserId, sealedKey: sealed }])).rejects.toThrow(ValidationError);
+    });
+
+    it('409s when the target already has a key', async () => {
+      (VaultDocumentKey.findAll as jest.Mock).mockResolvedValue([{ documentId, userId: otherUserId, wrappedKey: 'x' }]);
+      await expect(grantKeys(documentId, userId, [{ userId: otherUserId, sealedKey: sealed }])).rejects.toThrow(ConflictError);
+    });
+
+    it('400s for a child or an outsider', async () => {
+      for (const target of [childId, outsiderId]) {
+        await expect(grantKeys(documentId, userId, [{ userId: target, sealedKey: sealed }])).rejects.toThrow(ValidationError);
+      }
+      expect(VaultDocumentKey.bulkCreate).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('renameDocument', () => {
+    it('lets the uploader replace the sealed name', async () => {
       const doc = mockDoc();
       (VaultDocument.findOne as jest.Mock).mockResolvedValue(doc);
-      (VaultDocument.findByPk as jest.Mock).mockResolvedValue(mockDoc({ name: 'Renamed' }));
-
-      const result = await updateDocument(documentId, userId, 'member', { name: 'Renamed' });
-
-      expect(result.name).toBe('Renamed');
+      const result = await renameDocument(documentId, userId, 'bmV3');
+      expect(doc.sealedMeta).toBe('bmV3');
       expect(doc.save).toHaveBeenCalled();
+      expect(result.id).toBe(documentId);
     });
 
-    it('should allow an admin to rename someone else\'s document', async () => {
-      const doc = mockDoc({ uploadedBy: otherUserId });
-      (VaultDocument.findOne as jest.Mock).mockResolvedValue(doc);
-      (VaultDocument.findByPk as jest.Mock).mockResolvedValue(mockDoc({ name: 'Admin Renamed', uploadedBy: otherUserId }));
-
-      const result = await updateDocument(documentId, adminUserId, 'admin', { name: 'Admin Renamed' });
-
-      expect(result.name).toBe('Admin Renamed');
-      expect(doc.save).toHaveBeenCalled();
+    it('is uploader only, even for an admin', async () => {
+      (VaultDocument.findOne as jest.Mock).mockResolvedValue(mockDoc());
+      await expect(renameDocument(documentId, adminUserId, 'bmV3')).rejects.toThrow(ForbiddenError);
     });
 
-    it('should reject non-uploader non-admin', async () => {
-      const doc = mockDoc({ uploadedBy: otherUserId });
-      (VaultDocument.findOne as jest.Mock).mockResolvedValue(doc);
-
-      await expect(
-        updateDocument(documentId, userId, 'member', { name: 'Hacked' })
-      ).rejects.toThrow(ForbiddenError);
+    it('404s when not visible', async () => {
+      (VaultDocument.findOne as jest.Mock).mockResolvedValue(null);
+      await expect(renameDocument(documentId, userId, 'bmV3')).rejects.toThrow(NotFoundError);
     });
   });
 
-  // ─── deleteDocument ───
+  describe('changeScope', () => {
+    it('to personal drops every key except the uploader', async () => {
+      const doc = mockDoc();
+      (VaultDocument.findOne as jest.Mock).mockResolvedValue(doc);
+      await changeScope(documentId, userId, { scope: 'personal' });
+      expect(doc.scope).toBe('personal');
+      expect(VaultDocumentKey.destroy).toHaveBeenCalledTimes(1);
+      const arg = (VaultDocumentKey.destroy as jest.Mock).mock.calls[0][0];
+      expect(arg.where.documentId).toBe(documentId);
+      const ne = Object.getOwnPropertySymbols(arg.where.userId).map((sym) => arg.where.userId[sym]);
+      expect(ne).toEqual([userId]);
+    });
+
+    it('to household adds the given keys', async () => {
+      const doc = mockDoc({ scope: 'personal' });
+      (VaultDocument.findOne as jest.Mock).mockResolvedValue(doc);
+      (VaultDocumentKey.findAll as jest.Mock).mockResolvedValue([{ documentId, userId, wrappedKey: 'mine' }]);
+      await changeScope(documentId, userId, { scope: 'household', keys: [{ userId: otherUserId, sealedKey: sealed }] });
+      expect(doc.scope).toBe('household');
+      expect(VaultDocumentKey.bulkCreate).toHaveBeenCalledWith(
+        [expect.objectContaining({ userId: otherUserId, wrappedKey: sealed })],
+        expect.anything(),
+      );
+    });
+
+    it('is uploader only', async () => {
+      (VaultDocument.findOne as jest.Mock).mockResolvedValue(mockDoc());
+      await expect(changeScope(documentId, adminUserId, { scope: 'personal' })).rejects.toThrow(ForbiddenError);
+      expect(VaultDocumentKey.destroy).not.toHaveBeenCalled();
+    });
+
+    it('refuses to share with a child', async () => {
+      (VaultDocument.findOne as jest.Mock).mockResolvedValue(mockDoc({ scope: 'personal' }));
+      await expect(changeScope(documentId, userId, { scope: 'household', keys: [{ userId: childId, sealedKey: sealed }] }))
+        .rejects.toThrow(ValidationError);
+    });
+  });
 
   describe('deleteDocument', () => {
-    it('should allow the uploader to delete', async () => {
-      const doc = mockDoc({
-        destroy: jest.fn().mockResolvedValue(undefined),
-      });
+    it('lets the uploader delete', async () => {
+      const doc = mockDoc();
       (VaultDocument.findOne as jest.Mock).mockResolvedValue(doc);
-
-      await deleteDocument(documentId, userId, 'member');
-
+      await deleteDocument(documentId, userId);
       expect(deleteObject).toHaveBeenCalledWith(doc.s3Key);
       expect(doc.destroy).toHaveBeenCalledWith({ force: true, transaction: expect.anything() });
       expect(VaultDocumentKey.destroy).toHaveBeenCalledWith({ where: { documentId }, transaction: expect.anything() });
     });
 
-    it('should allow an admin to delete', async () => {
-      const doc = mockDoc({
-        uploadedBy: otherUserId,
-        destroy: jest.fn().mockResolvedValue(undefined),
-      });
+    it('lets a household admin delete a household file', async () => {
+      const doc = mockDoc({ uploadedBy: otherUserId });
       (VaultDocument.findOne as jest.Mock).mockResolvedValue(doc);
-
-      await deleteDocument(documentId, adminUserId, 'admin');
-
+      await deleteDocument(documentId, adminUserId);
       expect(deleteObject).toHaveBeenCalled();
       expect(doc.destroy).toHaveBeenCalled();
     });
 
-    it('should reject non-uploader non-admin', async () => {
-      const doc = mockDoc({ uploadedBy: otherUserId });
-      (VaultDocument.findOne as jest.Mock).mockResolvedValue(doc);
+    it('refuses a plain member who did not upload it', async () => {
+      (VaultDocument.findOne as jest.Mock).mockResolvedValue(mockDoc({ uploadedBy: otherUserId }));
+      await expect(deleteDocument(documentId, userId)).rejects.toThrow(ForbiddenError);
+      expect(deleteObject).not.toHaveBeenCalled();
+    });
 
-      await expect(
-        deleteDocument(documentId, userId, 'member')
-      ).rejects.toThrow(ForbiddenError);
+    it('only widens the lookup to the whole household for an admin', async () => {
+      (VaultDocument.findOne as jest.Mock).mockResolvedValue(mockDoc());
+      await deleteDocument(documentId, userId);
+      expect(orOf((VaultDocument.findOne as jest.Mock).mock.calls[0][0].where)).toHaveLength(1);
+      await deleteDocument(documentId, adminUserId);
+      expect(orOf((VaultDocument.findOne as jest.Mock).mock.calls[1][0].where)).toEqual(
+        expect.arrayContaining([{ householdId }]),
+      );
+    });
+
+    it('404s for a document nobody can reach', async () => {
+      (VaultDocument.findOne as jest.Mock).mockResolvedValue(null);
+      await expect(deleteDocument(documentId, userId)).rejects.toThrow(NotFoundError);
     });
   });
 
-  // ─── hardDeleteDocument ───
-
   describe('hardDeleteDocument', () => {
-    it('should allow an admin to hard-delete', async () => {
-      const doc = mockDoc({
-        destroy: jest.fn().mockResolvedValue(undefined),
-      });
+    it('lets an admin remove a household file for good', async () => {
+      const doc = mockDoc();
       (VaultDocument.findOne as jest.Mock).mockResolvedValue(doc);
-
-      await hardDeleteDocument(documentId, adminUserId, 'admin');
-
+      await hardDeleteDocument(documentId, adminUserId);
       expect(deleteObject).toHaveBeenCalled();
       expect(doc.destroy).toHaveBeenCalledWith({ force: true, transaction: expect.anything() });
     });
 
-    it('should reject non-admin user', async () => {
-      await expect(
-        hardDeleteDocument(documentId, userId, 'member')
-      ).rejects.toThrow(ForbiddenError);
+    it('refuses non-admins', async () => {
+      await expect(hardDeleteDocument(documentId, userId)).rejects.toThrow(ForbiddenError);
     });
   });
-
-  // ─── getStorageUsage ───
 
   describe('getStorageUsage', () => {
-    it('should return storage usage', async () => {
-      const docs = [
-        { sizeBytes: 500 },
-        { sizeBytes: 1500 },
-      ];
-      (VaultDocument.findAll as jest.Mock).mockResolvedValue(docs);
-
-      const result = await getStorageUsage(userId);
-
-      expect(result.usedBytes).toBe(2000);
-      expect(result.limitBytes).toBe(2 * 1024 * 1024 * 1024);
-      expect(result.documentCount).toBe(2);
+    it('sums what the caller uploaded', async () => {
+      (VaultDocument.findAll as jest.Mock).mockResolvedValue([{ sizeBytes: 500 }, { sizeBytes: 1500 }]);
+      expect(await getStorageUsage(userId)).toEqual({ usedBytes: 2000, limitBytes: 2 * 1024 * 1024 * 1024, documentCount: 2 });
     });
   });
-
-  // ─── Key Management ───
-
-  describe('storeUserKey', () => {
-    it('should upsert a user key', async () => {
-      const key = mockVaultKey();
-      (VaultKey.upsert as jest.Mock).mockResolvedValue([key, true]);
-      (VaultKey.findByPk as jest.Mock).mockResolvedValue(key);
-
-      const result = await storeUserKey(userId, {
-        publicKey: 'pub-key-123',
-        privateKeyEncrypted: 'enc-priv-key',
-      });
-
-      expect(result.userId).toBe(userId);
-      expect(result.publicKey).toBe('pub-key-123');
-    });
-  });
-
-  describe('getUserKey', () => {
-    it('should return user key if it exists', async () => {
-      (VaultKey.findByPk as jest.Mock).mockResolvedValue(mockVaultKey());
-
-      const result = await getUserKey(userId);
-
-      expect(result).not.toBeNull();
-      expect(result!.publicKey).toBe('pub-key-123');
-    });
-
-    it('should return null if no key exists', async () => {
-      (VaultKey.findByPk as jest.Mock).mockResolvedValue(null);
-
-      const result = await getUserKey(userId);
-
-      expect(result).toBeNull();
-    });
-  });
-
 });
 
-// ─── ADVERSARIAL SECURITY TESTS ──────────────────────────────────────────────
-//
-// These tests assert cryptographic security invariants that must hold at all
-// times, regardless of test-environment state. They run outside the main
-// describe block intentionally so they cannot be influenced by beforeEach
-// mock resets.
-
-describe('ADVERSARIAL: Server-side crypto absence', () => {
-  it('vault service.ts contains zero decryption routines or crypto imports', () => {
-    const servicePath = path.resolve(__dirname, '../service.ts');
-    const source = fs.readFileSync(servicePath, 'utf-8');
-
-    // The server service must never import or invoke any cryptographic
-    // decryption functions. If any of these strings appear in implementation
-    // code, it means the server has gained decryption capability — a critical
-    // security regression.
-    const forbidden = [
-      /\bsubtle\b/,
-      /\bcrypto\.subtle\b/,
-      /AES-GCM/,
-      /RSA-OAEP/,
-      /\.decrypt\b/,
-      /unwrapKey/,
-      /importKey/,
-      /deriveKey/,
-      /createCipheriv/,
-      /createDecipheriv/,
-      /from 'crypto'/,
-      /require\(['"]crypto['"]\)/,
-      /from 'node:crypto'/,
-    ];
-
-    for (const pattern of forbidden) {
-      // Allow the pattern in comments (lines starting with //)
-      const nonCommentLines = source.split('\n').filter((line) => !line.trimStart().startsWith('//'));
-      const nonCommentSource = nonCommentLines.join('\n');
-      expect(nonCommentSource).not.toMatch(pattern);
+describe('ADVERSARIAL: the server never decrypts', () => {
+  it('vault service.ts contains no decryption routines or crypto imports', () => {
+    const source = fs.readFileSync(path.resolve(__dirname, '../service.ts'), 'utf-8');
+    const code = source.split('\n').filter((line) => !line.trimStart().startsWith('//')).join('\n');
+    for (const pattern of [
+      /\bsubtle\b/, /AES-GCM/, /RSA-OAEP/, /\.decrypt\b/, /unwrapKey/, /importKey/, /deriveKey/,
+      /createCipheriv/, /createDecipheriv/, /from 'crypto'/, /require\(['"]crypto['"]\)/, /from 'node:crypto'/,
+    ]) {
+      expect(code).not.toMatch(pattern);
     }
   });
 });
-
-describe('ADVERSARIAL: Revoked member loses document key access', () => {
-  const revokedId = 'dd0e8400-e29b-41d4-a716-000000000002';
-
-  beforeEach(() => {
-    jest.clearAllMocks();
-    (HouseholdMember.findOne as jest.Mock).mockResolvedValue({ householdId });
-  });
-
-  it('getDocumentKey returns NotFoundError for a revoked member who no longer has a key record', async () => {
-    // Simulate that revokeAndRekeyMember already deleted the revoked user's VaultDocumentKey
-    (VaultDocument.findOne as jest.Mock).mockResolvedValue(mockDoc());
-    (VaultDocumentKey.findOne as jest.Mock).mockResolvedValue(null); // key was deleted
-
-    // Revoked member tries to fetch their document key
-    (HouseholdMember.findOne as jest.Mock).mockResolvedValue({ householdId });
-
-    await expect(
-      // getDocumentKey called with the revoked user's userId
-      import('../service').then((s) => s.getDocumentKey(documentId, revokedId))
-    ).rejects.toThrow(NotFoundError);
-  });
-});
-

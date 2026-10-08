@@ -10,6 +10,7 @@ import { getIO } from '../../shared/utils/socket';
 import { withDeadlockRetry } from '../../shared/utils/dbRetry';
 import { assertSeatAvailable, clearEntitlementCache } from '../billing/entitlement';
 import { onHouseholdDeletionScheduled, onHouseholdDeletionCancelled, onHouseholdPurged, syncBillingEmail, reportDeletionHookFailure } from '../billing/deletion';
+import { onMemberLostVaultAccess } from '../vault/access';
 import logger from '../../shared/utils/logger';
 import * as notificationService from '../../shared/services/notifications';
 import type {
@@ -338,6 +339,7 @@ export async function removeMember(
   }
 
   await target.destroy();
+  await onMemberLostVaultAccess(targetUserId, householdId);
   await removeFromHouseholdConversation(householdId, targetUserId);
   await clearEntitlementCache(householdId);
 }
@@ -355,6 +357,7 @@ export async function leaveHousehold(userId: string, householdId: string): Promi
     );
   }
   await membership.destroy();
+  await onMemberLostVaultAccess(userId, householdId);
   await User.update({ role: 'member' }, { where: { id: userId } });
   await removeFromHouseholdConversation(householdId, userId);
   await clearEntitlementCache(householdId);
@@ -421,6 +424,8 @@ export async function changeMemberRole(
 
   await target.update({ role: body.role });
   await User.update({ role: body.role }, { where: { id: targetUserId } });
+  // Children never hold keys to the household's shared files.
+  if (body.role === 'child') await onMemberLostVaultAccess(targetUserId, householdId);
   void syncBillingEmail(householdId).catch(() => undefined);
 
   return {
@@ -766,6 +771,8 @@ async function finalizeHouseholdDeletion(household: Household): Promise<void> {
   // (paranoid) so its data can still be audited/recovered if needed — same
   // lightweight approach used for account deletion, no cascading purge of
   // owned content (feed posts, tasks, vault docs, etc.).
+  const members = await HouseholdMember.findAll({ where: { householdId: household.id } });
+  for (const member of members) await onMemberLostVaultAccess(member.userId, household.id);
   await HouseholdMember.destroy({ where: { householdId: household.id } });
   await household.destroy();
 }

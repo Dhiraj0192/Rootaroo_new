@@ -2,14 +2,10 @@ import { Model, DataTypes, CreationOptional } from 'sequelize';
 import sequelize from '../../config/database';
 
 /**
- * VaultDocumentKey — per-user wrapped AES key for each vault document.
- *
- * When a document is uploaded, the uploader wraps the AES-256-GCM key with
- * their own RSA public key and stores it here. During a key ceremony, the
- * uploader (or any member who already has access) unwraps the AES key and
- * re-wraps it for each household member's RSA public key.
- *
- * The server never sees the raw AES key — only RSA-OAEP-wrapped ciphertext.
+ * VaultDocumentKey: one sealed copy of a file's key per person who can open it.
+ * Each copy is sealed on a phone to that person's account public key; the server
+ * only stores and hands back the sealed bytes. No row means no access (a household
+ * file with no row for an adult is "pending" for them).
  */
 class VaultDocumentKey extends Model {
   declare documentId: string;
