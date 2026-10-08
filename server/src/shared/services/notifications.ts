@@ -31,6 +31,7 @@ export async function notifyHousehold(
   body: string,
   data?: Record<string, unknown>,
   excludeUserId?: string,
+  options?: { throwOnError?: boolean },
 ): Promise<void> {
   try {
     const { HouseholdMember } = await import('../../database/models');
@@ -43,10 +44,15 @@ export async function notifyHousehold(
       .map((m) => m.userId)
       .filter((id) => id !== excludeUserId);
 
+    // notifyUser swallows its own errors, so callers that must know about a
+    // failed send go straight to sendToUser.
     await Promise.all(
-      userIds.map((userId) => notifyUser(userId, type, title, body, data)),
+      userIds.map((userId) => (options?.throwOnError
+        ? sendToUser(userId, type, title, body, data, undefined)
+        : notifyUser(userId, type, title, body, data))),
     );
   } catch (error) {
+    if (options?.throwOnError) throw error;
     logger.error(`[notifyHousehold] Failed to notify household ${householdId}:`, error);
   }
 }

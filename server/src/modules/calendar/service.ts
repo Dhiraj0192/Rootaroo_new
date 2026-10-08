@@ -450,15 +450,26 @@ export async function notifyUpcomingEvents(): Promise<number> {
 
     const householdId = ev.householdId;
     const title = ev.title;
-    notificationService
-      .notifyHousehold(
+    try {
+      // notifyHousehold swallows errors by default; throwOnError lets a failed
+      // send surface so the claim can be released and the next run retries.
+      await notificationService.notifyHousehold(
         householdId,
         'calendar',
         'Event starting soon',
         `${title} starts at ${startTime.slice(0, 5)}`,
         { type: 'calendar', eventId: ev.id },
-      )
-      .catch((e: Error) => logger.warn('[Calendar] Reminder push failed:', e.message));
+        undefined,
+        { throwOnError: true },
+      );
+    } catch (e) {
+      logger.warn('[Calendar] Reminder push failed:', (e as Error).message);
+      await CalendarEvent.update(
+        { reminderSentAt: null },
+        { where: { id: ev.id, reminderSentAt: now } },
+      );
+      continue;
+    }
     sent += 1;
   }
   return sent;
