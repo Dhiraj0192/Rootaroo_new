@@ -33,6 +33,7 @@ jest.mock('../../../database/models', () => ({
   HouseholdMember: {
     findOne: jest.fn(),
   },
+  sequelize: { transaction: jest.fn() },
 }));
 
 jest.mock('../../location-share/service', () => ({
@@ -49,6 +50,8 @@ const mockTo = jest.fn(() => ({ emit: mockEmit }));
 jest.mock('../../../shared/utils/socket', () => ({
   getIO: () => ({ to: mockTo }),
 }));
+
+const notifyUserMock = () => (jest.requireMock('../../../shared/services/notifications') as { notifyUser: jest.Mock }).notifyUser;
 
 const modelsMock = models as jest.Mocked<typeof models>;
 
@@ -74,8 +77,11 @@ function makePingRequest(overrides: Record<string, unknown> = {}) {
   return base;
 }
 
+const TX = { id: 'tx' };
+
 beforeEach(() => {
   jest.clearAllMocks();
+  (modelsMock.sequelize.transaction as jest.Mock).mockImplementation((cb: any) => cb(TX));
   (modelsMock.PingRequest.findOne as jest.Mock).mockResolvedValue(null);
   (modelsMock.PingRequest.update as jest.Mock).mockResolvedValue([0]);
   (modelsMock.HouseholdMember.findOne as jest.Mock).mockImplementation(({ where }: any) => {
@@ -154,6 +160,7 @@ describe('respondToPingRequest', () => {
 
     expect(modelsMock.CheckIn.create).toHaveBeenCalledWith(
       expect.objectContaining({ householdId, userId: targetUserId, latitude: 27.7172 }),
+      { transaction: TX },
     );
     expect(pending.status).toBe('fulfilled');
     expect(pending.checkInId).toBe('ci-1');
@@ -178,6 +185,53 @@ describe('respondToPingRequest', () => {
       expect.objectContaining({ type: 'ping_response', checkInId: 'ci-1' }),
     );
     expect(mockTo).toHaveBeenCalledWith(`user:${requesterId}`);
+  });
+
+  it('refuses with 409 when the requester has left the household, leaving the ping pending', async () => {
+    const pending = makePingRequest();
+    (modelsMock.PingRequest.findByPk as jest.Mock).mockResolvedValueOnce(pending);
+    (modelsMock.HouseholdMember.findOne as jest.Mock).mockImplementation(({ where }: any) =>
+      Promise.resolve(where.userId === targetUserId ? { householdId, userId: targetUserId } : null));
+
+    await expect(
+      respondToPingRequest(targetUserId, pingRequestId, { action: 'accept', latitude: 1, longitude: 2, durationMinutes: 15 }),
+    ).rejects.toMatchObject({ statusCode: 409, message: 'They are no longer in your household' });
+
+    expect(pending.status).toBe('pending');
+    expect(pending.save).not.toHaveBeenCalled();
+    expect(modelsMock.CheckIn.create).not.toHaveBeenCalled();
+    expect(startShare).not.toHaveBeenCalled();
+  });
+
+  it('writes the check-in, the fulfilled ping and the share inside one transaction', async () => {
+    const pending = makePingRequest();
+    (modelsMock.PingRequest.findByPk as jest.Mock)
+      .mockResolvedValueOnce(pending)
+      .mockResolvedValueOnce(makePingRequest({ status: 'fulfilled' }));
+    (modelsMock.CheckIn.create as jest.Mock).mockResolvedValue({ id: 'ci-1' });
+
+    await respondToPingRequest(targetUserId, pingRequestId, { action: 'accept', latitude: 1, longitude: 2, durationMinutes: 15 });
+
+    expect(modelsMock.sequelize.transaction).toHaveBeenCalledTimes(1);
+    expect(modelsMock.CheckIn.create).toHaveBeenCalledWith(expect.anything(), { transaction: TX });
+    expect(pending.save).toHaveBeenCalledWith({ transaction: TX });
+    expect(startShare).toHaveBeenCalledWith(targetUserId, expect.anything(), expect.objectContaining({ transaction: TX, notify: false }));
+  });
+
+  it('does not leave the ping fulfilled when starting the share fails', async () => {
+    const pending = makePingRequest();
+    (modelsMock.PingRequest.findByPk as jest.Mock).mockResolvedValueOnce(pending);
+    (modelsMock.CheckIn.create as jest.Mock).mockResolvedValue({ id: 'ci-1' });
+    (startShare as jest.Mock).mockRejectedValueOnce(new Error('boom'));
+
+    await expect(
+      respondToPingRequest(targetUserId, pingRequestId, { action: 'accept', latitude: 1, longitude: 2, durationMinutes: 15 }),
+    ).rejects.toThrow('boom');
+
+    // every write went through the transaction, which rolls back on the rejection
+    for (const call of (pending.save as jest.Mock).mock.calls) expect(call[0]).toEqual({ transaction: TX });
+    expect(notifyUserMock()).not.toHaveBeenCalled();
+    expect(mockEmit).not.toHaveBeenCalled();
   });
 
   it('does not start a live share when no position was sent', async () => {

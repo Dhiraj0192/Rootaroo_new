@@ -11,6 +11,7 @@ jest.mock('../../../shared/utils/socket', () => ({
   getIO: jest.fn(() => ({ to: (room: string) => ({ emit: (event: string) => emitted.push({ room, event }) }) })),
 }));
 
+import { Op } from 'sequelize';
 import { LocationShare, HouseholdMember, User } from '../../../database/models';
 import { notifyUser } from '../../../shared/services/notifications';
 import {
@@ -41,7 +42,8 @@ beforeEach(() => {
   emitted.length = 0;
   (HouseholdMember.findAll as jest.Mock).mockResolvedValue([{ userId: 'me' }, { userId: 'ravi' }, { userId: 'mina' }]);
   (User.findByPk as jest.Mock).mockResolvedValue({ id: 'me', displayName: 'Asha Rao', avatarUrl: null });
-  (LocationShare.update as jest.Mock).mockResolvedValue([0]);
+  (LocationShare.update as jest.Mock).mockResolvedValue([1]);
+  (LocationShare.findAll as jest.Mock).mockResolvedValue([]);
 });
 afterEach(() => jest.useRealTimers());
 
@@ -63,18 +65,36 @@ describe('startShare', () => {
     (LocationShare.create as jest.Mock).mockImplementation(async (v) => share(v));
     (LocationShare.findByPk as jest.Mock).mockImplementation(async () => share());
     const res = await startShare('me', { durationMinutes: 60, viewerIds: null, latitude: 27.7, longitude: 85.3, accuracy: 10 });
-    expect(LocationShare.update).toHaveBeenCalledWith(
-      { endedAt: NOW },
-      { where: expect.objectContaining({ sharerId: 'me', endedAt: null }) },
+    expect(LocationShare.findAll).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ sharerId: 'me', endedAt: null }) }),
     );
     expect(LocationShare.create).toHaveBeenCalledWith(expect.objectContaining({
       householdId: 'h1', sharerId: 'me', viewerIds: null, startedAt: NOW,
       expiresAt: new Date(NOW.getTime() + 60 * MIN), latitude: 27.7, longitude: 85.3, accuracy: 10,
-    }));
+    }), undefined);
     expect(emitted.filter((e) => e.event === 'location:share-started').map((e) => e.room).sort()).toEqual(['user:me', 'user:mina', 'user:ravi']);
     expect(notifyUser).toHaveBeenCalledWith('ravi', 'location_share_started', 'Asha is sharing their location', 'For 1 hour', { type: 'location_share_started', shareId: expect.any(String) });
     expect(notifyUser).not.toHaveBeenCalledWith('me', expect.anything(), expect.anything(), expect.anything(), expect.anything());
     expect(res.sharer.displayName).toBe('Asha Rao');
+  });
+
+  it("ends the sharer's earlier share and tells its audience before creating the new one", async () => {
+    const old = share({ id: 'old', viewerIds: null });
+    (LocationShare.findAll as jest.Mock).mockResolvedValue([old]);
+    (LocationShare.create as jest.Mock).mockImplementation(async (v) => {
+      // the old share's end must already have gone out
+      expect(emitted.filter((e) => e.event === 'location:share-ended').length).toBeGreaterThan(0);
+      return share(v);
+    });
+    (LocationShare.findByPk as jest.Mock).mockImplementation(async () => share());
+    await startShare('me', { durationMinutes: 30, viewerIds: ['mina'], latitude: 1, longitude: 2 });
+    expect(old.endedAt).toEqual(NOW);
+    expect(old.latitude).toBeNull();
+    expect(old.longitude).toBeNull();
+    expect(old.accuracy).toBeNull();
+    expect(old.save).toHaveBeenCalled();
+    const ended = emitted.filter((e) => e.event === 'location:share-ended').map((e) => e.room);
+    expect(ended).toEqual(expect.arrayContaining(['user:ravi', 'user:mina']));
   });
 
   it('only tells the chosen people', async () => {
@@ -98,13 +118,14 @@ describe('startShare', () => {
 });
 
 describe('updateShareLocation', () => {
-  it('stores the new position and sends it to the audience only', async () => {
+  it('stores the new position with a conditional update and sends it to the audience only', async () => {
     const s = share();
     (LocationShare.findByPk as jest.Mock).mockResolvedValue(s);
     await updateShareLocation('me', 's1', { latitude: 27.71, longitude: 85.31, accuracy: 8 });
-    expect(s.latitude).toBe(27.71);
-    expect(s.locationUpdatedAt).toEqual(NOW);
-    expect(s.save).toHaveBeenCalled();
+    expect(LocationShare.update).toHaveBeenCalledWith(
+      { latitude: 27.71, longitude: 85.31, accuracy: 8, locationUpdatedAt: NOW },
+      { where: { id: 's1', sharerId: 'me', endedAt: null, expiresAt: { [Op.gt]: NOW } } },
+    );
     expect(emitted.filter((e) => e.event === 'location:update').map((e) => e.room).sort()).toEqual(['user:me', 'user:mina', 'user:ravi']);
   });
 
@@ -118,6 +139,13 @@ describe('updateShareLocation', () => {
     await expect(updateShareLocation('me', 's1', { latitude: 1, longitude: 2 })).rejects.toMatchObject({ statusCode: 410 });
     (LocationShare.findByPk as jest.Mock).mockResolvedValue(share({ expiresAt: new Date(NOW.getTime() - 1) }));
     await expect(updateShareLocation('me', 's1', { latitude: 1, longitude: 2 })).rejects.toMatchObject({ statusCode: 410 });
+  });
+
+  it('answers 410 and emits nothing when the share ended between the check and the write', async () => {
+    (LocationShare.findByPk as jest.Mock).mockResolvedValue(share());
+    (LocationShare.update as jest.Mock).mockResolvedValue([0]);
+    await expect(updateShareLocation('me', 's1', { latitude: 1, longitude: 2 })).rejects.toMatchObject({ statusCode: 410 });
+    expect(emitted.filter((e) => e.event === 'location:update')).toEqual([]);
   });
 
   it('404s for an unknown share', async () => {

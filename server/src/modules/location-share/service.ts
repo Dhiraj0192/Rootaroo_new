@@ -1,4 +1,4 @@
-import { Op } from 'sequelize';
+import { Op, Transaction } from 'sequelize';
 import { LocationShare, HouseholdMember, User } from '../../database/models';
 import { AppError, ForbiddenError, NotFoundError } from '../../shared/utils/errors';
 import { getUserHousehold as getUserHouseholdCore } from '../../shared/utils/household';
@@ -89,16 +89,34 @@ async function loadOwnActive(userId: string, id: string, forbidden: string): Pro
 }
 
 /** Ends a share and drops its position, so nothing is kept once nobody can see it. */
-async function endShare(share: LocationShare, endedAt: Date): Promise<LocationShareResponse> {
+async function endShare(
+  share: LocationShare,
+  endedAt: Date,
+  transaction?: Transaction,
+): Promise<LocationShareResponse> {
   share.endedAt = endedAt;
   share.latitude = null;
   share.longitude = null;
   share.accuracy = null;
-  await share.save();
+  await share.save(transaction ? { transaction } : undefined);
+  // Inside a transaction the caller announces the end once it has committed.
+  if (transaction) return toResponse(share);
+  return announceEnded(share);
+}
 
+async function announceEnded(share: LocationShare): Promise<LocationShareResponse> {
   const response = toResponse((await loadFull(share.id)) || share);
   emitTo([share.sharerId, ...audienceOf(share, await memberIdsOf(share.householdId))], 'location:share-ended', response);
   return response;
+}
+
+/** Runs now, or once the surrounding transaction has committed. */
+function afterCommit(transaction: Transaction | undefined, fn: () => Promise<void>): Promise<void> {
+  if (!transaction) return fn();
+  transaction.afterCommit(() => {
+    fn().catch(() => {});
+  });
+  return Promise.resolve();
 }
 
 // ── Service ──
@@ -106,7 +124,7 @@ async function endShare(share: LocationShare, endedAt: Date): Promise<LocationSh
 export async function startShare(
   userId: string,
   body: StartShareBody,
-  options: { notify?: boolean } = {},
+  options: { notify?: boolean; transaction?: Transaction } = {},
 ): Promise<LocationShareResponse> {
   const householdId = await getUserHousehold(userId);
 
@@ -121,50 +139,58 @@ export async function startShare(
     }
   }
 
-  // One live share per person: starting a new one replaces the old.
+  // One live share per person: starting a new one replaces the old, and its viewers are told.
   const now = new Date();
-  await LocationShare.update(
-    { endedAt: now },
-    { where: { sharerId: userId, endedAt: null, expiresAt: { [Op.gt]: now } } },
-  );
-  await LocationShare.update(
-    { latitude: null, longitude: null, accuracy: null },
-    { where: { sharerId: userId, endedAt: now } },
-  );
-
-  const created = await LocationShare.create({
-    householdId,
-    sharerId: userId,
-    viewerIds: body.viewerIds,
-    pingRequestId: body.pingRequestId ?? null,
-    startedAt: now,
-    expiresAt: new Date(now.getTime() + body.durationMinutes * 60_000),
-    latitude: body.latitude,
-    longitude: body.longitude,
-    accuracy: body.accuracy ?? null,
-    locationUpdatedAt: now,
+  const { transaction } = options;
+  const earlier = await LocationShare.findAll({
+    where: { sharerId: userId, endedAt: null, expiresAt: { [Op.gt]: now } },
+    ...(transaction ? { transaction } : {}),
   });
-
-  const full = await loadFull(created.id);
-  const response = toResponse(full || created);
-  const audience = audienceOf(created, memberIds);
-
-  emitTo([userId, ...audience], 'location:share-started', response);
-
-  if (options.notify !== false) {
-    const sharer = await User.findByPk(userId);
-    const firstName = (sharer?.displayName || 'Someone').split(' ')[0];
-    for (const id of audience) {
-      notificationService
-        .notifyUser(id, 'location_share_started', `${firstName} is sharing their location`, durationText(body.durationMinutes), {
-          type: 'location_share_started',
-          shareId: created.id,
-        })
-        .catch(() => {});
-    }
+  for (const old of earlier) await endShare(old, now, transaction);
+  if (transaction) {
+    await afterCommit(transaction, async () => {
+      for (const old of earlier) await announceEnded(old);
+    });
   }
 
-  return response;
+  const created = await LocationShare.create(
+    {
+      householdId,
+      sharerId: userId,
+      viewerIds: body.viewerIds,
+      pingRequestId: body.pingRequestId ?? null,
+      startedAt: now,
+      expiresAt: new Date(now.getTime() + body.durationMinutes * 60_000),
+      latitude: body.latitude,
+      longitude: body.longitude,
+      accuracy: body.accuracy ?? null,
+      locationUpdatedAt: now,
+    },
+    transaction ? { transaction } : undefined,
+  );
+
+  const audience = audienceOf(created, memberIds);
+
+  await afterCommit(transaction, async () => {
+    const full = await loadFull(created.id);
+    emitTo([userId, ...audience], 'location:share-started', toResponse(full || created));
+
+    if (options.notify !== false) {
+      const sharer = await User.findByPk(userId);
+      const firstName = (sharer?.displayName || 'Someone').split(' ')[0];
+      for (const id of audience) {
+        notificationService
+          .notifyUser(id, 'location_share_started', `${firstName} is sharing their location`, durationText(body.durationMinutes), {
+            type: 'location_share_started',
+            shareId: created.id,
+          })
+          .catch(() => {});
+      }
+    }
+  });
+
+  // The created row carries no sharer include yet inside a transaction; the response is rebuilt from it.
+  return toResponse(transaction ? created : (await loadFull(created.id)) || created);
 }
 
 export async function updateShareLocation(
@@ -174,11 +200,13 @@ export async function updateShareLocation(
 ): Promise<LocationShareResponse> {
   const share = await loadOwnActive(userId, shareId, 'This location share is not yours to update');
 
-  share.latitude = body.latitude;
-  share.longitude = body.longitude;
-  share.accuracy = body.accuracy ?? null;
-  share.locationUpdatedAt = new Date();
-  await share.save();
+  // Conditional write: the expiry job or a stop may have ended the share since it was loaded.
+  const now = new Date();
+  const [changed] = await LocationShare.update(
+    { latitude: body.latitude, longitude: body.longitude, accuracy: body.accuracy ?? null, locationUpdatedAt: now },
+    { where: { id: shareId, sharerId: userId, endedAt: null, expiresAt: { [Op.gt]: now } } },
+  );
+  if (!changed) throw new AppError(410, 'This location share has ended');
 
   const full = await loadFull(share.id);
   const response = toResponse(full || share);

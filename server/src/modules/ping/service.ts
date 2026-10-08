@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import { Op } from 'sequelize';
-import { PingRequest, CheckIn, User, HouseholdMember } from '../../database/models';
+import { PingRequest, CheckIn, User, HouseholdMember, sequelize } from '../../database/models';
 import { AppError, ForbiddenError, NotFoundError } from '../../shared/utils/errors';
 import { getUserHousehold as getUserHouseholdCore } from '../../shared/utils/household';
 import { getIO } from '../../shared/utils/socket';
@@ -164,38 +164,59 @@ export async function respondToPingRequest(
     const target = await User.findByPk(userId);
     const targetName = target?.displayName || 'Someone';
 
-    const checkIn = await CheckIn.create({
-      id: uuidv4(),
-      householdId: pingRequest.householdId,
-      userId,
-      latitude: body.latitude ?? null,
-      longitude: body.longitude ?? null,
-      address: body.address ?? null,
-      note: null,
-      checkedInAt: new Date(),
+    // The asker may have left the household since; there is nobody to share with.
+    const requesterMembership = await HouseholdMember.findOne({
+      where: { householdId: pingRequest.householdId, userId: pingRequest.requesterId },
     });
-
-    pingRequest.status = 'fulfilled';
-    pingRequest.checkInId = checkIn.id;
-    pingRequest.respondedAt = new Date();
-    await pingRequest.save();
-
-    // Live sharing is its own feature now; only the person who asked can see it.
-    // Without a position there is nothing to share (the check-in is still recorded).
-    if (body.durationMinutes && body.latitude != null && body.longitude != null) {
-      const share = await startShare(
-        userId,
-        {
-          durationMinutes: body.durationMinutes,
-          viewerIds: [pingRequest.requesterId],
-          latitude: body.latitude,
-          longitude: body.longitude,
-          pingRequestId: pingRequest.id,
-        },
-        { notify: false },
-      );
-      locationShareId = share.id;
+    if (!requesterMembership) {
+      throw new AppError(409, 'They are no longer in your household');
     }
+
+    // All or nothing: the ping is only fulfilled if the check-in and the share both exist.
+    const checkIn = await sequelize.transaction(async (transaction) => {
+      const created = await CheckIn.create(
+        {
+          id: uuidv4(),
+          householdId: pingRequest.householdId,
+          userId,
+          latitude: body.latitude ?? null,
+          longitude: body.longitude ?? null,
+          address: body.address ?? null,
+          note: null,
+          checkedInAt: new Date(),
+        },
+        { transaction },
+      );
+
+      pingRequest.status = 'fulfilled';
+      pingRequest.checkInId = created.id;
+      pingRequest.respondedAt = new Date();
+      await pingRequest.save({ transaction });
+
+      // Live sharing is its own feature now; only the person who asked can see it.
+      // Without a position there is nothing to share (the check-in is still recorded).
+      if (body.durationMinutes && body.latitude != null && body.longitude != null) {
+        const share = await startShare(
+          userId,
+          {
+            durationMinutes: body.durationMinutes,
+            viewerIds: [pingRequest.requesterId],
+            latitude: body.latitude,
+            longitude: body.longitude,
+            pingRequestId: pingRequest.id,
+          },
+          { notify: false, transaction },
+        );
+        locationShareId = share.id;
+      }
+      return created;
+    }).catch((err) => {
+      // The rollback undid the writes; keep the in-memory row in step with the database.
+      pingRequest.status = 'pending';
+      pingRequest.checkInId = null;
+      pingRequest.respondedAt = null;
+      throw err;
+    });
 
     const location = body.address || 'a new location';
     notificationService
