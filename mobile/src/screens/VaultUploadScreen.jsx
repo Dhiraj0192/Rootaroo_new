@@ -5,9 +5,9 @@
  * cards and a gold progress bar ("Uploading {name}…"). Presented as a
  * transparentModal so the vault list shows dimmed behind the sheet.
  *
- * Security: AES-256-GCM per file, IV via crypto.getRandomValues, the file key
- * sealed to the account public key (only this phone's private key opens it),
- * ciphertext → Cloudinary.
+ * Security: the vault repo encrypts the file, its name and its type on this
+ * phone (AES-256-GCM, fresh key per file) and seals the file key to this
+ * phone's account key, plus every adult's key for Household files.
  */
 import React, { useState } from 'react';
 import {
@@ -22,15 +22,11 @@ import {
 import { showAlert } from '../shared/services/themedAlert';
 import Svg, { Path, Rect, Circle } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { File, Paths } from 'expo-file-system';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { ensureCamera } from '../shared/permissions';
-import { vaultApi } from '../shared/api/vault';
 import { useVaultStore } from '../shared/store/vaultStore';
-import { generateAesKey, encryptBuffer, exportAesKey } from '../shared/crypto/vaultCrypto';
-import { seal } from '../shared/crypto/accountKey';
-import { bytesToBase64 } from '../shared/crypto/bytes';
+import { getVaultRepo, isMemberKeyChanged } from '../shared/vault/vaultRepo';
 import { usePrivateSpaceStore } from '../shared/store/privateSpaceStore';
 import { colors, fonts, goldButton, radius, withAlpha } from '../shared/theme';
 import { GoldFill } from '../shared/components/GoldButton';
@@ -55,6 +51,7 @@ export default function VaultUploadScreen({ navigation }) {
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [fileName, setFileName] = useState('');
+  const [scope, setScope] = useState('personal');
   const [namePrompt, setNamePrompt] = useState({
     visible: false,
     value: '',
@@ -97,52 +94,15 @@ export default function VaultUploadScreen({ navigation }) {
         ]);
         return;
       }
-      setProgress(35);
+      setProgress(40);
 
-      // Read file bytes
-      const file = new File(asset.uri);
-      const fileBytes = await file.arrayBuffer();
-      setProgress(45);
-
-      // AES-256-GCM key + encrypt — IV is crypto.getRandomValues
-      const aesKey = await generateAesKey();
-      const { iv, encryptedBytes } = await encryptBuffer(aesKey, fileBytes);
-      setProgress(60);
-
-      // Seal the file key to the account public key
-      const wrappedKey = bytesToBase64(await seal(publicKey, await exportAesKey(aesKey)));
-      setProgress(75);
-
-      // Write encrypted bytes to temp cache
-      const tempFile = new File(
-        Paths.cache,
-        `vault_enc_${Date.now()}_${Math.random().toString(36).substring(7)}`,
-      );
-      await tempFile.write(new Uint8Array(encryptedBytes));
-      setProgress(85);
-
-      // Upload
-      const document = await vaultApi.uploadDocument(
-        {
-          name: asset.name || 'Document',
-          mimeType: asset.mimeType,
-          sizeBytes: asset.size || 0,
-          encryptedKey: wrappedKey,
-          iv,
-        },
-        {
-          uri: tempFile.uri,
-          name: asset.name || 'encrypted_file',
-          type: 'application/octet-stream',
-        },
-      );
-
-      // Cleanup
-      try {
-        await tempFile.delete();
-      } catch {
-        /* ignore */
-      }
+      const document = await getVaultRepo().upload({
+        uri: asset.uri,
+        name: asset.name || 'Document',
+        mimeType: asset.mimeType,
+        scope,
+      });
+      setProgress(90);
       if (document) {
         useVaultStore.getState().prependDocument(document);
         setProgress(100);
@@ -154,6 +114,14 @@ export default function VaultUploadScreen({ navigation }) {
         ]);
       }
     } catch (error) {
+      if (isMemberKeyChanged(error)) {
+        showAlert(
+          'Check a safety number first',
+          `${error.members.map((m) => m.displayName).join(', ')} has a new key. Open the vault and compare safety numbers with them in person before sharing.`,
+          [{ text: 'OK', onPress: () => navigation.goBack() }],
+        );
+        return;
+      }
       showAlert(
         'Upload Failed',
         error?.response?.data?.message || error?.message || 'Could not upload file',
@@ -211,6 +179,25 @@ export default function VaultUploadScreen({ navigation }) {
       >
         <View style={styles.handle} />
         <Text style={styles.sheetTitle}>Add a document</Text>
+
+        <View style={styles.scopeRow}>
+          {[['personal', 'Personal'], ['household', 'Household']].map(([value, label]) => (
+            <TouchableOpacity
+              key={value}
+              style={[styles.scopeBtn, scope === value && styles.scopeBtnOn]}
+              onPress={() => setScope(value)}
+              disabled={uploading}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.scopeText, scope === value && styles.scopeTextOn]}>{label}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        <Text style={styles.scopeHelp}>
+          {scope === 'household'
+            ? 'Household files can be opened by adults in your household.'
+            : 'Personal files can only be opened by you, on this phone.'}
+        </Text>
 
         <View style={styles.optionsRow}>
           <TouchableOpacity
@@ -415,6 +402,39 @@ const styles = StyleSheet.create({
     height: '100%',
     backgroundColor: colors.gold,
     borderRadius: 3,
+  },
+  scopeRow: {
+    flexDirection: 'row',
+    backgroundColor: colors.canvasElevated,
+    borderRadius: 12,
+    padding: 3,
+    marginBottom: 10,
+  },
+  scopeBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  scopeBtnOn: {
+    backgroundColor: colors.surface,
+  },
+  scopeText: {
+    fontSize: 14,
+    fontFamily: fonts.bodyMedium,
+    color: colors.textSecondary,
+  },
+  scopeTextOn: {
+    color: colors.ink,
+    fontFamily: fonts.bodySemiBold,
+  },
+  scopeHelp: {
+    fontSize: 12,
+    lineHeight: 17,
+    fontFamily: fonts.body,
+    color: colors.textMuted,
+    textAlign: 'center',
+    marginBottom: 20,
   },
   progressText: {
     fontSize: 12,

@@ -8,8 +8,9 @@
  *     path briefly writes to the app-private cache directory and deletes it
  *     again shortly after (or on unmount). No other code path touches disk.
  *   - Screenshots are blocked at the OS level via expo-screen-capture.
- *   - The account private key is loaded from the hardware keychain (biometric-gated)
- *     and opens the sealed file key. A phone without the key never gets this far:
+ *   - The vault repo opens the sealed file key with the account private key from
+ *     the hardware keychain (biometric-gated), then decrypts the file, its name
+ *     and its type on this phone. A phone without the key never gets this far:
  *     the vault screen shows the "private space is on another phone" gate instead.
  *
  * Design: full-bleed dark viewer — header/footer float as translucent overlays
@@ -35,19 +36,16 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Pdf from 'react-native-pdf';
 import { Video, ResizeMode, Audio } from 'expo-av';
 import * as Sharing from 'expo-sharing';
-import * as FileSystem from 'expo-file-system';
-import { vaultApi } from '../shared/api/vault';
 import { useAuthStore } from '../shared/store/authStore';
-import { importAesKey, decryptFile } from '../shared/crypto/vaultCrypto';
-import { loadAccountPrivateKey, open } from '../shared/crypto/accountKey';
-import { base64ToBytes } from '../shared/crypto/bytes';
+import { useVaultStore } from '../shared/store/vaultStore';
+import { getVaultRepo, isKeyMissing, isMemberKeyChanged } from '../shared/vault/vaultRepo';
 import { formatFileSize } from '../shared/utils/format';
 import * as ScreenCapture from 'expo-screen-capture';
 import { colors, fonts, goldButton, withAlpha } from '../shared/theme';
 import { GoldFill } from '../shared/components/GoldButton';
 import ConfirmSheet from '../components/ConfirmSheet';
 import { KeyboardAvoider } from '../shared/components/KeyboardAware';
-function categorize(mimeType) {
+function categorize(mimeType = '') {
   if (mimeType.startsWith('image/')) return 'image';
   if (mimeType === 'application/pdf') return 'pdf';
   if (mimeType.startsWith('video/')) return 'video';
@@ -55,7 +53,6 @@ function categorize(mimeType) {
   return 'other';
 }
 const AUTO_CLOSE_SECONDS = 300; // 5 minutes — mock: "Auto-closes in 0:48"
-const TEMP_FILE_LIFETIME_MS = 60_000; // best-effort cleanup window for "Open with…" exports
 
 function formatLockTime(totalSeconds) {
   const m = Math.floor(totalSeconds / 60);
@@ -70,6 +67,7 @@ export default function VaultViewerScreen({ navigation, route }) {
   const [decrypting, setDecrypting] = useState(false);
   const [dataUri, setDataUri] = useState(null);
   const [decryptFailed, setDecryptFailed] = useState(false);
+  const me = useAuthStore((st) => st.user);
   const [statusMessage, setStatusMessage] = useState('Loading...');
   const [autoCloseSeconds, setAutoCloseSeconds] = useState(AUTO_CLOSE_SECONDS);
   const [showOptions, setShowOptions] = useState(false);
@@ -80,7 +78,6 @@ export default function VaultViewerScreen({ navigation, route }) {
   const [exporting, setExporting] = useState(false);
   const [audioStatus, setAudioStatus] = useState('idle');
   const soundRef = useRef(null);
-  const tempFileRef = useRef(null);
 
   // FR-129: Block screenshots at OS level while this screen is mounted
   ScreenCapture.usePreventScreenCapture('vault-viewer');
@@ -91,15 +88,10 @@ export default function VaultViewerScreen({ navigation, route }) {
     loadAndDecrypt();
   }, [documentId]);
 
-  // Clean up any playing sound + exported temp file on unmount
+  // Stop any playing sound on unmount (exported temp files are deleted by the repo)
   useEffect(() => {
     return () => {
       soundRef.current?.unloadAsync().catch(() => {});
-      if (tempFileRef.current) {
-        FileSystem.deleteAsync(tempFileRef.current, {
-          idempotent: true,
-        }).catch(() => {});
-      }
     };
   }, []);
 
@@ -117,84 +109,20 @@ export default function VaultViewerScreen({ navigation, route }) {
 
   const loadAndDecrypt = useCallback(async () => {
     try {
-      setStatusMessage('Loading document...');
-      const document = await vaultApi.getDocument(documentId);
-      setDoc(document);
-      setDecrypting(true);
-      setStatusMessage('Fetching vault key...');
-      let wrappedKey = null;
-      try {
-        const keyRes = await vaultApi.getDocumentKey(documentId);
-        wrappedKey = keyRes.wrappedKey;
-      } catch {
-        wrappedKey = document.encryptedKey || null;
-      }
-      if (!wrappedKey || !document.iv) {
-        setDecryptFailed(true);
-        return;
-      }
-      setStatusMessage('Downloading encrypted document...');
-      const encryptedResponse = await fetch(document.downloadUrl);
-      const encryptedArrayBuffer = await encryptedResponse.arrayBuffer();
-      const user = useAuthStore.getState().user;
-      if (!user?.id) {
-        setDecryptFailed(true);
-        return;
-      }
-      setStatusMessage('Authenticating...');
-      let accountKey;
-      try {
-        accountKey = await loadAccountPrivateKey(user.id);
-      } catch {
-        showAlert('Authentication failed', 'Could not verify your fingerprint or Face ID.', [
-          {
-            text: 'OK',
-            onPress: () => navigation.goBack(),
-          },
-        ]);
-        return;
-      }
-      if (!accountKey) {
-        showAlert('Private space not on this phone', 'Move it here or restore it from your backup in Privacy & security.', [
-          {
-            text: 'OK',
-            onPress: () => navigation.goBack(),
-          },
-        ]);
-        return;
-      }
       setStatusMessage('Decrypting...');
-      const rawFileKey = await open(accountKey.privateKey, base64ToBytes(wrappedKey));
-      const aesKey = await importAesKey(rawFileKey);
-      rawFileKey.fill(0);
-      const encryptedBytes = new Uint8Array(encryptedArrayBuffer);
-      const authTag = encryptedBytes.slice(encryptedBytes.length - 16);
-      const ciphertext = encryptedBytes.slice(0, encryptedBytes.length - 16);
-      const ab2b64 = (buf) => {
-        const bytes = new Uint8Array(buf);
-        let binary = '';
-        for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
-        return btoa(binary);
-      };
-
-      // FR-128: Decrypt in-memory — plaintext never touches disk
-      const arrayBuffer = await decryptFile(
-        aesKey,
-        ab2b64(ciphertext.buffer),
-        document.iv,
-        ab2b64(authTag.buffer),
-      );
-      const base64 = ab2b64(arrayBuffer);
-      setDataUri(`data:${document.mimeType};base64,${base64}`);
+      setDecrypting(true);
+      const { doc: opened, dataUri: uri } = await getVaultRepo().open(documentId);
+      setDoc(opened);
+      setDataUri(uri);
     } catch (err) {
-      if (!doc) {
-        showAlert(
-          'Error',
-          `Could not load document: ${err?.response?.status ?? ''} ${err?.response?.data?.error || err?.message || 'unknown error'}`,
-        );
-        navigation.goBack();
+      if (isKeyMissing(err)) {
+        showAlert('Private space not on this phone', 'Move it here or restore it from your backup in Privacy & security.', [
+          { text: 'OK', onPress: () => navigation.goBack() },
+        ]);
       } else {
-        showAlert('Decryption Failed', err?.message || 'Could not decrypt document');
+        showAlert('Could not open this file', err?.response?.data?.message || err?.message || 'Please try again.', [
+          { text: 'OK', onPress: () => navigation.goBack() },
+        ]);
         setDecryptFailed(true);
       }
     } finally {
@@ -204,21 +132,10 @@ export default function VaultViewerScreen({ navigation, route }) {
     }
   }, [documentId, navigation]);
 
-  // ── Options: share/export, rename, delete ──
+  // ── Options: share/export, rename, scope, delete ──
 
-  const scheduleTempFileCleanup = (uri) => {
-    tempFileRef.current = uri;
-    setTimeout(() => {
-      if (tempFileRef.current === uri) {
-        FileSystem.deleteAsync(uri, {
-          idempotent: true,
-        }).catch(() => {});
-        tempFileRef.current = null;
-      }
-    }, TEMP_FILE_LIFETIME_MS);
-  };
   const handleOpenExternally = async () => {
-    if (!dataUri || !doc) return;
+    if (!doc) return;
     setExporting(true);
     try {
       const canShare = await Sharing.isAvailableAsync();
@@ -226,14 +143,9 @@ export default function VaultViewerScreen({ navigation, route }) {
         showAlert('Not available', 'Sharing is not available on this device.');
         return;
       }
-      const base64 = dataUri.split(',')[1] ?? '';
-      const ext = doc.name.includes('.') ? doc.name.split('.').pop() : 'bin';
-      const tempUri = `${FileSystem.cacheDirectory}vault_export_${Date.now()}.${ext}`;
-      await FileSystem.writeAsStringAsync(tempUri, base64, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-      scheduleTempFileCleanup(tempUri);
-      await Sharing.shareAsync(tempUri, {
+      // The only path that writes plaintext to disk; the repo deletes it after a minute.
+      const { uri } = await getVaultRepo().open(doc, { asFile: true });
+      await Sharing.shareAsync(uri, {
         mimeType: doc.mimeType,
         dialogTitle: doc.name,
       });
@@ -255,10 +167,10 @@ export default function VaultViewerScreen({ navigation, route }) {
       return;
     }
     try {
-      const updated = await vaultApi.updateDocument(doc.id, {
-        name,
-      });
+      await getVaultRepo().rename(doc, name);
+      const updated = { ...doc, name };
       setDoc(updated);
+      useVaultStore.getState().updateDocument(updated);
     } catch (e) {
       showAlert('Error', e?.response?.data?.message || 'Could not rename');
     } finally {
@@ -269,12 +181,30 @@ export default function VaultViewerScreen({ navigation, route }) {
     if (!doc) return;
     setDeleting(true);
     try {
-      await vaultApi.deleteDocument(doc.id);
+      await getVaultRepo().remove(doc.id);
+      useVaultStore.getState().removeDocument(doc.id);
       navigation.goBack();
     } catch (e) {
       setDeleting(false);
       setShowDeleteConfirm(false);
       showAlert('Error', e?.response?.data?.message || 'Could not delete');
+    }
+  };
+
+  const switchScope = async () => {
+    setShowOptions(false);
+    const next = doc.scope === 'household' ? 'personal' : 'household';
+    try {
+      await getVaultRepo().setScope(doc, next);
+      const updated = { ...doc, scope: next };
+      setDoc(updated);
+      useVaultStore.getState().updateDocument(updated);
+    } catch (e) {
+      if (isMemberKeyChanged(e)) {
+        showAlert('Check a safety number first', 'Someone in your household has a new key. Open the vault and compare safety numbers with them in person before sharing.');
+      } else {
+        showAlert('Error', e?.response?.data?.message || 'Could not change who can open this file');
+      }
     }
   };
 
@@ -322,6 +252,7 @@ export default function VaultViewerScreen({ navigation, route }) {
   }
   if (!doc) return null;
   const category = categorize(doc.mimeType);
+  const canDelete = doc.mine || me?.role === 'admin';
   const renderContent = () => {
     if (!dataUri || decryptFailed) {
       return (
@@ -501,18 +432,29 @@ export default function VaultViewerScreen({ navigation, route }) {
             >
               <Text style={styles.sheetOptionText}>Open with another app</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.sheetOption} onPress={openRename}>
-              <Text style={styles.sheetOptionText}>Rename</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.sheetOption}
-              onPress={() => {
-                setShowOptions(false);
-                setShowDeleteConfirm(true);
-              }}
-            >
-              <Text style={[styles.sheetOptionText, styles.sheetOptionDanger]}>Delete</Text>
-            </TouchableOpacity>
+            {doc.mine && (
+              <>
+                <TouchableOpacity style={styles.sheetOption} onPress={openRename}>
+                  <Text style={styles.sheetOptionText}>Rename</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.sheetOption} onPress={switchScope}>
+                  <Text style={styles.sheetOptionText}>
+                    {doc.scope === 'household' ? 'Make Personal (only me)' : 'Make Household (adults)'}
+                  </Text>
+                </TouchableOpacity>
+              </>
+            )}
+            {canDelete && (
+              <TouchableOpacity
+                style={styles.sheetOption}
+                onPress={() => {
+                  setShowOptions(false);
+                  setShowDeleteConfirm(true);
+                }}
+              >
+                <Text style={[styles.sheetOptionText, styles.sheetOptionDanger]}>Delete</Text>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity style={styles.sheetOption} onPress={() => setShowOptions(false)}>
               <Text style={styles.sheetOptionText}>Cancel</Text>
             </TouchableOpacity>

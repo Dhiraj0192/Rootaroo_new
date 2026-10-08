@@ -15,112 +15,62 @@ function withTimeout(promise, ms, label) {
 }
 
 const FETCH_TIMEOUT = 12000; // under the axios 15s timeout so we surface our own message
+const PAGE_SIZE = 20;
 
-const fetchDocumentsImpl = async (set, get, refresh) => {
-  if (refresh) {
-    set({ refreshing: true, error: null });
-  } else {
-    set({ loading: true, error: null });
-  }
+async function repo() {
+  const { getVaultRepo } = await import('../vault/vaultRepo');
+  return getVaultRepo();
+}
 
-  try {
-    const { vaultApi } = await import('../api/vault');
-    const result = await withTimeout(
-      vaultApi.listDocuments({ limit: 20 }),
-      FETCH_TIMEOUT,
-      'Fetching documents'
-    );
-    set({
-      documents: result.documents,
-      cursor: result.nextCursor,
-      hasMore: result.hasMore,
-      loading: false,
-      refreshing: false,
-    });
-  } catch (error) {
-    set({
-      error: error?.response?.data?.message || 'Failed to load documents',
-      loading: false,
-      refreshing: false,
-    });
-  }
-};
+const messageOf = (error, fallback) => error?.response?.data?.message || error?.message || fallback;
 
-const fetchMoreDocumentsImpl = async (set, get) => {
-  const { cursor, hasMore, loading } = get();
-  if (!hasMore || loading) return;
-
-  set({ loading: true });
-  try {
-    const { vaultApi } = await import('../api/vault');
-    const result = await withTimeout(
-      vaultApi.listDocuments({ cursor: cursor || undefined, limit: 20 }),
-      FETCH_TIMEOUT,
-      'Fetching more documents'
-    );
-    set({
-      documents: [...get().documents, ...result.documents],
-      cursor: result.nextCursor,
-      hasMore: result.hasMore,
-      loading: false,
-    });
-  } catch (error) {
-    set({
-      error: error?.response?.data?.message || 'Failed to load more documents',
-      loading: false,
-    });
-  }
-};
-
-const prependDocumentImpl = (document) => (state) => ({
-  documents: [document, ...state.documents],
-});
-
-const removeDocumentImpl = (id) => (state) => ({
-  documents: state.documents.filter((d) => d.id !== id),
-});
-
-const updateDocumentImpl = (document) => (state) => ({
-  documents: state.documents.map((d) => (d.id === document.id ? document : d)),
-});
-
-const fetchStorageUsageImpl = async (set, get) => {
-  set({ storageLoading: true });
-  try {
-    const { vaultApi } = await import('../api/vault');
-    const usage = await vaultApi.getSummary();
-    set({ storageUsage: usage, storageLoading: false });
-  } catch (error) {
-    set({ storageLoading: false });
-  }
-};
-
-const initialState = {
+/** Documents here are already decrypted by the vault repo; the server only sent ciphertext. */
+export const useVaultStore = create()((set, get) => ({
   documents: [],
   cursor: null,
   hasMore: true,
   loading: false,
   refreshing: false,
   error: null,
-  storageUsage: null,
-  storageLoading: false,
-  fetchDocuments: () => Promise.resolve(),
-  fetchMoreDocuments: () => Promise.resolve(),
-  prependDocument: () => {},
-  removeDocument: () => {},
-  updateDocument: () => {},
-  fetchStorageUsage: () => Promise.resolve(),
-};
 
-export const useVaultStore = create()(
-  (set, get) => ({
-    ...initialState,
+  fetchDocuments: async (refresh = false) => {
+    set(refresh ? { refreshing: true, error: null } : { loading: true, error: null });
+    try {
+      const result = await withTimeout((await repo()).list({ limit: PAGE_SIZE }), FETCH_TIMEOUT, 'Fetching documents');
+      set({
+        documents: result.documents,
+        cursor: result.nextCursor,
+        hasMore: !!result.nextCursor,
+        loading: false,
+        refreshing: false,
+      });
+    } catch (error) {
+      set({ error: messageOf(error, 'Failed to load documents'), loading: false, refreshing: false });
+    }
+  },
 
-    fetchDocuments: (refresh = false) => fetchDocumentsImpl(set, get, refresh),
-    fetchMoreDocuments: () => fetchMoreDocumentsImpl(set, get),
-    prependDocument: (document) => set(prependDocumentImpl(document)),
-    removeDocument: (id) => set(removeDocumentImpl(id)),
-    updateDocument: (document) => set(updateDocumentImpl(document)),
-    fetchStorageUsage: () => fetchStorageUsageImpl(set, get),
-  })
-);
+  fetchMoreDocuments: async () => {
+    const { cursor, hasMore, loading } = get();
+    if (!hasMore || loading) return;
+    set({ loading: true });
+    try {
+      const result = await withTimeout(
+        (await repo()).list({ cursor: cursor || undefined, limit: PAGE_SIZE }),
+        FETCH_TIMEOUT,
+        'Fetching more documents'
+      );
+      set({
+        documents: [...get().documents, ...result.documents],
+        cursor: result.nextCursor,
+        hasMore: !!result.nextCursor,
+        loading: false,
+      });
+    } catch (error) {
+      set({ error: messageOf(error, 'Failed to load more documents'), loading: false });
+    }
+  },
+
+  prependDocument: (document) => set((s) => ({ documents: [document, ...s.documents.filter((d) => d.id !== document.id)] })),
+  removeDocument: (id) => set((s) => ({ documents: s.documents.filter((d) => d.id !== id) })),
+  updateDocument: (document) => set((s) => ({ documents: s.documents.map((d) => (d.id === document.id ? document : d)) })),
+}));

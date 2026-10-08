@@ -7,7 +7,7 @@
  * in Expo Go (the native module isn't bundled there).
  *
  * Import this FIRST, before any module that touches vault crypto, so
- * `crypto.subtle` is present when vaultCrypto.ts captures it at load time.
+ * `crypto.subtle` is present when vault code captures it at load time.
  */
 try {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
