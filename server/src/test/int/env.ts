@@ -17,3 +17,8 @@ delete process.env.STRIPE_LIVE_SECRET_KEY;
 delete process.env.STRIPE_LIVE_WEBHOOK_SECRETS;
 process.env.ADMIN_API_KEY = 'int-admin-key-0123456789abcdef0123456789';
 process.env.ADMIN_BILLING_API_KEY = 'int-billing-key-0123456789abcdef01234567';
+// Integration tests import app.ts directly (not index.ts), so providers are initialised here.
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+require('../../services').initServices({
+  email: 'log', sms: 'log', push: 'log', storage: 's3', weather: 'open-meteo', monitoring: 'console',
+});

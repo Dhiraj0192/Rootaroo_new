@@ -6,7 +6,7 @@ import {
   DeviceToken,
 } from '../../database/models';
 import { NotFoundError } from '../../shared/utils/errors';
-import { sendExpoPush } from '../../shared/utils/expoPush';
+import { getPush } from '../../services';
 import logger from '../../shared/utils/logger';
 import type {
   DeviceTokenBody,
@@ -253,7 +253,7 @@ export async function sendToUser(
     if (tokens.length > 0) {
       // Badge mirrors the in-app unread count.
       const badge = await NotificationHistory.count({ where: { userId, isRead: false } });
-      sendExpoPush(tokens, title, body || '', (data || {}) as Record<string, string>, { badge })
+      getPush().send(tokens, title, body || '', (data || {}) as Record<string, string>, { badge })
         .catch((e: Error) => logger.error('[ExpoPush] Delivery failed:', e.message));
     }
   }

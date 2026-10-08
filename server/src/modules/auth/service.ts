@@ -13,6 +13,7 @@ import { onPurchaserDeleted, reportPurchaserDeletionFailure } from '../billing/d
 import { jwtVerify, createRemoteJWKSet } from 'jose';
 import { hashOtpCode, MAX_OTP_ATTEMPTS } from '../../shared/utils/otp';
 import { UnauthorizedError, ConflictError, NotFoundError, AppError } from '../../shared/utils/errors';
+import { getEmail, getSms } from '../../services';
 import type {
   RegisterBody, LoginBody, AuthResponse, AuthTokens, UserResponse, UpdateProfileBody, GoogleAuthBody,
   AppleAuthBody,
@@ -388,7 +389,7 @@ export async function sendVerification(userId: string): Promise<string | undefin
   // If Resend is not configured, return the code for dev-mode display only —
   // never in production, where a missing Resend config should be a delivery
   // failure, not a JSON-response leak of a live verification code.
-  if (!env.resend.apiKey) {
+  if (getEmail().name === 'log') {
     if (env.nodeEnv !== 'production') {
       console.warn(`[DEV] Email verification code for ${user.email}: ${code}`);
       return code;
@@ -459,7 +460,7 @@ export async function forgotPassword(body: ForgotPasswordBody): Promise<void> {
     expiresAt: new Date(Date.now() + 15 * 60 * 1000),
   });
 
-  if (!env.resend.apiKey) {
+  if (getEmail().name === 'log') {
     if (env.nodeEnv !== 'production') {
       console.warn(`[DEV] Password reset code for ${user.email}: ${code}`);
     } else {
@@ -681,7 +682,7 @@ async function issuePhoneOtp(phone: string, userId: string | null): Promise<stri
     expiresAt: new Date(Date.now() + 15 * 60 * 1000),
   });
 
-  if (!env.twilio.accountSid || !env.twilio.authToken || !env.twilio.fromNumber) {
+  if (getSms().name !== 'twilio') {
     if (env.nodeEnv !== 'production') {
       console.warn(`[DEV] Phone OTP for ${normalized}: ${code}`);
       return code;

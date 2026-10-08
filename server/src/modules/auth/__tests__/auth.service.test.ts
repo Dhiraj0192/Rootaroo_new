@@ -1,5 +1,6 @@
 import { register, updateProfile, googleAuth, appleAuth, sendVerification, verifyEmail, forgotPassword, resetPassword, checkResetCode, scheduleDeletion, cancelDeletion, confirmDeletion, registerPhone, sendPhoneOtp, verifyPhoneOtp } from '../service';
 import { env } from '../../../config/env';
+import { __setServicesForTests } from '../../../services';
 
 jest.mock('../../../shared/utils/mailer', () => ({ sendEmail: jest.fn(), sendAdminAlertEmail: jest.fn() }));
 jest.mock('../../../shared/utils/sms', () => ({ sendSms: jest.fn() }));
@@ -307,7 +308,7 @@ describe('Auth Service — Email Verification', () => {
     });
 
     it('should send via Resend when configured', async () => {
-      env.resend.apiKey = 'test-key';
+      __setServicesForTests({ email: { name: 'resend', send: jest.fn() } });
       const user = fakeUser({ isVerified: false });
       (models.User.findByPk as jest.Mock).mockResolvedValue(user);
 
@@ -371,7 +372,7 @@ describe('Auth Service — Password Reset', () => {
     });
 
     it('should send via Resend when configured', async () => {
-      env.resend.apiKey = 'test-key';
+      __setServicesForTests({ email: { name: 'resend', send: jest.fn() } });
       (models.User.findOne as jest.Mock).mockResolvedValue({ id: 'u1', email: 'test@user.com' });
 
       await forgotPassword({ email: 'test@user.com' });
@@ -639,6 +640,7 @@ describe('Auth Service — Phone OTP (app-owned code, delivered via Twilio)', ()
 
   describe('sendPhoneOtp', () => {
     it('should send an OTP for an existing user', async () => {
+      __setServicesForTests({ sms: { name: 'twilio', send: jest.fn() } });
       (models.User.findByPk as jest.Mock).mockResolvedValue(fakePhoneUser());
 
       await sendPhoneOtp({ phone: '+15551234567' }, 'u1');

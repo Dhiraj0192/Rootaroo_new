@@ -1,6 +1,8 @@
-import { getCurrentWeather } from '../service';
+import { openMeteoWeather } from '../providers/weather';
 
-describe('getCurrentWeather', () => {
+const getCurrentWeather = (lat: number, lon: number) => openMeteoWeather.current(lat, lon);
+
+describe('open-meteo provider', () => {
   const originalFetch = global.fetch;
 
   afterEach(() => {
