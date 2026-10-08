@@ -3,7 +3,6 @@ import { Op, literal } from 'sequelize';
 import redis from '../../config/redis';
 import { KeyBackup, KeyRestoreCode, User, sequelize } from '../../database/models';
 import { AppError, NotFoundError, ValidationError } from '../../shared/utils/errors';
-import { hashOtpCode } from '../../shared/utils/otp';
 import logger from '../../shared/utils/logger';
 import { getEmail, getKeyVault } from '../../services';
 import { assertKeyHolder, assertNotKeyHolder, moveKeyTo, revokePreviousHolders } from './holder';
@@ -18,6 +17,15 @@ export const START_LIMIT_PER_IP = 10;
 const START_WINDOW_SECONDS = 3600;
 
 const vaultCtx = (userId: string) => ({ userId });
+
+/** Codes and restore tokens are stored as key vault MACs (44 chars of base64). Older rows held a plain SHA-256 hex digest. */
+const isLegacyDigest = (stored: string | null): boolean => !stored || /^[0-9a-f]{64}$/.test(stored);
+
+/** True only for a stored vault MAC that matches; legacy or missing values never match. */
+async function macMatches(secret: string, stored: string | null, userId: string): Promise<boolean> {
+  if (isLegacyDigest(stored)) return false;
+  return getKeyVault().verifyMac(secret, stored as string, vaultCtx(userId));
+}
 
 /** Counts in Redis; if Redis is down this throws, so the limit fails closed. */
 async function withinLimit(key: string, limit: number): Promise<boolean> {
@@ -37,21 +45,31 @@ export async function putBackup(userId: string, deviceId: string | null, body: P
   // Neither what the phone proved with nor the encrypted blob is stored as received: only the vault's output.
   const verifier = await getKeyVault().mac(body.authKey, vaultCtx(userId));
   const storedBlob = await getKeyVault().encrypt(body.blob, vaultCtx(userId));
-  await KeyBackup.upsert({
-    userId,
-    kind: body.kind,
-    salt: body.salt,
-    kdf: body.kdf,
-    verifier,
-    storedBlob,
-    attemptsLeft: BACKUP_ATTEMPTS,
-    createdAt: new Date(),
+  await sequelize.transaction(async (transaction) => {
+    await KeyBackup.upsert(
+      {
+        userId,
+        kind: body.kind,
+        salt: body.salt,
+        kdf: body.kdf,
+        verifier,
+        storedBlob,
+        attemptsLeft: BACKUP_ATTEMPTS,
+        createdAt: new Date(),
+      },
+      { transaction },
+    );
+    // A restore in progress was started against the old backup: it ends here.
+    await KeyRestoreCode.destroy({ where: { userId }, transaction });
   });
 }
 
 export async function deleteBackup(userId: string, deviceId: string | null): Promise<void> {
   await assertKeyHolder(userId, deviceId);
-  await KeyBackup.destroy({ where: { userId } });
+  await sequelize.transaction(async (transaction) => {
+    await KeyBackup.destroy({ where: { userId }, transaction });
+    await KeyRestoreCode.destroy({ where: { userId }, transaction });
+  });
 }
 
 export async function startRestore(userId: string, deviceId: string | null, ip: string): Promise<{ expiresAt: string }> {
@@ -71,7 +89,7 @@ export async function startRestore(userId: string, deviceId: string | null, ip: 
   // One live code per user: asking again replaces the earlier one.
   await KeyRestoreCode.destroy({ where: { userId } });
   await KeyRestoreCode.create({
-    userId, deviceId, codeHash: hashOtpCode(code), expiresAt, attemptsLeft: EMAIL_CODE_ATTEMPTS,
+    userId, deviceId, codeHash: await getKeyVault().mac(code, vaultCtx(userId)), expiresAt, attemptsLeft: EMAIL_CODE_ATTEMPTS,
   });
 
   if (getEmail().name === 'log' && process.env.NODE_ENV !== 'production') {
@@ -102,13 +120,13 @@ export async function restoreParams(userId: string, deviceId: string | null, ema
     { attemptsLeft: literal('attempts_left - 1') as unknown as number },
     { where: { id: row.id, attemptsLeft: { [Op.gt]: 0 } } },
   );
-  if (spent !== 1 || row.codeHash !== hashOtpCode(emailCode)) throw invalid();
+  if (spent !== 1 || !(await macMatches(emailCode, row.codeHash, userId))) throw invalid();
 
   const restoreToken = randomBytes(32).toString('base64url');
   await KeyRestoreCode.update(
     {
       codeHash: null,
-      restoreTokenHash: hashOtpCode(restoreToken),
+      restoreTokenHash: await getKeyVault().mac(restoreToken, vaultCtx(userId)),
       restoreTokenExpiresAt: new Date(Date.now() + TOKEN_TTL_MS),
     },
     { where: { id: row.id } },
@@ -127,32 +145,33 @@ export async function restore(
 
   const backup = await KeyBackup.findByPk(userId);
   if (!backup) throw new NotFoundError('Backup');
+  const invalidSession = () => new AppError(400, 'Invalid or expired restore session', 'INVALID_RESTORE_TOKEN');
   const session = await KeyRestoreCode.findOne({
-    where: {
-      userId, deviceId, restoreTokenHash: hashOtpCode(restoreToken), restoreTokenExpiresAt: { [Op.gt]: new Date() },
-    },
+    where: { userId, deviceId, restoreTokenHash: { [Op.ne]: null }, restoreTokenExpiresAt: { [Op.gt]: new Date() } },
   });
-  if (!session) throw new AppError(400, 'Invalid or expired restore session', 'INVALID_RESTORE_TOKEN');
+  if (!session || !(await macMatches(restoreToken, session.restoreTokenHash, userId))) throw invalidSession();
 
   // Spend the guess first and under a row lock, so parallel requests cannot all see "10 left".
-  const left = await sequelize.transaction(async (transaction) => {
+  // The row that is checked below is the one read under that lock, never one loaded before it.
+  const spent = await sequelize.transaction(async (transaction) => {
     const locked = await KeyBackup.findByPk(userId, { transaction, lock: transaction.LOCK.UPDATE });
     if (!locked || locked.attemptsLeft <= 0) return null;
     locked.attemptsLeft -= 1;
     await locked.save({ transaction });
-    return locked.attemptsLeft;
+    return { left: locked.attemptsLeft, verifier: locked.verifier, storedBlob: locked.storedBlob };
   });
-  if (left === null) {
+  if (spent === null) {
     await erase(userId);
     await notifyErased(userId);
     throw erasedError();
   }
+  const { left } = spent;
 
   let valid: boolean;
   let blob = '';
   try {
-    valid = await getKeyVault().verifyMac(authKey, backup.verifier, vaultCtx(userId));
-    if (valid) blob = await getKeyVault().decrypt(backup.storedBlob, vaultCtx(userId));
+    valid = await getKeyVault().verifyMac(authKey, spent.verifier, vaultCtx(userId));
+    if (valid) blob = await getKeyVault().decrypt(spent.storedBlob, vaultCtx(userId));
   } catch (err) {
     // The vault being unavailable is not a wrong guess: give the try back and fail closed.
     await KeyBackup.update({ attemptsLeft: literal('attempts_left + 1') as unknown as number }, { where: { userId } });
@@ -169,6 +188,9 @@ export async function restore(
   }
 
   const previous = await sequelize.transaction(async (transaction) => {
+    // A backup change (or erase) since the guess deletes the restore session: then this proof is for a backup that is gone.
+    const stillLive = await KeyRestoreCode.findOne({ where: { id: session.id }, transaction, lock: transaction.LOCK.UPDATE });
+    if (!stillLive) throw invalidSession();
     await KeyBackup.update({ attemptsLeft: BACKUP_ATTEMPTS }, { where: { userId }, transaction });
     await KeyRestoreCode.destroy({ where: { userId }, transaction });
     return moveKeyTo(userId, deviceId, transaction);

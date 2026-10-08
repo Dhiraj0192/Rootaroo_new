@@ -1,6 +1,6 @@
 import { Op } from 'sequelize';
-import { AccountKey, KeyTransferSession, sequelize } from '../../database/models';
-import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../../shared/utils/errors';
+import { AccountKey, Device, KeyTransferSession, sequelize } from '../../database/models';
+import { AppError, ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../../shared/utils/errors';
 import { getIO } from '../../shared/utils/socket';
 import { assertKeyHolder, isKeyHolder, moveKeyTo, revokePreviousHolders } from './holder';
 import type { TransferSessionResponse } from './types';
@@ -22,20 +22,35 @@ export async function createSession(
   ephemeralPublicKey: string,
 ): Promise<{ sessionId: string; expiresAt: string }> {
   if (!deviceId) throw new ValidationError('A registered device is required');
-  if (!(await AccountKey.findByPk(userId))) throw new ConflictError('Set up your private space first');
   if (await isKeyHolder(userId, deviceId)) throw new ConflictError('This phone already holds your private space');
 
-  // One open session per user: starting again cancels the earlier QR.
-  await KeyTransferSession.update(
-    { status: 'expired' },
-    { where: { userId, status: { [Op.in]: ['open', 'sent'] } } },
-  );
-  const session = await KeyTransferSession.create({
-    userId,
-    newDeviceId: deviceId,
-    newEphemeralPublicKey: ephemeralPublicKey,
-    status: 'open',
-    expiresAt: new Date(Date.now() + SESSION_TTL_MS),
+  // Locking the account key row serialises concurrent starts and the sent-session check below.
+  const session = await sequelize.transaction(async (transaction) => {
+    if (!(await AccountKey.findByPk(userId, { transaction, lock: transaction.LOCK.UPDATE }))) {
+      throw new ConflictError('Set up your private space first');
+    }
+    if ((await Device.count({ where: { userId, holdsAccountKey: true, revokedAt: null }, transaction })) === 0) {
+      throw new AppError(409, 'No phone holds your private space. Restore it from your backup.', 'NO_KEY_HOLDER');
+    }
+    // A transfer whose payload is already sent is in flight: starting another must not cancel it.
+    const inFlight = await KeyTransferSession.findOne({
+      where: { userId, status: 'sent', expiresAt: { [Op.gt]: new Date() } },
+      transaction,
+    });
+    if (inFlight) throw new AppError(409, 'A transfer to another phone is already in progress', 'TRANSFER_IN_PROGRESS');
+
+    // One open session per user: starting again cancels the earlier QR.
+    await KeyTransferSession.update({ status: 'expired' }, { where: { userId, status: 'open' }, transaction });
+    return KeyTransferSession.create(
+      {
+        userId,
+        newDeviceId: deviceId,
+        newEphemeralPublicKey: ephemeralPublicKey,
+        status: 'open',
+        expiresAt: new Date(Date.now() + SESSION_TTL_MS),
+      },
+      { transaction },
+    );
   });
   return { sessionId: session.id, expiresAt: session.expiresAt.toISOString() };
 }

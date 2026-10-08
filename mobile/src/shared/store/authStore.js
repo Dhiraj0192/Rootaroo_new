@@ -39,6 +39,13 @@ function cancelNudges() {
   try { require('../signedOutNudges').cancelSignedOutNudges(); } catch { /* not loaded yet */ }
 }
 
+// A phone the server no longer lists as the key holder must not keep a stale key: the store deletes it on refresh.
+function checkPrivateSpace() {
+  try {
+    Promise.resolve(require('./privateSpaceStore').usePrivateSpaceStore.getState().refresh()).catch(() => {});
+  } catch { /* not loaded yet */ }
+}
+
 export const useAuthStore = create((set, get) => ({
   user: null,
   accessToken: null,
@@ -57,6 +64,7 @@ export const useAuthStore = create((set, get) => ({
   setAuth: (user, accessToken, refreshToken) => {
     set({ user, accessToken, refreshToken, isAuthenticated: true, isLoading: false });
     cancelNudges();
+    checkPrivateSpace();
     warmScreenCache(user?.id);
     saveTokens(accessToken, refreshToken, user).catch(() => {});
   },
@@ -201,6 +209,7 @@ export const useAuthStore = create((set, get) => ({
           signupProgress: null,
         });
         cancelNudges();
+        checkPrivateSpace();
         prefetchHome(householdId);
 
         apiClient

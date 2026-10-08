@@ -26,6 +26,7 @@ One place for work that is planned, waiting on someone, finished or dropped. Upd
 | T15 | "Streak about to break" campaign rule | server | dev | Left out of the first campaign engine; needs the dashboard streak logic shared with the job. |
 | T17 | Run the location-sharing device checklist on iOS and Android | mobile, release | owner | [`docs/location-sharing-device-checklist.md`](location-sharing-device-checklist.md). Needs a new development build (`expo-task-manager`, background location). |
 | T18 | Background location: store review notes and Privacy Policy wording | release, legal | owner, client | Apple and Google ask why "Always" location is needed: sharing runs only while a share the user started is active, and stops at the timer. Add to T4 and the submission notes. |
+| T19 | Rotate the account key and re-seal items when the key moves | e2e, security | engineering | Post-MVP. A moved or restored key is the same key, so a modified app that kept a copy still opens old items. Rotation on move closes that; see "Known limits" in [`docs/e2e/device-transfer.md`](e2e/device-transfer.md). |
 | T16 | Run the push device checklist on iOS and Android | mobile, release | owner | [`docs/push/device-test-checklist.md`](push/device-test-checklist.md). Needs a new development build (journal lock adds a native module). |
 
 ## Go-live steps

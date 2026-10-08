@@ -1,6 +1,6 @@
 jest.mock('../../../database/models', () => ({
   AccountKey: { findByPk: jest.fn(), create: jest.fn() },
-  Device: { findOne: jest.fn(), findAll: jest.fn(), update: jest.fn() },
+  Device: { findOne: jest.fn(), findAll: jest.fn(), update: jest.fn(), count: jest.fn() },
   KeyTransferSession: { findOne: jest.fn(), findByPk: jest.fn(), create: jest.fn(), update: jest.fn() },
   sequelize: { transaction: jest.fn(async (fn: (t: unknown) => unknown) => fn({ LOCK: { UPDATE: 'UPDATE' } })) },
 }));
@@ -18,6 +18,7 @@ const mocks = {
   deviceFind: Device.findOne as jest.Mock,
   deviceAll: Device.findAll as jest.Mock,
   deviceUpdate: Device.update as jest.Mock,
+  deviceCount: Device.count as jest.Mock,
   sFind: KeyTransferSession.findOne as jest.Mock,
   sByPk: KeyTransferSession.findByPk as jest.Mock,
   sCreate: KeyTransferSession.create as jest.Mock,
@@ -45,6 +46,8 @@ beforeEach(() => {
   mocks.deviceAll.mockResolvedValue([]);
   mocks.deviceUpdate.mockResolvedValue([1]);
   mocks.sUpdate.mockResolvedValue([1]);
+  mocks.deviceCount.mockResolvedValue(1);
+  mocks.sFind.mockResolvedValue(null);
   (getIO as jest.Mock).mockReturnValue({ to: jest.fn().mockReturnValue({ emit: jest.fn() }) });
 });
 
@@ -59,15 +62,46 @@ describe('createSession', () => {
     await expect(createSession('u1', NEW, PK)).rejects.toMatchObject({ statusCode: 409 });
   });
 
+  it('with no live key holder it says so (409 NO_KEY_HOLDER) and creates nothing', async () => {
+    mocks.deviceFind.mockResolvedValue(null);
+    mocks.deviceCount.mockResolvedValue(0);
+    await expect(createSession('u1', NEW, PK)).rejects.toMatchObject({
+      statusCode: 409,
+      code: 'NO_KEY_HOLDER',
+      message: 'No phone holds your private space. Restore it from your backup.',
+    });
+    expect(mocks.sCreate).not.toHaveBeenCalled();
+  });
+
+  it('a sent (in progress) transfer is not cancelled: 409 TRANSFER_IN_PROGRESS', async () => {
+    mocks.deviceCount.mockResolvedValue(1);
+    mocks.sFind.mockResolvedValue(session({ status: 'sent' }));
+    await expect(createSession('u1', NEW, PK)).rejects.toMatchObject({ statusCode: 409, code: 'TRANSFER_IN_PROGRESS' });
+    expect(mocks.sCreate).not.toHaveBeenCalled();
+    expect(mocks.sUpdate).not.toHaveBeenCalled();
+  });
+
+  it('only open sessions are expired when a new one starts, under a lock on the account key row', async () => {
+    mocks.deviceCount.mockResolvedValue(1);
+    mocks.sFind.mockResolvedValue(null);
+    mocks.sCreate.mockImplementation(async (v: { expiresAt: Date }) => ({ id: 's1', ...v }));
+    await createSession('u1', NEW, PK);
+    expect(mocks.sUpdate).toHaveBeenCalledWith({ status: 'expired' }, expect.objectContaining({ where: { userId: 'u1', status: 'open' } }));
+    expect(mocks.key).toHaveBeenCalledWith('u1', expect.objectContaining({ lock: 'UPDATE' }));
+    expect(mocks.sFind).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ userId: 'u1', status: 'sent' }) }));
+  });
+
   it('opens a 5 minute session and cancels the earlier open ones', async () => {
     holderIs(OLD);
+    mocks.deviceCount.mockResolvedValue(1);
+    mocks.sFind.mockResolvedValue(null);
     mocks.sCreate.mockImplementation(async (v: { expiresAt: Date }) => ({ id: 's1', ...v }));
     const out = await createSession('u1', NEW, PK);
     expect(mocks.sUpdate).toHaveBeenCalledWith({ status: 'expired' }, expect.anything());
     const ttl = new Date(out.expiresAt).getTime() - Date.now();
     expect(ttl).toBeGreaterThan(4 * 60_000);
     expect(ttl).toBeLessThanOrEqual(5 * 60_000);
-    expect(mocks.sCreate).toHaveBeenCalledWith(expect.objectContaining({ userId: 'u1', newDeviceId: NEW, newEphemeralPublicKey: PK }));
+    expect(mocks.sCreate).toHaveBeenCalledWith(expect.objectContaining({ userId: 'u1', newDeviceId: NEW, newEphemeralPublicKey: PK }), expect.anything());
   });
 });
 

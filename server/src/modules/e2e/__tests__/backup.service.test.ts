@@ -10,10 +10,11 @@ jest.mock('../../../config/redis', () => ({ __esModule: true, default: { incr: j
 jest.mock('../../device/service', () => ({ revokeDevice: jest.fn() }));
 
 import redis from '../../../config/redis';
-import { Device, KeyBackup, KeyRestoreCode, User } from '../../../database/models';
+import { Device, KeyBackup, KeyRestoreCode, User, sequelize } from '../../../database/models';
 import { revokeDevice } from '../../device/service';
 import { __setServicesForTests } from '../../../services';
 import { hashOtpCode } from '../../../shared/utils/otp';
+import { createHash } from 'crypto';
 import {
   getBackup, putBackup, deleteBackup, startRestore, restoreParams, restore,
 } from '../backup.service';
@@ -41,7 +42,7 @@ const BLOB = Buffer.alloc(40, 2).toString('base64');
 const sent: Array<{ to: string; subject: string; text: string }> = [];
 const vault = {
   name: 'fake',
-  mac: jest.fn(async (d: string) => `mac(${d.length})`),
+  mac: jest.fn(async (d: string) => (d === AUTH_KEY ? `mac(${d.length})` : `vault-mac(${d})`)),
   verifyMac: jest.fn(),
   encrypt: jest.fn(async (d: string) => `enc(${d.length})`),
   decrypt: jest.fn(async () => BLOB),
@@ -68,6 +69,7 @@ beforeEach(() => {
   m.user.mockResolvedValue({ id: 'u1', email: 'asha@example.test' });
   m.incr.mockResolvedValue(1);
   m.cUpdate.mockResolvedValue([1]);
+  vault.verifyMac.mockReset();
   vault.verifyMac.mockResolvedValue(true);
 });
 
@@ -91,6 +93,13 @@ describe('putBackup / deleteBackup', () => {
     expect(JSON.stringify(row)).not.toContain(BLOB);
   });
 
+  it('a changed backup ends any restore in progress, in the same transaction', async () => {
+    await putBackup('u1', OLD, body);
+    expect(sequelize.transaction).toHaveBeenCalled();
+    expect(m.bUpsert).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ transaction: expect.anything() }));
+    expect(m.cDestroy).toHaveBeenCalledWith(expect.objectContaining({ where: { userId: 'u1' }, transaction: expect.anything() }));
+  });
+
   it('a vault failure stores nothing', async () => {
     vault.mac.mockRejectedValueOnce(new Error('kms down'));
     await expect(putBackup('u1', OLD, body)).rejects.toThrow('kms down');
@@ -99,7 +108,7 @@ describe('putBackup / deleteBackup', () => {
 
   it('removes the backup', async () => {
     await deleteBackup('u1', OLD);
-    expect(m.bDestroy).toHaveBeenCalledWith({ where: { userId: 'u1' } });
+    expect(m.bDestroy).toHaveBeenCalledWith(expect.objectContaining({ where: { userId: 'u1' } }));
   });
 });
 
@@ -122,12 +131,14 @@ describe('startRestore', () => {
     await expect(startRestore('u1', NEW, '1.1.1.1')).rejects.toMatchObject({ statusCode: 404 });
   });
 
-  it('emails a 6-digit code and stores only its hash', async () => {
+  it('emails a 6-digit code and stores only the key vault mac of it, not a plain hash', async () => {
     m.bFind.mockResolvedValue(backupRow());
     await startRestore('u1', NEW, '1.1.1.1');
     expect(sent).toHaveLength(1);
     const code = sent[0].text.match(/\b(\d{6})\b/)![1];
-    expect(m.cCreate).toHaveBeenCalledWith(expect.objectContaining({ userId: 'u1', deviceId: NEW, codeHash: hashOtpCode(code), attemptsLeft: 5 }));
+    expect(vault.mac).toHaveBeenCalledWith(code, { userId: 'u1' });
+    expect(m.cCreate).toHaveBeenCalledWith(expect.objectContaining({ userId: 'u1', deviceId: NEW, codeHash: `vault-mac(${code})`, attemptsLeft: 5 }));
+    expect(m.cCreate.mock.calls[0][0].codeHash).not.toBe(hashOtpCode(code));
     expect(JSON.stringify(m.cCreate.mock.calls)).not.toContain(`"${code}"`);
   });
 
@@ -154,13 +165,24 @@ describe('startRestore', () => {
 });
 
 describe('restoreParams (email code)', () => {
-  const live = (overrides: Record<string, unknown> = {}) => ({ id: 'c1', codeHash: hashOtpCode('123456'), ...overrides });
+  const live = (overrides: Record<string, unknown> = {}) => ({ id: 'c1', codeHash: 'vault-mac(123456)', ...overrides });
+  beforeEach(() => {
+    vault.verifyMac.mockImplementation(async (data: string, mac: string) => mac === `vault-mac(${data})`);
+  });
 
-  it('a wrong code spends a try and is refused', async () => {
+  it('a wrong code is checked with the vault, spends a try and is refused', async () => {
     m.bFind.mockResolvedValue(backupRow());
     m.cFind.mockResolvedValue(live());
     await expect(restoreParams('u1', NEW, '000000')).rejects.toMatchObject({ statusCode: 400 });
+    expect(vault.verifyMac).toHaveBeenCalledWith('000000', 'vault-mac(123456)', { userId: 'u1' });
     expect(m.cUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it('a row written before keyed codes (a plain sha-256 hex) is invalid, even for the right code', async () => {
+    m.bFind.mockResolvedValue(backupRow());
+    m.cFind.mockResolvedValue(live({ codeHash: hashOtpCode('123456') }));
+    await expect(restoreParams('u1', NEW, '123456')).rejects.toMatchObject({ statusCode: 400, code: 'INVALID_CODE' });
+    expect(vault.verifyMac).not.toHaveBeenCalled();
   });
 
   it('once the 5 tries are spent even the right code is refused', async () => {
@@ -170,15 +192,15 @@ describe('restoreParams (email code)', () => {
     await expect(restoreParams('u1', NEW, '123456')).rejects.toMatchObject({ statusCode: 400 });
   });
 
-  it('the right code returns the parameters and a token stored hashed, and spends the code', async () => {
+  it('the right code returns the parameters and a token stored as a vault mac, and spends the code', async () => {
     m.bFind.mockResolvedValue(backupRow());
     m.cFind.mockResolvedValue(live());
     const out = await restoreParams('u1', NEW, '123456');
     expect(out).toEqual(expect.objectContaining({ salt: 'salt', kind: 'password', attemptsLeft: 10, restoreToken: expect.any(String) }));
     const spend = m.cUpdate.mock.calls[1][0];
     expect(spend.codeHash).toBeNull();
-    expect(spend.restoreTokenHash).toBe(hashOtpCode(out.restoreToken));
-    expect(JSON.stringify(spend)).not.toContain(out.restoreToken);
+    expect(spend.restoreTokenHash).toBe(`vault-mac(${out.restoreToken})`);
+    expect(spend.restoreTokenHash).not.toBe(hashOtpCode(out.restoreToken));
   });
 
   it('no live code row is a 400, and a key holder is refused', async () => {
@@ -196,7 +218,8 @@ describe('restore (password proof)', () => {
   beforeEach(() => {
     locked = backupRow();
     m.bFind.mockImplementation(async (_id: string, opts?: unknown) => (opts ? locked : backupRow({ attemptsLeft: locked.attemptsLeft })));
-    m.cFind.mockResolvedValue({ id: 'c1' });
+    m.cFind.mockResolvedValue({ id: 'c1', restoreTokenHash: 'vault-mac(tok)' });
+    vault.verifyMac.mockImplementation(async (data: string, mac: string) => (data === AUTH_KEY ? true : mac === `vault-mac(${data})`));
   });
 
   it('needs a backup (404 once erased) and a valid restore token (400)', async () => {
@@ -206,13 +229,38 @@ describe('restore (password proof)', () => {
     await expect(restore('u1', NEW, 'tok', AUTH_KEY)).rejects.toMatchObject({ statusCode: 404 });
   });
 
-  it('looks the token up by its hash', async () => {
-    await restore('u1', NEW, 'tok-value', AUTH_KEY);
-    expect(m.cFind).toHaveBeenCalledWith({ where: expect.objectContaining({ userId: 'u1', deviceId: NEW, restoreTokenHash: hashOtpCode('tok-value') }) });
+  it('checks the token against its stored vault mac', async () => {
+    await restore('u1', NEW, 'tok', AUTH_KEY);
+    expect(m.cFind).toHaveBeenCalledWith({ where: expect.objectContaining({ userId: 'u1', deviceId: NEW }) });
+    expect(vault.verifyMac).toHaveBeenCalledWith('tok', 'vault-mac(tok)', { userId: 'u1' });
+  });
+
+  it('a wrong token, or one stored as a plain hash before keyed tokens, is refused', async () => {
+    await expect(restore('u1', NEW, 'other', AUTH_KEY)).rejects.toMatchObject({ statusCode: 400, code: 'INVALID_RESTORE_TOKEN' });
+    m.cFind.mockResolvedValue({ id: 'c1', restoreTokenHash: createHash('sha256').update('tok').digest('hex') });
+    await expect(restore('u1', NEW, 'tok', AUTH_KEY)).rejects.toMatchObject({ statusCode: 400, code: 'INVALID_RESTORE_TOKEN' });
+    expect(locked.attemptsLeft).toBe(10);
+  });
+
+  it('verifies against the backup row it locked, not one loaded earlier', async () => {
+    locked = backupRow({ verifier: 'locked-verifier', storedBlob: 'locked-blob' });
+    m.bFind.mockImplementation(async (_id: string, opts?: unknown) => (opts ? locked : backupRow({ verifier: 'stale-verifier', storedBlob: 'stale-blob' })));
+    await restore('u1', NEW, 'tok', AUTH_KEY);
+    expect(m.bFind).toHaveBeenCalledWith('u1', expect.objectContaining({ lock: 'UPDATE', transaction: expect.anything() }));
+    expect(vault.verifyMac).toHaveBeenCalledWith(AUTH_KEY, 'locked-verifier', { userId: 'u1' });
+    expect(vault.verifyMac).not.toHaveBeenCalledWith(AUTH_KEY, 'stale-verifier', expect.anything());
+    expect(vault.decrypt).toHaveBeenCalledWith('locked-blob', { userId: 'u1' });
+  });
+
+  it('a backup replaced while the vault was checking ends the restore (restore session gone)', async () => {
+    m.cFind.mockResolvedValueOnce({ id: 'c1', restoreTokenHash: 'vault-mac(tok)' }).mockResolvedValueOnce(null);
+    await expect(restore('u1', NEW, 'tok', AUTH_KEY)).rejects.toMatchObject({ statusCode: 400, code: 'INVALID_RESTORE_TOKEN' });
+    expect(m.deviceUpdate).not.toHaveBeenCalled();
+    expect(revokeDevice).not.toHaveBeenCalled();
   });
 
   it('a wrong password counts down and reports the tries left', async () => {
-    vault.verifyMac.mockResolvedValue(false);
+    vault.verifyMac.mockImplementation(async (d: string) => d === 'tok');
     await expect(restore('u1', NEW, 'tok', AUTH_KEY)).rejects.toMatchObject({ statusCode: 401, details: { attemptsLeft: 9 } });
     expect(locked.attemptsLeft).toBe(9);
     expect(m.bDestroy).not.toHaveBeenCalled();
@@ -221,9 +269,9 @@ describe('restore (password proof)', () => {
 
   it('the last wrong guess erases the backup, emails the user and answers 410', async () => {
     locked = backupRow({ attemptsLeft: 1 });
-    vault.verifyMac.mockResolvedValue(false);
+    vault.verifyMac.mockImplementation(async (d: string) => d === 'tok');
     await expect(restore('u1', NEW, 'tok', AUTH_KEY)).rejects.toMatchObject({ statusCode: 410 });
-    expect(m.bDestroy).toHaveBeenCalledWith({ where: { userId: 'u1' } });
+    expect(m.bDestroy).toHaveBeenCalledWith(expect.objectContaining({ where: { userId: 'u1' } }));
     expect(sent.map((s) => s.subject).join()).toMatch(/erased/i);
     expect(vault.decrypt).not.toHaveBeenCalled();
   });
@@ -231,7 +279,7 @@ describe('restore (password proof)', () => {
   it('a backup already at zero is erased without consulting the vault', async () => {
     locked = backupRow({ attemptsLeft: 0 });
     await expect(restore('u1', NEW, 'tok', AUTH_KEY)).rejects.toMatchObject({ statusCode: 410 });
-    expect(vault.verifyMac).not.toHaveBeenCalled();
+    expect(vault.verifyMac).not.toHaveBeenCalledWith(AUTH_KEY, expect.anything(), expect.anything());
     expect(m.bDestroy).toHaveBeenCalled();
   });
 
@@ -254,7 +302,7 @@ describe('restore (password proof)', () => {
   });
 
   it('a key vault error fails closed (raw error, so 500) and gives the try back', async () => {
-    vault.verifyMac.mockRejectedValue(new Error('throttled'));
+    vault.verifyMac.mockImplementation(async (d: string) => { if (d === 'tok') return true; throw new Error('throttled'); });
     await expect(restore('u1', NEW, 'tok', AUTH_KEY)).rejects.toThrow('throttled');
     expect(m.bUpdate).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(m.bUpdate.mock.calls[0][0])).toContain('attempts_left + 1');

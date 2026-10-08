@@ -1,5 +1,5 @@
 import request from 'supertest';
-import { randomBytes } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import app from '../../../app';
 import { setupAssociations, Device, KeyBackup, KeyRestoreCode } from '../../../database/models';
 import { resetDb, closeIntResources } from '../../../test/int/db';
@@ -188,5 +188,55 @@ describe('backup and restore', () => {
     const fresh = await signIn(NEW);
     for (let i = 0; i < 3; i++) expect((await request(app).post('/api/v1/key-backup/restore/start').set(h(fresh))).status).toBe(200);
     expect((await request(app).post('/api/v1/key-backup/restore/start').set(h(fresh))).status).toBe(429);
+  });
+
+  it('changing the backup ends a restore in progress', async () => {
+    const old = await withBackup();
+    const fresh = await signIn(NEW);
+    const p = await restoreToken(fresh);
+    const put = await request(app).put('/api/v1/key-backup').set(h(old)).send({
+      kind: 'password', salt: b64(16), kdf: { algorithm: 'argon2id', memoryKiB: 19456, iterations: 2, parallelism: 1, length: 64 }, authKey, blob,
+    });
+    expect(put.status).toBe(200);
+    expect(await KeyRestoreCode.count()).toBe(0);
+    const res = await request(app).post('/api/v1/key-backup/restore').set(h(fresh)).send({ restoreToken: p.restoreToken, authKey });
+    expect(res.status).toBe(400);
+  });
+
+  it('email codes are stored as vault MACs, not a plain SHA-256', async () => {
+    await withBackup();
+    const fresh = await signIn(NEW);
+    await request(app).post('/api/v1/key-backup/restore/start').set(h(fresh));
+    const code = sentEmails.at(-1)!.text.match(/\b(\d{6})\b/)![1];
+    const row = await KeyRestoreCode.findOne();
+    expect(row!.codeHash).not.toBe(createHash('sha256').update(code).digest('hex'));
+    expect(row!.codeHash).toMatch(/^[A-Za-z0-9+/]{43}=$/);
+  });
+});
+
+describe('the key holder is removed', () => {
+  it('clears the holder: nobody holds the key, transfer says NO_KEY_HOLDER, restore is the path', async () => {
+    const old = await setupOldPhone();
+    const fresh = await signIn(NEW);
+    const oldDevice = await Device.findOne({ where: { holdsAccountKey: true } });
+    const removed = await request(app).delete(`/api/v1/devices/${oldDevice!.id}`).set(h(fresh));
+    expect(removed.status).toBe(200);
+    expect(await Device.count({ where: { holdsAccountKey: true } })).toBe(0);
+    expect((await request(app).get('/api/v1/account-key').set(h(fresh))).body.data.holdsKey).toBe(false);
+    const create = await request(app).post('/api/v1/key-transfer/sessions').set(h(fresh)).send({ ephemeralPublicKey: b64(32) });
+    expect(create.status).toBe(409);
+    expect(create.body.code ?? create.body.error?.code).toBe('NO_KEY_HOLDER');
+    expect(old.Authorization).toBeDefined();
+  });
+
+  it('a sent transfer is not cancelled by another start', async () => {
+    const old = await setupOldPhone();
+    const fresh = await signIn(NEW);
+    const id = (await request(app).post('/api/v1/key-transfer/sessions').set(h(fresh)).send({ ephemeralPublicKey: b64(32) })).body.data.sessionId;
+    expect((await request(app).post(`/api/v1/key-transfer/sessions/${id}/payload`).set(h(old)).send({ ephemeralPublicKey: b64(32), sealed: b64(80) })).status).toBe(200);
+    const again = await request(app).post('/api/v1/key-transfer/sessions').set(h(fresh)).send({ ephemeralPublicKey: b64(32) });
+    expect(again.status).toBe(409);
+    expect(again.body.code ?? again.body.error?.code).toBe('TRANSFER_IN_PROGRESS');
+    expect((await request(app).post(`/api/v1/key-transfer/sessions/${id}/complete`).set(h(fresh))).status).toBe(200);
   });
 });

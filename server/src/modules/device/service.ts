@@ -73,9 +73,17 @@ export async function revokeDevice(
   const device = await Device.findOne({ where: { id: deviceId, userId, revokedAt: null } });
   if (!device) throw new NotFoundError('Device');
 
+  // The database goes first: it is the source of truth that authenticate falls back to when Redis is down.
   device.revokedAt = new Date();
+  // A removed phone is no longer the key holder, so the account is never left pointing at a dead holder.
+  device.holdsAccountKey = false;
   await device.save();
-  await redis.set(revokedKey(deviceId), '1', 'EX', REVOKED_TTL_SECONDS);
+  try {
+    await redis.set(revokedKey(deviceId), '1', 'EX', REVOKED_TTL_SECONDS);
+  } catch (err) {
+    // Not fatal: requests check the database whenever Redis errors. Sessions and push token still go below.
+    logger.error(`Could not set revoked flag for device ${deviceId}: ${(err as Error).message}`);
+  }
   // Kept for a key move so the old phone's next refresh answers DEVICE_REVOKED (which then removes it), not a bare 401.
   if (!opts.keepRefreshTokens) await RefreshToken.destroy({ where: { deviceId } });
   await DeviceToken.destroy({ where: { deviceId }, force: true });

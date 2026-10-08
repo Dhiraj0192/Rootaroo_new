@@ -17,7 +17,7 @@ const info = { deviceKey: '3f2a7c1e-8b4d-4e2f-9a6b-1c2d3e4f5a6b', name: "Asha's 
 function row(overrides: Record<string, unknown> = {}) {
   return {
     id: 'd1', userId, deviceKey: info.deviceKey, name: 'Old name', platform: 'ios', appVersion: '1.3.0',
-    lastSeenAt: new Date('2026-10-01T00:00:00Z'), createdAt: new Date('2026-09-01T00:00:00Z'), revokedAt: null,
+    lastSeenAt: new Date('2026-10-01T00:00:00Z'), createdAt: new Date('2026-09-01T00:00:00Z'), revokedAt: null, holdsAccountKey: false,
     save: jest.fn().mockResolvedValue(undefined),
     ...overrides,
   };
@@ -52,6 +52,18 @@ describe('upsertDevice', () => {
     (Device.findOne as jest.Mock).mockResolvedValue(existing);
     await upsertDevice(userId, info);
     expect(existing.revokedAt).toBeNull();
+  });
+
+  it('signing in again never makes the phone the key holder', async () => {
+    const existing = row({ revokedAt: new Date(), holdsAccountKey: false });
+    (Device.findOne as jest.Mock).mockResolvedValue(existing);
+    await upsertDevice(userId, info);
+    expect(existing.revokedAt).toBeNull();
+    expect(existing.holdsAccountKey).toBe(false);
+    (Device.create as jest.Mock).mockImplementation(async (v) => ({ id: 'new', ...v }));
+    (Device.findOne as jest.Mock).mockResolvedValue(null);
+    await upsertDevice(userId, info);
+    expect(JSON.stringify((Device.create as jest.Mock).mock.calls[0][0])).not.toContain('holdsAccountKey');
   });
 
   it('a request without a device id still gets its own device row', async () => {
@@ -98,6 +110,27 @@ describe('revokeDevice', () => {
     expect(d.save).toHaveBeenCalled();
     expect(RefreshToken.destroy).toHaveBeenCalledWith({ where: { deviceId: 'd1' } });
     expect(DeviceToken.destroy).toHaveBeenCalledWith({ where: { deviceId: 'd1' }, force: true });
+  });
+
+  it('revoking the key holder clears the holder flag', async () => {
+    const d = row({ holdsAccountKey: true });
+    (Device.findOne as jest.Mock).mockResolvedValue(d);
+    await revokeDevice(userId, 'd1');
+    expect(d.holdsAccountKey).toBe(false);
+    expect(d.save).toHaveBeenCalled();
+  });
+
+  it('writes revokedAt to the database before the Redis marker, and survives a Redis failure', async () => {
+    const d = row();
+    const order: string[] = [];
+    d.save.mockImplementation(async () => { order.push('db'); });
+    (redis.set as jest.Mock).mockImplementationOnce(async () => { order.push('redis'); throw new Error('redis down'); });
+    (Device.findOne as jest.Mock).mockResolvedValue(d);
+    await expect(revokeDevice(userId, 'd1')).resolves.toBeUndefined();
+    expect(order).toEqual(['db', 'redis']);
+    expect(d.revokedAt).toBeInstanceOf(Date);
+    expect(RefreshToken.destroy).toHaveBeenCalledWith({ where: { deviceId: 'd1' } });
+    expect(DeviceToken.destroy).toHaveBeenCalled();
   });
 
   it("refuses someone else's device without revealing it exists", async () => {

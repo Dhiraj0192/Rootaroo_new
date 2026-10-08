@@ -10,9 +10,12 @@ export async function isDeviceRevoked(deviceId: string): Promise<boolean> {
   try {
     return (await redis.exists(`device:revoked:${deviceId}`)) === 1;
   } catch (err) {
-    // Redis being down must not lock everyone out; the refresh path still checks the DB.
-    logger.warn(`Revoked-device check failed, allowing: ${(err as Error).message}`);
-    return false;
+    // Redis being down must not let a signed-out phone back in: ask the database, which revoke writes first.
+    // Nothing is cached, and if the database fails too the error propagates (the request fails closed).
+    logger.warn(`Revoked-device check failed, falling back to the database: ${(err as Error).message}`);
+    const { Device } = await import('../../database/models');
+    const device = await Device.findOne({ where: { id: deviceId }, attributes: ['id', 'revokedAt'] });
+    return !device || device.revokedAt != null;
   }
 }
 

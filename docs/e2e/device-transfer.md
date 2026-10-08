@@ -79,7 +79,7 @@ Test and live use separate KMS keys, following the billing key separation rule.
 | `devices` (W9) | add `holds_account_key` boolean | Exactly one true per user at most. |
 | `key_transfer_sessions` | `id`, `user_id`, `new_device_id`, `new_ephemeral_public_key`, `old_ephemeral_public_key`, `payload`, `status` (open, sent, done, expired), `expires_at`, timestamps | Rows deleted 1 day after expiry by a job. |
 | `key_backups` | `user_id` PK, `kind`, `salt`, `kdf` JSON, `verifier`, `stored_blob`, `attempts_left`, timestamps | |
-| `key_restore_codes` | `user_id`, `code_hash`, `expires_at`, `attempts_left` | Email codes; hashed like existing reset codes. |
+| `key_restore_codes` | `user_id`, `code_hash`, `expires_at`, `attempts_left` | Email codes and restore tokens, stored as key vault MACs (not plain hashes). |
 
 All new models set `paranoid: false`. Pre-launch vault data (`vault_documents`, `vault_document_keys`, `vault_keys`, `vault/` objects) is reset (D1); W12 rebuilds the vault on the account key.
 
@@ -113,3 +113,10 @@ All under `/api/v1`, authenticated, not behind the paywall (a lapsed household m
 ## Review
 
 External cryptography review before any public "end-to-end encrypted" claim (T13). Until then the app says "Your journal and vault are encrypted on your phone".
+
+## Known limits
+
+- **A phone that lost the key can still sign in.** Moving or restoring signs the old phone out, but signing in again on it is allowed: everything except the journal and vault works. Signing in never makes it the key holder again (`upsertDevice` does not touch `holds_account_key`), and on sign-in or session restore the app asks the server and deletes a stale local key.
+- **A modified app can keep its copy.** The server removes the old holder's access, but it cannot reach into a phone. A tampered app that ignores the server could have kept a copy of the account key it once held, and so could open ciphertext it still has or later fetches. Rotating the account key on every move and re-sealing items is post-MVP (tracker T19).
+- **Revoke when Redis is down.** The revoke is written to the database first. If the Redis marker cannot be written, requests fall back to checking the database whenever Redis errors. If Redis recovers without the marker, an already-issued access token (15 minutes at most) keeps working until it expires; the refresh path always checks the database.
+- **Removing the key holder** clears the holder: no phone holds the key until one restores from the backup. Moving is then refused with `NO_KEY_HOLDER`.
