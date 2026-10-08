@@ -26,17 +26,3 @@ export async function list(req: Request, res: Response, next: NextFunction) {
     res.status(200).json({ success: true, data: result });
   } catch (e) { next(e); }
 }
-
-export async function updateLocation(req: Request, res: Response, next: NextFunction) {
-  try {
-    const result = await pingService.updateSharedLocation(getUserId(req), req.params.id, req.body);
-    res.status(200).json({ success: true, data: result });
-  } catch (e) { next(e); }
-}
-
-export async function stopShareCtrl(req: Request, res: Response, next: NextFunction) {
-  try {
-    const result = await pingService.stopShare(getUserId(req), req.params.id);
-    res.status(200).json({ success: true, data: result });
-  } catch (e) { next(e); }
-}

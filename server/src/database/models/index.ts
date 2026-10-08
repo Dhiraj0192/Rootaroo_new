@@ -28,6 +28,7 @@ import ChatMessage from './ChatMessage';
 import ChatReaction from './ChatReaction';
 import CheckIn from './CheckIn';
 import PingRequest from './PingRequest';
+import LocationShare from './LocationShare';
 import SavedPlace from './SavedPlace';
 import CalendarEvent from './CalendarEvent';
 import CalendarSyncState from './CalendarSyncState';
@@ -86,6 +87,7 @@ const models = {
   ChatReaction,
   CheckIn,
   PingRequest,
+  LocationShare,
   SavedPlace,
   CalendarEvent,
   CalendarSyncState,
@@ -292,6 +294,9 @@ export function setupAssociations(): void {
   PingRequest.belongsTo(User, { foreignKey: 'target_user_id', as: 'target' });
   PingRequest.belongsTo(CheckIn, { foreignKey: 'check_in_id', as: 'checkIn' });
 
+  // ── Location share associations ──
+  LocationShare.belongsTo(User, { foreignKey: 'sharer_id', as: 'sharer' });
+
   // ── Saved place associations ──
   SavedPlace.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
 
@@ -355,6 +360,7 @@ export {
   ChatReaction,
   CheckIn,
   PingRequest,
+  LocationShare,
   SavedPlace,
   CalendarEvent,
   CalendarSyncState,

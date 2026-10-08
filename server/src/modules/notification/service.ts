@@ -30,6 +30,7 @@ const TYPE_TO_PREFERENCE_FIELD: Partial<Record<string, keyof NotificationPrefere
   check_in: 'checkIn',
   ping_request: 'pingRequest',
   ping_response: 'pingRequest',
+  location_share_started: 'pingRequest',
   calendar: 'calendarEvent',
   chat: 'chatMessage',
   task_completed: 'taskCompleted',
