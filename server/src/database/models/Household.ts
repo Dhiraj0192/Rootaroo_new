@@ -9,6 +9,7 @@ class Household extends Model {
   declare storageLimitBytes: number;
   declare coverPhotoUrl: string | null;
   declare timezone: CreationOptional<string>;
+  declare billingCohort: CreationOptional<'live' | 'test'>;
   declare createdAt: CreationOptional<Date>;
   declare updatedAt: CreationOptional<Date>;
   declare deletedAt: Date | null;
@@ -54,6 +55,12 @@ Household.init(
       type: DataTypes.STRING(64),
       allowNull: false,
       defaultValue: 'UTC',
+    },
+    billingCohort: {
+      type: DataTypes.ENUM('live', 'test'),
+      allowNull: false,
+      defaultValue: 'live',
+      field: 'billing_cohort',
     },
     createdAt: {
       type: DataTypes.DATE,

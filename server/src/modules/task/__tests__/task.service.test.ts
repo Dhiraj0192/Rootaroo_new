@@ -1,3 +1,4 @@
+jest.mock('../../billing/socketGate', () => ({ emitToHousehold: jest.fn().mockResolvedValue(undefined) }));
 import {
   createTask,
   getTasks,

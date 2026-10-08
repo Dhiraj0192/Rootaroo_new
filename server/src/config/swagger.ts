@@ -18,10 +18,12 @@ const options: swaggerJsdoc.Options = {
           scheme: 'bearer',
           bearerFormat: 'JWT',
         },
+        billingAdminKey: { type: 'apiKey', in: 'header', name: 'x-admin-billing-key' },
+        adminApiKey: { type: 'apiKey', in: 'header', name: 'x-admin-api-key' },
       },
     },
   },
-  apis: ['./src/modules/**/routes.ts'],
+  apis: ['./src/modules/**/routes.ts', './src/modules/billing/admin/routes.ts'],
 };
 
 export const swaggerSpec = swaggerJsdoc(options);

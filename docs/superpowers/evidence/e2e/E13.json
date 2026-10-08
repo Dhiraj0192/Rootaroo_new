@@ -1,0 +1,83 @@
+{
+  "scenario": "E13",
+  "title": "Test cohort bypass and mode isolation",
+  "pass": true,
+  "startedAt": "2026-10-03T11:37:07.661Z",
+  "assertions": [
+    {
+      "name": "live cohort, no subscription: 402",
+      "ok": true
+    },
+    {
+      "name": "admin cohort API switches to test",
+      "ok": true,
+      "detail": {
+        "success": true,
+        "data": {
+          "changed": true,
+          "from": "live",
+          "to": "test",
+          "canceledSubscriptions": [],
+          "expiredSessions": []
+        }
+      }
+    },
+    {
+      "name": "test cohort allowed with no subscription (reason test_cohort, seats 10)",
+      "ok": true,
+      "detail": {
+        "allowed": true,
+        "reason": "test_cohort",
+        "mode": "test",
+        "subscription": null,
+        "graceUntil": null,
+        "seatsAllowed": 10
+      }
+    },
+    {
+      "name": "back to live: 402 again",
+      "ok": true
+    },
+    {
+      "name": "production resolves a live-cohort household to live mode",
+      "ok": true
+    },
+    {
+      "name": "a test subscription does not unlock the household in live mode (no livemode=true rows, blocked)",
+      "ok": true,
+      "detail": {
+        "allowed": false,
+        "reason": "subscription_required",
+        "mode": "live",
+        "subscription": null,
+        "graceUntil": null,
+        "seatsAllowed": 5
+      }
+    },
+    {
+      "name": "in this dev server (test mode) the same subscription does unlock it",
+      "ok": true,
+      "detail": {
+        "allowed": true,
+        "reason": "active",
+        "mode": "test",
+        "subscription": {
+          "id": "9763276b-51cd-4e23-bbe1-74f1c5be86a0",
+          "provider": "stripe",
+          "status": "active",
+          "seats": 5,
+          "interval": "month",
+          "currentPeriodEnd": "2026-11-03T11:37:09.000Z",
+          "cancelAtPeriodEnd": false
+        },
+        "graceUntil": null,
+        "seatsAllowed": 5
+      }
+    },
+    {
+      "name": "staff API in live mode does not list the test subscription",
+      "ok": true
+    }
+  ],
+  "data": {}
+}

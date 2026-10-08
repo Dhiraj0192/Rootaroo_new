@@ -4,7 +4,7 @@ import { CheckIn, User, HouseholdMember } from '../../database/models';
 import { NotFoundError } from '../../shared/utils/errors';
 import { getUserHousehold as getUserHouseholdCore } from '../../shared/utils/household';
 import logger from '../../shared/utils/logger';
-import { getIO } from '../../shared/utils/socket';
+import { emitToHousehold } from '../billing/socketGate';
 import * as notificationService from '../../shared/services/notifications';
 import type {
   CreateCheckInBody,
@@ -100,7 +100,7 @@ export async function createCheckIn(
   const response = toCheckInResponse(full || checkIn);
 
   try {
-    getIO().to(`household:${householdId}`).emit('checkin:created', response);
+    void emitToHousehold(householdId, 'checkin:created', response);
   } catch (e) {
     logger.warn('[WS] Check-in broadcast failed:', (e as Error).message);
   }

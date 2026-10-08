@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import { env } from '../../config/env';
 import { HouseholdMember } from '../../database/models';
 import logger from '../utils/logger';
+import { isSocketEntitled } from '../../modules/billing/socketGate';
 
 // ── Typed socket data ──
 
@@ -11,6 +12,9 @@ export interface SocketUserData {
   email: string;
   role: string;
   householdId: string | null;
+  billingAllowed?: boolean;
+  billingCheckedAt?: number;
+  billingHouseholdId?: string;
 }
 
 export interface AuthenticatedSocket extends Socket {
@@ -80,6 +84,7 @@ export function setupSocketConnectionHandlers(io: SocketIOServer): void {
 
     if (householdId) {
       socket.join(`household:${householdId}`);
+      void isSocketEntitled(socket);
       logger.info(
         `Socket connected: ${socket.id} | user:${userId} → household:${householdId}`,
       );

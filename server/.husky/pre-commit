@@ -1,0 +1,1 @@
+node server/scripts/scan-secrets.js --staged

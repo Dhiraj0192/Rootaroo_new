@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { authenticate } from '../../shared/middleware/auth';
+import { requireEntitlement } from '../billing/entitlement';
 import { validate } from '../../shared/middleware/validate';
 import * as ctrl from './controller';
 import {
@@ -13,6 +14,7 @@ import {
 const router = Router();
 
 router.use(authenticate);
+router.use(requireEntitlement);
 
 router.post('/', validate(createEventSchema), ctrl.create);     // FR-181: create family event
 router.get('/', validate(listEventsQuerySchema), ctrl.list);    // FR-180/182: household events

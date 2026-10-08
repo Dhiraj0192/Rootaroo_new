@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { authenticate } from '../../shared/middleware/auth';
+import { requireEntitlement } from '../billing/entitlement';
 import { validate } from '../../shared/middleware/validate';
 import * as ctrl from './controller';
 import { vaultUpload } from './controller';
@@ -13,6 +14,7 @@ import {
 const router = Router();
 
 router.use(authenticate);
+router.use(requireEntitlement);
 
 // Document CRUD
 router.post('/', vaultUpload, validate(createVaultDocumentSchema), ctrl.uploadDocumentCtrl);

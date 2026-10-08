@@ -46,6 +46,21 @@ jest.mock('../../../shared/services/notifications', () => ({
 }));
 import { notifyUser } from '../../../shared/services/notifications';
 
+jest.mock('../../billing/entitlement', () => ({
+  assertSeatAvailable: jest.fn().mockResolvedValue(undefined),
+  clearEntitlementCache: jest.fn().mockResolvedValue(undefined),
+}));
+import { assertSeatAvailable, clearEntitlementCache } from '../../billing/entitlement';
+jest.mock('../../billing/deletion', () => ({
+  onHouseholdDeletionScheduled: jest.fn().mockResolvedValue(undefined),
+  onHouseholdDeletionCancelled: jest.fn().mockResolvedValue(undefined),
+  onHouseholdPurged: jest.fn().mockResolvedValue(undefined),
+  syncBillingEmail: jest.fn().mockResolvedValue(undefined),
+  reportDeletionHookFailure: jest.fn().mockResolvedValue(undefined),
+}));
+import { onHouseholdDeletionScheduled, onHouseholdDeletionCancelled, syncBillingEmail, reportDeletionHookFailure } from '../../billing/deletion';
+import { PaymentRequiredError } from '../../billing/errors';
+
 const userId = '550e8400-e29b-41d4-a716-446655440001';
 const otherUserId = '660e8400-e29b-41d4-a716-446655440002';
 const householdId = '550e8400-e29b-41d4-a716-446655440003';
@@ -101,7 +116,7 @@ describe('Household Service — Invitations', () => {
 
       expect(result.code).toBeTruthy();
       expect(result.code.length).toBe(8);
-      expect(result.shareLink).toContain('rootaru://join?code=');
+      expect(result.shareLink).toContain('rootaroo://join?code=');
       expect(result.expiresAt).toBeTruthy();
       expect(models.Invitation.create).toHaveBeenCalledWith(
         expect.objectContaining({ householdId, invitedBy: userId }),
@@ -148,6 +163,28 @@ describe('Household Service — Invitations', () => {
   });
 
   describe('joinViaCode', () => {
+    function arrangeValidInvite() {
+      (models.HouseholdMember.findOne as jest.Mock).mockResolvedValueOnce(null);
+      (models.Invitation.findOne as jest.Mock).mockResolvedValue(fakeInvitation());
+      (models.HouseholdMember.count as jest.Mock).mockResolvedValue(2);
+      (models.HouseholdMember.create as jest.Mock).mockResolvedValue({});
+    }
+
+    it('checks seats inside the join transaction and clears the entitlement cache', async () => {
+      arrangeValidInvite();
+      await joinViaCode(otherUserId, { code: 'INVITE99' });
+      expect(assertSeatAvailable).toHaveBeenCalledWith(householdId, expect.anything());
+      expect(clearEntitlementCache).toHaveBeenCalledWith(householdId);
+    });
+
+    it('propagates 402 SEAT_LIMIT and creates no membership', async () => {
+      (models.HouseholdMember.create as jest.Mock).mockClear();
+      arrangeValidInvite();
+      (assertSeatAvailable as jest.Mock).mockRejectedValueOnce(new PaymentRequiredError('SEAT_LIMIT', 'full'));
+      await expect(joinViaCode(otherUserId, { code: 'INVITE99' })).rejects.toMatchObject({ statusCode: 402, code: 'SEAT_LIMIT' });
+      expect(models.HouseholdMember.create).not.toHaveBeenCalled();
+    });
+
     it('should add user as member and mark invitation accepted', async () => {
       const inv = fakeInvitation();
       (models.HouseholdMember.findOne as jest.Mock)
@@ -293,6 +330,7 @@ describe('Household Service — Member Management', () => {
       expect(adminMembership.update).toHaveBeenCalledWith({ role: 'member' });
       expect(targetMembership.update).toHaveBeenCalledWith({ role: 'admin' });
       expect(result.role).toBe('member');
+      expect(syncBillingEmail).toHaveBeenCalledWith(householdId);
     });
 
     it('should throw ForbiddenError if requester is not admin', async () => {
@@ -630,6 +668,20 @@ describe('Household Service — Member Management', () => {
       expect(household.save).toHaveBeenCalled();
       expect(request.status).toBe('approved');
       expect(request.reviewerNote).toBe('looks fine');
+      expect(onHouseholdDeletionScheduled).toHaveBeenCalledWith(request.householdId);
+    });
+
+    it('raises a review item (via reportDeletionHookFailure) when the scheduled hook fails', async () => {
+      const request = fakeRequest({ type: 'delete' });
+      (models.HouseholdActionRequest.findByPk as jest.Mock).mockResolvedValue(request);
+      (models.Household.findByPk as jest.Mock).mockResolvedValue(fakeHousehold({ scheduledDeletionAt: null, save: jest.fn().mockResolvedValue(undefined) }));
+      const boom = new Error('stripe down');
+      (onHouseholdDeletionScheduled as jest.Mock).mockRejectedValueOnce(boom);
+
+      await approveActionRequest('req-4');
+      await new Promise((r) => setImmediate(r));
+
+      expect(reportDeletionHookFailure).toHaveBeenCalledWith(request.householdId, 'scheduled', boom);
     });
 
     it('should throw NotFoundError for an unknown request id', async () => {
@@ -685,6 +737,19 @@ describe('Household Service — Member Management', () => {
 
       expect(household.scheduledDeletionAt).toBeNull();
       expect(household.save).toHaveBeenCalled();
+      expect(onHouseholdDeletionCancelled).toHaveBeenCalledWith(householdId);
+    });
+
+    it('raises a review item (via reportDeletionHookFailure) when the cancelled hook fails', async () => {
+      (models.HouseholdMember.findOne as jest.Mock).mockResolvedValue(fakeMembership({ role: 'admin' }));
+      (models.Household.findByPk as jest.Mock).mockResolvedValue(fakeHousehold({ scheduledDeletionAt: new Date(), save: jest.fn() }));
+      const boom = new Error('stripe down');
+      (onHouseholdDeletionCancelled as jest.Mock).mockRejectedValueOnce(boom);
+
+      await cancelHouseholdDeletion(userId, householdId);
+      await new Promise((r) => setImmediate(r));
+
+      expect(reportDeletionHookFailure).toHaveBeenCalledWith(householdId, 'cancelled', boom);
     });
 
     it('should throw ForbiddenError for a non-admin', async () => {

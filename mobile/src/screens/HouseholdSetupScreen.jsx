@@ -11,8 +11,8 @@ import { updateSignupProgress } from '../shared/store/signupProgress';
 import { colors, fonts, radius } from '../shared/theme';
 const FAMILY_EMOJIS = ['🏡', '🌿', '☀️'];
 // Matches the QR the household admin generates in Household Settings /
-// Invite Members (rootaru://join?code=XXXX) — see app.json's "scheme".
-const JOIN_LINK_RE = /^rootaru:\/\/join\?code=([A-Za-z0-9]+)$/i;
+// Invite Members (rootaroo://join?code=XXXX) — see app.json's "scheme".
+const JOIN_LINK_RE = /^rootaroo:\/\/join\?code=([A-Za-z0-9]+)$/i;
 export default function HouseholdSetupScreen({ navigation }) {
   const setHousehold = useAuthStore((s) => s.setHousehold);
   const [option, setOption] = useState('create');

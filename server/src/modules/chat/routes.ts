@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { authenticate } from '../../shared/middleware/auth';
+import { requireEntitlement } from '../billing/entitlement';
 import { validate } from '../../shared/middleware/validate';
 import { uploadChatVoice, uploadChatImage } from '../../shared/middleware/upload';
 import * as ctrl from './controller';
@@ -19,6 +20,7 @@ import {
 const router = Router();
 
 router.use(authenticate);
+router.use(requireEntitlement);
 
 // Conversations — must be registered before /:id so "conversations" is not treated as a message id
 router.post('/conversations', validate(createConversationSchema), ctrl.createConversationCtrl);

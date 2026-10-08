@@ -1,0 +1,245 @@
+{
+  "scenario": "E6",
+  "title": "Seat increase 5 to 7 and interval month to year",
+  "pass": true,
+  "startedAt": "2026-10-03T11:20:59.222Z",
+  "assertions": [
+    {
+      "name": "starts at 5 seats, version 0",
+      "ok": true
+    },
+    {
+      "name": "seat change accepted and applied (not pending)",
+      "ok": true,
+      "detail": {
+        "success": true,
+        "data": {
+          "changed": true,
+          "pendingUpdate": false,
+          "hostedInvoiceUrl": null,
+          "entitlement": {
+            "allowed": true,
+            "reason": "active",
+            "mode": "test",
+            "subscription": {
+              "id": "9a65eb53-e035-48ea-a4b8-4d20fe0504bf",
+              "provider": "stripe",
+              "status": "active",
+              "seats": 7,
+              "interval": "month",
+              "currentPeriodEnd": "2026-11-03T11:21:00.000Z",
+              "cancelAtPeriodEnd": false
+            },
+            "graceUntil": null,
+            "seatsAllowed": 7
+          }
+        }
+      }
+    },
+    {
+      "name": "seats 7 after payment, plan_change_version 1",
+      "ok": true,
+      "detail": {
+        "v": 1
+      }
+    },
+    {
+      "name": "proration invoice paid (ledger payment, subscription_update)",
+      "ok": true,
+      "detail": {
+        "amount": 398
+      }
+    },
+    {
+      "name": "interval change accepted",
+      "ok": true,
+      "detail": {
+        "success": true,
+        "data": {
+          "changed": true,
+          "pendingUpdate": false,
+          "hostedInvoiceUrl": null,
+          "entitlement": {
+            "allowed": true,
+            "reason": "active",
+            "mode": "test",
+            "subscription": {
+              "id": "9a65eb53-e035-48ea-a4b8-4d20fe0504bf",
+              "provider": "stripe",
+              "status": "active",
+              "seats": 7,
+              "interval": "year",
+              "currentPeriodEnd": "2027-10-03T11:21:00.000Z",
+              "cancelAtPeriodEnd": false
+            },
+            "graceUntil": null,
+            "seatsAllowed": 7
+          }
+        }
+      }
+    },
+    {
+      "name": "year plan rootaroo_hh7_year = 12775, seats 7, version 2",
+      "ok": true,
+      "detail": {
+        "unit": 12775,
+        "v": 2
+      }
+    },
+    {
+      "name": "entitlement allowed with 7 seats",
+      "ok": true,
+      "detail": {
+        "allowed": true,
+        "reason": "active",
+        "mode": "test",
+        "subscription": {
+          "id": "9a65eb53-e035-48ea-a4b8-4d20fe0504bf",
+          "provider": "stripe",
+          "status": "active",
+          "seats": 7,
+          "interval": "year",
+          "currentPeriodEnd": "2027-10-03T11:21:00.000Z",
+          "cancelAtPeriodEnd": false
+        },
+        "graceUntil": null,
+        "seatsAllowed": 7
+      }
+    },
+    {
+      "name": "repeat of the same plan is a no-op",
+      "ok": true,
+      "detail": {
+        "success": true,
+        "data": {
+          "changed": false,
+          "pendingUpdate": false,
+          "hostedInvoiceUrl": null,
+          "entitlement": {
+            "allowed": true,
+            "reason": "active",
+            "mode": "test",
+            "subscription": {
+              "id": "9a65eb53-e035-48ea-a4b8-4d20fe0504bf",
+              "provider": "stripe",
+              "status": "active",
+              "seats": 7,
+              "interval": "year",
+              "currentPeriodEnd": "2027-10-03T11:21:00.000Z",
+              "cancelAtPeriodEnd": false
+            },
+            "graceUntil": null,
+            "seatsAllowed": 7
+          }
+        }
+      }
+    }
+  ],
+  "data": {
+    "snapshot": {
+      "subscriptions": [
+        {
+          "id": "9a65eb53-e035-48ea-a4b8-4d20fe0504bf",
+          "householdId": "e16e90bb-e77e-48ec-96fc-614cae108d51",
+          "provider": "stripe",
+          "livemode": false,
+          "providerSubscriptionId": "sub_1UMR010dWk0w8nqYAzmVc7en",
+          "status": "active",
+          "interval": "year",
+          "seats": 7,
+          "priceId": "price_1UMD400dWk0w8nqYsfo1fED9",
+          "priceSet": "2026-10",
+          "unitAmount": 12775,
+          "currency": "usd",
+          "currentPeriodStart": "2026-10-03T11:21:00.000Z",
+          "currentPeriodEnd": "2027-10-03T11:21:00.000Z",
+          "cancelAtPeriodEnd": false,
+          "canceledAt": null,
+          "endedAt": null,
+          "pendingUpdate": null,
+          "graceUntil": null,
+          "purchasedByUserId": "f461bcf8-c868-4e99-aee1-f5f8f37d7fb1",
+          "eventWatermark": 1791026475,
+          "lastSyncedAt": "2026-10-03T11:21:23.000Z",
+          "planChangeVersion": 2,
+          "createdAt": "2026-10-03T11:21:11.000Z",
+          "updatedAt": "2026-10-03T11:21:23.000Z"
+        }
+      ],
+      "customers": [
+        {
+          "id": "2b7045ac-6b77-43d8-a1b0-3dec78e42ca6",
+          "householdId": "e16e90bb-e77e-48ec-96fc-614cae108d51",
+          "provider": "stripe",
+          "livemode": false,
+          "providerCustomerId": "cus_VNBM3vktqlgPM9",
+          "billingEmail": "e2e-e6-musawsih-cfe5@example.test",
+          "createdAt": "2026-10-03T11:21:02.000Z",
+          "updatedAt": "2026-10-03T11:21:13.000Z"
+        }
+      ],
+      "transactions": [
+        {
+          "id": "31cb9463-2d5c-404a-882a-0166296433fe",
+          "provider": "stripe",
+          "livemode": false,
+          "type": "payment",
+          "status": "paid",
+          "billingReason": "subscription_create",
+          "amount": 899,
+          "fee": 0,
+          "net": 899,
+          "disputeFee": null,
+          "fundsState": null,
+          "currency": "usd",
+          "householdId": "e16e90bb-e77e-48ec-96fc-614cae108d51",
+          "userId": "f461bcf8-c868-4e99-aee1-f5f8f37d7fb1",
+          "subscriptionId": "9a65eb53-e035-48ea-a4b8-4d20fe0504bf",
+          "matchStatus": "matched",
+          "householdNameSnapshot": "E2E E6 Household",
+          "payerEmailSnapshot": "e2e-e6-musawsih-cfe5@example.test",
+          "providerObjectId": "in_1UMR010dWk0w8nqY9exk2MDt",
+          "providerInvoiceId": "in_1UMR010dWk0w8nqY9exk2MDt",
+          "providerChargeId": "ch_3UMR020dWk0w8nqY1VTfi9t2",
+          "receiptUrl": "<stripe-url:pay.stripe.com>",
+          "description": "1 × Rootaroo Household: 5 members (at $8.99 / month)",
+          "occurredAt": "2026-10-03T11:21:00.000Z",
+          "lastEventId": "evt_1UMR040dWk0w8nqYK43JGScN",
+          "createdAt": "2026-10-03T11:21:13.000Z",
+          "updatedAt": "2026-10-03T11:21:13.000Z"
+        },
+        {
+          "id": "889b2dac-1986-4002-acb3-204d7c77ac34",
+          "provider": "stripe",
+          "livemode": false,
+          "type": "payment",
+          "status": "paid",
+          "billingReason": "subscription_update",
+          "amount": 398,
+          "fee": 0,
+          "net": 398,
+          "disputeFee": null,
+          "fundsState": null,
+          "currency": "usd",
+          "householdId": "e16e90bb-e77e-48ec-96fc-614cae108d51",
+          "userId": "f461bcf8-c868-4e99-aee1-f5f8f37d7fb1",
+          "subscriptionId": "9a65eb53-e035-48ea-a4b8-4d20fe0504bf",
+          "matchStatus": "matched",
+          "householdNameSnapshot": "E2E E6 Household",
+          "payerEmailSnapshot": "e2e-e6-musawsih-cfe5@example.test",
+          "providerObjectId": "in_1UMR090dWk0w8nqYpDJqUUHA",
+          "providerInvoiceId": "in_1UMR090dWk0w8nqYpDJqUUHA",
+          "providerChargeId": "ch_3UMR0A0dWk0w8nqY0FMhxCgF",
+          "receiptUrl": "<stripe-url:pay.stripe.com>",
+          "description": "Unused time on Rootaroo Household: 5 members after 03 Oct 2026",
+          "occurredAt": "2026-10-03T11:21:00.000Z",
+          "lastEventId": "evt_1UMR0B0dWk0w8nqYs70lzK5O",
+          "createdAt": "2026-10-03T11:21:18.000Z",
+          "updatedAt": "2026-10-03T11:21:18.000Z"
+        }
+      ],
+      "checkoutSessions": [],
+      "reviewItems": []
+    }
+  }
+}

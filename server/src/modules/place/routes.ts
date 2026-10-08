@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { authenticate } from '../../shared/middleware/auth';
+import { requireEntitlement } from '../billing/entitlement';
 import { validate } from '../../shared/middleware/validate';
 import * as ctrl from './controller';
 import { createSavedPlaceSchema, updateSavedPlaceSchema } from './validation';
@@ -7,6 +8,7 @@ import { createSavedPlaceSchema, updateSavedPlaceSchema } from './validation';
 const router = Router();
 
 router.use(authenticate);
+router.use(requireEntitlement);
 
 // Bookmark a location (Home, Office, School, or custom)
 router.post('/', validate(createSavedPlaceSchema), ctrl.create);

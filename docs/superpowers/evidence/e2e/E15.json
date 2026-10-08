@@ -1,0 +1,335 @@
+{
+  "scenario": "E15",
+  "title": "Staff API: filters, CSV, summary arithmetic, review resolve, event replay",
+  "pass": true,
+  "startedAt": "2026-10-03T11:37:37.232Z",
+  "assertions": [
+    {
+      "name": "billing admin key accepted",
+      "ok": true
+    },
+    {
+      "name": "missing key rejected (401)",
+      "ok": true
+    },
+    {
+      "name": "transactions filtered by household: payment + refund only",
+      "ok": true,
+      "detail": [
+        "refund",
+        "payment"
+      ]
+    },
+    {
+      "name": "transactions filtered by user",
+      "ok": true
+    },
+    {
+      "name": "type filter",
+      "ok": true
+    },
+    {
+      "name": "CSV: header + one row per transaction",
+      "ok": true,
+      "detail": {
+        "rows": 3
+      }
+    },
+    {
+      "name": "transaction detail loads",
+      "ok": true
+    },
+    {
+      "name": "summary matches the ledger and net = gross - refunds - disputes - fees - dispute fees",
+      "ok": true,
+      "detail": {
+        "sum": {
+          "mode": "test",
+          "from": "2020-01-01T00:00:00.000Z",
+          "to": "2031-01-01T00:00:00.000Z",
+          "currency": "usd",
+          "gross": 26459,
+          "refunds": 2897,
+          "disputes": 1798,
+          "fees": 0,
+          "disputeFees": 0,
+          "net": 21764,
+          "mrr": 12052,
+          "counts": {
+            "active": 12,
+            "pastDue": 1,
+            "inGrace": 1,
+            "failedCyclePayments": 2
+          }
+        },
+        "expected": {
+          "gross": 26459,
+          "refunds": 2897,
+          "disputes": 1798,
+          "fees": 0,
+          "dFees": 0
+        }
+      }
+    },
+    {
+      "name": "review item resolved with a note",
+      "ok": true,
+      "detail": {
+        "success": true,
+        "data": {
+          "id": "6c893b0a-7415-4c1e-8a29-ce54c372ca6c",
+          "runId": null,
+          "livemode": false,
+          "kind": "duplicate_subscription",
+          "entityType": "household",
+          "entityId": "076573f0-e4b6-4aa3-84cb-c6206c250c48",
+          "providerObjectId": "sub_1UMRFi0dWk0w8nqY5AntkyWh,sub_1UMRFp0dWk0w8nqYjNfLKQRm",
+          "before": null,
+          "after": {
+            "kept": "sub_1UMRFi0dWk0w8nqY5AntkyWh",
+            "canceled": [
+              "sub_1UMRFp0dWk0w8nqYjNfLKQRm"
+            ],
+            "outcomes": [
+              "refunded"
+            ]
+          },
+          "resolution": "resolved",
+          "resolvedBy": "billing-key",
+          "resolutionNote": "E2E resolve check",
+          "resolvedAt": "2026-10-03T11:37:49.121Z",
+          "createdAt": "2026-10-03T11:37:33.000Z",
+          "updatedAt": "2026-10-03T11:37:49.122Z"
+        }
+      }
+    },
+    {
+      "name": "resolved item listed under status=resolved",
+      "ok": true
+    },
+    {
+      "name": "event replay accepted",
+      "ok": true,
+      "detail": {
+        "success": true,
+        "data": {
+          "id": "d1734386-5610-4967-a711-cef3eef5b263",
+          "provider": "stripe",
+          "livemode": false,
+          "providerEventId": "evt_1UMRG50dWk0w8nqYNVeb6WlE",
+          "type": "invoice.paid",
+          "payload": {
+            "id": "evt_1UMRG50dWk0w8nqYNVeb6WlE",
+            "data": {
+              "object": {
+                "id": "in_1UMRG30dWk0w8nqYcDhyFY2F",
+                "lines": {
+                  "url": "/v1/invoices/in_1UMRG30dWk0w8nqYcDhyFY2F/lines",
+                  "data": [
+                    {
+                      "id": "il_1UMRG10dWk0w8nqYLtt2Ehm3",
+                      "taxes": [],
+                      "amount": 899,
+                      "object": "line_item",
+                      "parent": {
+                        "type": "subscription_item_details",
+                        "invoice_item_details": null,
+                        "subscription_item_details": {
+                          "proration": false,
+                          "invoice_item": null,
+                          "subscription": "sub_1UMRG30dWk0w8nqY2QkoVTAs",
+                          "proration_details": {
+                            "credited_items": null
+                          },
+                          "subscription_item": "si_VNBdQ4QZTYejAX"
+                        }
+                      },
+                      "period": {
+                        "end": 1793705857,
+                        "start": 1791027457
+                      },
+                      "invoice": "in_1UMRG30dWk0w8nqYcDhyFY2F",
+                      "pricing": {
+                        "type": "price_details",
+                        "price_details": {
+                          "price": "price_1UMD3t0dWk0w8nqYoXd7ZLev",
+                          "product": "prod_VMwxUP3qTzx1AG"
+                        },
+                        "unit_amount_decimal": "899"
+                      },
+                      "currency": "usd",
+                      "livemode": false,
+                      "metadata": {
+                        "env": "dev",
+                        "householdId": "45feaf81-2575-4cfb-84c0-5a9addf443cb",
+                        "purchasedByUserId": "7818e151-59d0-4db4-a4fa-70dd6e3972a7"
+                      },
+                      "quantity": 1,
+                      "subtotal": 899,
+                      "discounts": [],
+                      "description": "1 × Rootaroo Household: 5 members (at $8.99 / month)",
+                      "discountable": true,
+                      "discount_amounts": [],
+                      "quantity_decimal": "1",
+                      "pretax_credit_amounts": []
+                    }
+                  ],
+                  "object": "list",
+                  "has_more": false,
+                  "total_count": 1
+                },
+                "total": 899,
+                "footer": null,
+                "issuer": {
+                  "type": "self"
+                },
+                "number": "JL2S4MEU-0001",
+                "object": "invoice",
+                "parent": {
+                  "type": "subscription_details",
+                  "quote_details": null,
+                  "subscription_details": {
+                    "metadata": {
+                      "env": "dev",
+                      "householdId": "45feaf81-2575-4cfb-84c0-5a9addf443cb",
+                      "purchasedByUserId": "7818e151-59d0-4db4-a4fa-70dd6e3972a7"
+                    },
+                    "subscription": "sub_1UMRG30dWk0w8nqY2QkoVTAs"
+                  }
+                },
+                "status": "paid",
+                "created": 1791027457,
+                "currency": "usd",
+                "customer": "cus_VNBdsXbN6dNmkl",
+                "due_date": null,
+                "livemode": false,
+                "metadata": {},
+                "subtotal": 899,
+                "attempted": true,
+                "discounts": [],
+                "rendering": null,
+                "amount_due": 899,
+                "period_end": 1791027457,
+                "test_clock": "clock_1UMRG10dWk0w8nqYQdWpB36O",
+                "amount_paid": 899,
+                "application": null,
+                "description": null,
+                "invoice_pdf": "<stripe-url:pay.stripe.com>",
+                "total_taxes": [],
+                "account_name": "Simso Technologies, LLC",
+                "auto_advance": false,
+                "effective_at": 1791027457,
+                "from_invoice": null,
+                "on_behalf_of": null,
+                "period_start": 1791027457,
+                "attempt_count": 1,
+                "automatic_tax": {
+                  "status": null,
+                  "enabled": false,
+                  "provider": null,
+                  "liability": null,
+                  "disabled_reason": null
+                },
+                "custom_fields": null,
+                "customer_name": "E2E E15 Household",
+                "shipping_cost": null,
+                "billing_reason": "subscription_create",
+                "customer_email": "e2e-e15-musbi6kw-8016@example.test",
+                "customer_phone": null,
+                "default_source": null,
+                "ending_balance": 0,
+                "receipt_number": null,
+                "account_country": "US",
+                "account_tax_ids": null,
+                "amount_overpaid": 0,
+                "amount_shipping": 0,
+                "latest_revision": null,
+                "amount_remaining": 0,
+                "customer_account": null,
+                "customer_address": null,
+                "customer_tax_ids": [],
+                "payment_settings": {
+                  "default_mandate": null,
+                  "payment_method_types": null,
+                  "payment_method_options": null
+                },
+                "shipping_details": null,
+                "starting_balance": 0,
+                "collection_method": "charge_automatically",
+                "customer_shipping": null,
+                "default_tax_rates": [],
+                "hosted_invoice_url": "<stripe-url:invoice.stripe.com>",
+                "status_transitions": {
+                  "paid_at": 1791027457,
+                  "voided_at": null,
+                  "finalized_at": 1791027457,
+                  "marked_uncollectible_at": null
+                },
+                "customer_tax_exempt": "none",
+                "total_excluding_tax": 899,
+                "next_payment_attempt": null,
+                "statement_descriptor": null,
+                "webhooks_delivered_at": null,
+                "default_payment_method": null,
+                "subtotal_excluding_tax": 899,
+                "total_discount_amounts": [],
+                "last_finalization_error": null,
+                "automatically_finalizes_at": null,
+                "total_pretax_credit_amounts": [],
+                "pre_payment_credit_notes_amount": 0,
+                "post_payment_credit_notes_amount": 0
+              }
+            },
+            "type": "invoice.paid",
+            "object": "event",
+            "created": 1791027461,
+            "request": {
+              "id": "req_ttnpttCJMy5Unw",
+              "idempotency_key": "stripe-node-retry-544790ed-1a43-4c43-b99d-b3a84beb5d18"
+            },
+            "livemode": false,
+            "api_version": "2026-08-26.dahlia",
+            "pending_webhooks": 2
+          },
+          "status": "received",
+          "attempts": 0,
+          "lockedAt": null,
+          "lastError": null,
+          "receivedAt": "2026-10-03T11:37:42.000Z",
+          "processedAt": "2026-10-03T11:37:44.000Z",
+          "createdAt": "2026-10-03T11:37:42.000Z",
+          "updatedAt": "2026-10-03T11:37:49.000Z"
+        }
+      }
+    },
+    {
+      "name": "replayed event processed again without duplicating ledger rows",
+      "ok": true
+    },
+    {
+      "name": "household billing view lists subscription and recent transactions",
+      "ok": true
+    }
+  ],
+  "data": {
+    "summary": {
+      "mode": "test",
+      "from": "2020-01-01T00:00:00.000Z",
+      "to": "2031-01-01T00:00:00.000Z",
+      "currency": "usd",
+      "gross": 26459,
+      "refunds": 2897,
+      "disputes": 1798,
+      "fees": 0,
+      "disputeFees": 0,
+      "net": 21764,
+      "mrr": 12052,
+      "counts": {
+        "active": 12,
+        "pastDue": 1,
+        "inGrace": 1,
+        "failedCyclePayments": 2
+      }
+    }
+  }
+}

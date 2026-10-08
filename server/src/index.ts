@@ -11,6 +11,10 @@ import { startCalendarSyncJob } from './jobs/calendar-sync';
 import { startOverduePointsReductionJob } from './jobs/overdue-points';
 import { startPurgeScheduledDeletionsJob } from './jobs/purge-scheduled-deletions';
 import { startPingExpiryJob } from './jobs/ping-expiry';
+import { startBillingEventSweepJob } from './jobs/billing-event-sweep';
+import { startBillingCheckoutSweepJob } from './jobs/billing-checkout-sweep';
+import { startBillingReconcileJobs } from './jobs/billing-reconcile';
+import { startBillingPriceNoticesJob } from './jobs/billing-price-notices';
 import { setIO } from './shared/utils/socket';
 import {
   socketAuthMiddleware,
@@ -18,6 +22,9 @@ import {
 } from './shared/middleware/socketAuth';
 import { registerChatSocket } from './socket/chatSocket';
 import logger from './shared/utils/logger';
+import { assertBillingConfigAtStartup, getBillingConfig } from './modules/billing/config';
+import { assertNoUploadsInProduction } from './shared/middleware/uploads';
+import { startCatalogBustSubscriber } from './modules/billing/catalog';
 
 // Optional infra (Redis cache/rate-limit store, etc.) must never take the
 // whole API down. ioredis and its consumers (e.g. rate-limit-redis) can
@@ -57,6 +64,9 @@ setIO(io);
 // ── Start Server ──
 async function start(): Promise<void> {
   try {
+    assertBillingConfigAtStartup();
+    startCatalogBustSubscriber();
+    assertNoUploadsInProduction(app, env.nodeEnv);
     // Connect to MySQL
     await testDatabaseConnection();
 
@@ -77,6 +87,12 @@ async function start(): Promise<void> {
     startOverduePointsReductionJob();
     startPurgeScheduledDeletionsJob();
     startPingExpiryJob();
+    if (getBillingConfig().enabled) {
+      startBillingEventSweepJob();
+      startBillingCheckoutSweepJob();
+      startBillingReconcileJobs();
+      startBillingPriceNoticesJob();
+    }
 
     server.listen(env.port, () => {
       logger.info(`

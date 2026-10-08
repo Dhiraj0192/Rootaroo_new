@@ -8,6 +8,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as NavigationBar from 'expo-navigation-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '../shared/store/authStore';
+import { useBillingStore, selectGate } from '../shared/store/billingStore';
+import { useBillingLifecycle } from '../shared/hooks/useBillingLifecycle';
+import { chooseRootView } from '../shared/billing/gate';
+import PaywallScreen from '../screens/billing/PaywallScreen';
+import PaywallMemberScreen from '../screens/billing/PaywallMemberScreen';
+import SubscriptionScreen from '../screens/billing/SubscriptionScreen';
+import GraceBanner from '../screens/billing/components/GraceBanner';
 import { connectSocket, disconnectSocket } from '../shared/socket';
 import { registerForPushNotificationsAsync } from '../shared/pushNotifications';
 import SplashScreen from '../screens/SplashScreen';
@@ -80,6 +87,7 @@ const MainTab = createBottomTabNavigator();
 const TasksNav = createNativeStackNavigator();
 const ChatNav = createNativeStackNavigator();
 const MoreNav = createNativeStackNavigator();
+const PaywallStack = createNativeStackNavigator();
 
 /* Vault screens are a fully immersive dark experience — no floating tab dock. */
 const VAULT_ROUTES = ['Vault', 'VaultUpload', 'VaultSetup', 'VaultViewer'];
@@ -121,6 +129,23 @@ function AuthNavigator() {
   );
 }
 
+function PaywallNavigator() {
+  const isAdmin = useBillingStore((s) => s.status?.isAdmin);
+  return (
+    <PaywallStack.Navigator screenOptions={{ headerShown: false }}>
+      {isAdmin
+        ? <PaywallStack.Screen name="Paywall" component={PaywallScreen} />
+        : <PaywallStack.Screen name="PaywallMember" component={PaywallMemberScreen} />}
+      {/* Reachable without a subscription (PaywallMenu): settings, account deletion, help. */}
+      <PaywallStack.Screen name="HouseholdSettings" component={HouseholdSettingsScreen} />
+      <PaywallStack.Screen name="EditProfile" component={EditProfileScreen} />
+      <PaywallStack.Screen name="AccountDeletion" component={AccountDeletionScreen} />
+      <PaywallStack.Screen name="HelpCenter" component={HelpCenterScreen} />
+      <PaywallStack.Screen name="PrivacyPolicy" component={PrivacyPolicyScreen} />
+    </PaywallStack.Navigator>
+  );
+}
+
 function ChatNavigator() {
   return (
     <ChatNav.Navigator screenOptions={{ headerShown: false }}>
@@ -150,6 +175,7 @@ function MoreNavigator() {
     <MoreNav.Navigator screenOptions={{ headerShown: false }}>
       <MoreNav.Screen name="MoreIndex" component={MoreScreen} />
       <MoreNav.Screen name="HouseholdSettings" component={HouseholdSettingsScreen} />
+      <MoreNav.Screen name="Subscription" component={SubscriptionScreen} />
       <MoreNav.Screen name="GroceryList" component={GroceryListScreen} />
       <MoreNav.Screen name="TodoList" component={TodoListScreen} />
       <MoreNav.Screen
@@ -522,11 +548,23 @@ function MainNavigator() {
   );
 }
 
+function MainWithBanner(props) {
+  return (
+    <View style={{ flex: 1 }}>
+      <MainNavigator {...props} />
+      <GraceBanner />
+    </View>
+  );
+}
+
 export default function RootNavigator() {
   const isLoading = useAuthStore((s) => s.isLoading);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const accessToken = useAuthStore((s) => s.accessToken);
   const restoreSession = useAuthStore((s) => s.restoreSession);
+  const userId = useAuthStore((s) => s.user?.id);
+  useBillingLifecycle(isAuthenticated, userId);
+  const gate = useBillingStore(selectGate);
   const [minSplashDone, setMinSplashDone] = useState(false);
 
   // Restore auth from SecureStore on boot
@@ -558,9 +596,9 @@ export default function RootNavigator() {
     return <SplashScreen />;
   }
 
-  if (!isAuthenticated) {
-    return <AuthNavigator />;
-  }
+  const view = chooseRootView({ isAuthenticated, gate });
+  if (view === 'auth') return <AuthNavigator />;
+  if (view === 'paywall') return <PaywallNavigator />;
 
   return (
     <RootStack.Navigator screenOptions={{ presentation: 'modal', headerShown: false }}>
@@ -569,7 +607,7 @@ export default function RootNavigator() {
           meant for CreatePost/Notifications) changes how native-stack
           computes this screen's safe-area insets on some platforms, which is
           what left a gap below the docked tab bar. */}
-      <RootStack.Screen name="MainTabs" component={MainNavigator} options={{ presentation: 'card' }} />
+      <RootStack.Screen name="MainTabs" component={MainWithBanner} options={{ presentation: 'card' }} />
       <RootStack.Screen
         name="CreatePost"
         component={CreatePostScreen}

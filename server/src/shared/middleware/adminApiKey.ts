@@ -8,12 +8,13 @@ import { UnauthorizedError } from '../utils/errors';
  * endpoints are reviewed by Rootaroo staff, not authenticated as any
  * household member, so a stolen user token must never satisfy this check.
  */
-export function requireAdminApiKey(req: Request, _res: Response, next: NextFunction): void {
+export function requireAdminApiKey(req: Request, res: Response, next: NextFunction): void {
   const provided = req.headers['x-admin-api-key'];
 
   if (!env.adminApiKey || !provided || provided !== env.adminApiKey) {
     throw new UnauthorizedError('Invalid or missing admin API key');
   }
 
+  res.locals.auditKeyLabel = 'admin-key';
   next();
 }

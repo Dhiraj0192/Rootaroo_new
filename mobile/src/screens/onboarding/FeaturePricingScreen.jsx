@@ -1,14 +1,19 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Animated, Easing } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Animated, Easing, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useIsFocused } from '@react-navigation/native';
 import Svg, { Path } from 'react-native-svg';
 import FeatureTourShell from './FeatureTourShell';
 import { Eyebrow } from './tourPrimitives';
 import { useReducedMotion } from './useReducedMotion';
-import { pricing, oldWay, PRICE, derivePricing } from './featureTourContent';
+import { pricing, oldWay, derivePricing } from './featureTourContent';
 import { updateSignupProgress } from '../../shared/store/signupProgress';
 import { useAuthStore } from '../../shared/store/authStore';
+import { useBillingStore } from '../../shared/store/billingStore';
+import { seatRange, autoRenewDisclosure } from '../../shared/billing/pricing';
+import { startPurchase, canStartPurchase } from '../../shared/billing/purchase';
+import { TERMS_URL, PRIVACY_URL } from '../../shared/billing/legalLinks';
+import * as WebBrowser from 'expo-web-browser';
 import { colors, fonts, radius, goldButton, withAlpha } from '../../shared/theme';
 
 // Two groups, not eight — the "what you'd pay elsewhere / what you pay here"
@@ -27,18 +32,22 @@ const SLIDE_PX = 32;
  * Skip — it's the screen with a real decision on it (plan, household size),
  * so it only ever proceeds when the user actually presses Continue.
  *
- * NOTE: this screen takes no payment. There is no billing, subscription or
- * in-app-purchase code in the app or the server, so its CTA does what the
- * previous three CTAs do — finishes the flow and drops the user on Home. The
- * plan toggle and household-size stepper are live (the maths is the design's,
- * in featureTourContent.derivePricing) so the screen is ready to wire to a
- * real store transaction later; charging for this would need Apple/Google
- * in-app purchase, not a card form.
+ * Prices are the server's (GET /billing/plans via the billing store); the app holds
+ * no price constants. The CTA starts the routed purchase; finish() runs on
+ * confirmed entitlement or "Not now", after which RootNavigator shows the
+ * paywall if the household is still blocked.
  */
 export default function FeaturePricingScreen({ navigation }) {
+  const status = useBillingStore((s) => s.status);
+  const plans = status?.plans ?? null;
+  const range = plans ? seatRange(plans, status?.memberCount ?? 1) : { min: 5, max: 10, overCap: false };
   const [plan, setPlan] = useState('year');
-  const [size, setSize] = useState(PRICE.includedSeats);
-  const p = derivePricing(plan, size);
+  const [size, setSize] = useState(range.min);
+  const [buying, setBuying] = useState(false);
+  const [note, setNote] = useState(null);
+  useEffect(() => { useBillingStore.getState().refresh(); }, []);
+  useEffect(() => { setSize((s) => Math.min(Math.max(s, range.min), range.max)); }, [range.min, range.max]);
+  const p = plans ? derivePricing(plan, Math.min(size, range.max), plans) : null;
 
   const isFocused = useIsFocused();
   const reduceMotion = useReducedMotion();
@@ -97,14 +106,39 @@ export default function FeaturePricingScreen({ navigation }) {
     useAuthStore.getState().completeSetup();
   };
 
+  const purchase = async () => {
+    if (buying) return;
+    if (!canStartPurchase(status?.purchaseMethod)) {
+      setNote("Purchasing isn't available here yet. You can subscribe later from More → Subscription.");
+      return;
+    }
+    setBuying(true);
+    setNote(null);
+    const r = await startPurchase({ method: status.purchaseMethod, interval: plan, seats: Math.min(size, range.max) });
+    setBuying(false);
+    if (r.outcome === 'unlocked') { await finish(); return; }
+    if (r.outcome === 'confirming') setNote('Confirming your payment…');
+    else if (r.outcome === 'pending') setNote('Your purchase is pending approval. You can keep setting up.');
+    else if (r.outcome === 'error') setNote(r.error.message);
+    else setNote('The purchase was not completed.');
+  };
+
+  if (!p) {
+    return (
+      <FeatureTourShell step={3} navigation={navigation} contentPadding={22} ctaLabel={'Loading prices…'} onContinue={() => {}}>
+        <ActivityIndicator style={{ marginTop: 80 }} color={colors.gold} />
+      </FeatureTourShell>
+    );
+  }
+
   return (
     <FeatureTourShell
       step={3}
       navigation={navigation}
       contentPadding={22}
-      ctaLabel={p.payLabel}
+      ctaLabel={buying ? 'Opening checkout…' : p.payLabel}
       ctaSubLabel={p.payFine}
-      onContinue={finish}
+      onContinue={purchase}
     >
       <Animated.View style={{ opacity: heroAnim.opacity, transform: [{ translateX: heroAnim.translateX }] }}>
         <Eyebrow style={styles.topEyebrow}>{pricing.eyebrow}</Eyebrow>
@@ -205,15 +239,15 @@ export default function FeaturePricingScreen({ navigation }) {
           <View style={styles.stepper}>
             <StepperButton
               sign="minus"
-              disabled={size <= PRICE.minSeats}
-              onPress={() => setSize((s) => Math.max(PRICE.minSeats, s - 1))}
+              disabled={size <= range.min}
+              onPress={() => setSize((s) => Math.max(range.min, s - 1))}
               label="Remove a member"
             />
             <Text style={styles.stepperValue}>{size}</Text>
             <StepperButton
               sign="plus"
-              disabled={size >= PRICE.maxSeats}
-              onPress={() => setSize((s) => Math.min(PRICE.maxSeats, s + 1))}
+              disabled={size >= range.max}
+              onPress={() => setSize((s) => Math.min(range.max, s + 1))}
               label="Add a member"
             />
           </View>
@@ -225,6 +259,20 @@ export default function FeaturePricingScreen({ navigation }) {
             <Text style={styles.settingSub}>{pricing.featuresSub}</Text>
           </View>
           <Text style={styles.includedBadge}>{pricing.featuresBadge}</Text>
+        </View>
+
+        <Text style={styles.disclosure}>{autoRenewDisclosure(p.amountCents, plan)}</Text>
+        {note ? <Text style={styles.note}>{note}</Text> : null}
+        <TouchableOpacity onPress={finish} accessibilityRole="button" style={styles.notNow}>
+          <Text style={styles.notNowText}>Not now</Text>
+        </TouchableOpacity>
+        <View style={styles.legalRow}>
+          <TouchableOpacity onPress={() => WebBrowser.openBrowserAsync(TERMS_URL)} accessibilityRole="link">
+            <Text style={styles.legalText}>Terms</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => WebBrowser.openBrowserAsync(PRIVACY_URL)} accessibilityRole="link">
+            <Text style={styles.legalText}>Privacy</Text>
+          </TouchableOpacity>
         </View>
       </Animated.View>
     </FeatureTourShell>
@@ -539,6 +587,12 @@ const styles = StyleSheet.create({
     backgroundColor: colors.inkDeep,
   },
   stepBarVertical: { width: 1.8, height: 11 },
+  disclosure: { fontFamily: fonts.bodySemiBold, fontSize: 11.5, color: colors.textMuted, marginTop: 16 },
+  note: { fontFamily: fonts.bodySemiBold, fontSize: 13, color: colors.ink, marginTop: 12, textAlign: 'center' },
+  notNow: { alignSelf: 'center', marginTop: 14, padding: 8 },
+  notNowText: { fontFamily: fonts.bodyBold, fontSize: 13, color: colors.textSecondary },
+  legalRow: { flexDirection: 'row', justifyContent: 'center', gap: 20, marginTop: 4 },
+  legalText: { fontFamily: fonts.bodySemiBold, fontSize: 12, color: colors.textMuted, padding: 6 },
   stepperValue: {
     width: 30,
     textAlign: 'center',

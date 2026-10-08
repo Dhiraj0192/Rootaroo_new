@@ -7,6 +7,9 @@ import { ConflictError, NotFoundError, ForbiddenError, AppError } from '../../sh
 import { getSignedUrl, deleteObject } from '../../shared/utils/s3';
 import { sendAdminAlertEmail } from '../../shared/utils/mailer';
 import { getIO } from '../../shared/utils/socket';
+import { withDeadlockRetry } from '../../shared/utils/dbRetry';
+import { assertSeatAvailable, clearEntitlementCache } from '../billing/entitlement';
+import { onHouseholdDeletionScheduled, onHouseholdDeletionCancelled, onHouseholdPurged, syncBillingEmail, reportDeletionHookFailure } from '../billing/deletion';
 import logger from '../../shared/utils/logger';
 import * as notificationService from '../../shared/services/notifications';
 import type {
@@ -146,7 +149,7 @@ export async function generateInvitation(
     id: invitation.id,
     code,
     expiresAt: expiresAt.toISOString(),
-    shareLink: `rootaru://join?code=${code}`,
+    shareLink: `rootaroo://join?code=${code}`,
   };
 }
 
@@ -179,7 +182,7 @@ export async function joinViaCode(userId: string, body: JoinHouseholdBody): Prom
   // has no DB-level unique constraint backing it, so the existence check
   // and the insert must happen inside a single SERIALIZABLE transaction
   // or two concurrent joins could both pass the check (F-13).
-  const { household } = await sequelize.transaction(
+  const { household } = await withDeadlockRetry(() => sequelize.transaction(
     { isolationLevel: Transaction.ISOLATION_LEVELS.SERIALIZABLE },
     async (transaction) => {
       const existing = await HouseholdMember.findOne({ where: { userId }, transaction });
@@ -225,6 +228,10 @@ export async function joinViaCode(userId: string, body: JoinHouseholdBody): Prom
         throw new ConflictError('You are already a member of this household.');
       }
 
+      // �7.3: seats come from billing_subscriptions inside this transaction,
+      // with the household row locked FOR UPDATE (hard cap 10 for everyone).
+      await assertSeatAvailable(household.id, transaction);
+
       // Join
       await HouseholdMember.create({
         id: uuidv4(),
@@ -243,7 +250,9 @@ export async function joinViaCode(userId: string, body: JoinHouseholdBody): Prom
 
       return { household, invitation };
     },
-  );
+  ));
+
+  await clearEntitlementCache(household.id);
 
   // Enrichment, not part of the invariant being protected — fine outside
   // the transaction.
@@ -320,6 +329,7 @@ export async function removeMember(
 
   await target.destroy();
   await removeFromHouseholdConversation(householdId, targetUserId);
+  await clearEntitlementCache(householdId);
 }
 
 /**
@@ -337,6 +347,7 @@ export async function leaveHousehold(userId: string, householdId: string): Promi
   await membership.destroy();
   await User.update({ role: 'member' }, { where: { id: userId } });
   await removeFromHouseholdConversation(householdId, userId);
+  await clearEntitlementCache(householdId);
 }
 
 export async function transferAdmin(
@@ -360,6 +371,7 @@ export async function transferAdmin(
 
   await User.update({ role: 'member' }, { where: { id: userId } });
   await User.update({ role: 'admin' }, { where: { id: newAdminId } });
+  void syncBillingEmail(householdId).catch(() => undefined);
 
   const memberCount = await HouseholdMember.count({ where: { householdId } });
   const household = await Household.findByPk(householdId);
@@ -399,6 +411,7 @@ export async function changeMemberRole(
 
   await target.update({ role: body.role });
   await User.update({ role: body.role }, { where: { id: targetUserId } });
+  void syncBillingEmail(householdId).catch(() => undefined);
 
   return {
     userId: target.userId,
@@ -563,7 +576,8 @@ export async function approveActionRequest(
   requestId: string,
   reviewerNote?: string,
 ): Promise<HouseholdActionRequestResponse> {
-  return await sequelize.transaction(async (transaction) => {
+  let scheduledHouseholdId: string | null = null;
+  const result = await sequelize.transaction(async (transaction) => {
     const request = await HouseholdActionRequest.findByPk(requestId, { transaction });
     if (!request) throw new NotFoundError('Request');
     if (request.status !== 'pending') {
@@ -577,6 +591,7 @@ export async function approveActionRequest(
       if (!household) throw new NotFoundError('Household');
       household.scheduledDeletionAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
       await household.save({ transaction });
+      scheduledHouseholdId = request.householdId;
 
       notificationService
         .notifyHousehold(
@@ -597,6 +612,10 @@ export async function approveActionRequest(
 
     return toActionRequestResponse(request);
   });
+  if (scheduledHouseholdId) {
+    void onHouseholdDeletionScheduled(scheduledHouseholdId).catch((err) => reportDeletionHookFailure(scheduledHouseholdId!, 'scheduled', err));
+  }
+  return result;
 }
 
 export async function rejectActionRequest(
@@ -716,6 +735,7 @@ export async function cancelHouseholdDeletion(userId: string, householdId: strin
 
   household.scheduledDeletionAt = null;
   await household.save();
+  void onHouseholdDeletionCancelled(householdId).catch((err) => reportDeletionHookFailure(householdId, 'cancelled', err));
 
   notificationService
     .notifyHousehold(
@@ -730,6 +750,8 @@ export async function cancelHouseholdDeletion(userId: string, householdId: strin
 }
 
 async function finalizeHouseholdDeletion(household: Household): Promise<void> {
+  // A failure aborts this household's purge for this run; the hourly job retries it.
+  await onHouseholdPurged(household.id);
   // Sever every member's access; the household row itself is soft-deleted
   // (paranoid) so its data can still be audited/recovered if needed — same
   // lightweight approach used for account deletion, no cascading purge of

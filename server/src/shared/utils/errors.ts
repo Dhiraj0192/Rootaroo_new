@@ -2,7 +2,9 @@ export class AppError extends Error {
   constructor(
     public statusCode: number,
     public message: string,
-    public code?: string
+    public code?: string,
+    /** Extra machine-readable fields merged into the JSON error body (e.g. 402 reason/isAdmin). */
+    public details?: Record<string, unknown>,
   ) {
     super(message);
     this.name = 'AppError';

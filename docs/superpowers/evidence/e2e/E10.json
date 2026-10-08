@@ -1,0 +1,160 @@
+{
+  "scenario": "E10",
+  "title": "Dispute (card 4000 0000 0000 0259 via pm_card_createDispute)",
+  "pass": true,
+  "startedAt": "2026-10-03T11:24:48.880Z",
+  "assertions": [
+    {
+      "name": "ledger dispute row (positive amount, matched household)",
+      "ok": true,
+      "detail": {
+        "amount": 899,
+        "status": "needs_response",
+        "funds": "withdrawn"
+      }
+    },
+    {
+      "name": "review item dispute_opened raised",
+      "ok": true
+    },
+    {
+      "name": "staff alert recorded (server log, mailer unconfigured in dev)",
+      "ok": true,
+      "detail": {
+        "checkedLog": true
+      }
+    },
+    {
+      "name": "payment ledger row exists alongside the dispute (events may arrive out of order)",
+      "ok": true
+    }
+  ],
+  "data": {
+    "snapshot": {
+      "subscriptions": [
+        {
+          "id": "24b392d9-94c5-477b-9db1-de44820060a0",
+          "householdId": "d2948174-a58e-4d6f-bc1a-c7f8b604e51a",
+          "provider": "stripe",
+          "livemode": false,
+          "providerSubscriptionId": "sub_1UMR3f0dWk0w8nqY9R4F3P3r",
+          "status": "active",
+          "interval": "month",
+          "seats": 5,
+          "priceId": "price_1UMD3t0dWk0w8nqYoXd7ZLev",
+          "priceSet": "2026-10",
+          "unitAmount": 899,
+          "currency": "usd",
+          "currentPeriodStart": "2026-10-03T11:24:49.000Z",
+          "currentPeriodEnd": "2026-11-03T11:24:49.000Z",
+          "cancelAtPeriodEnd": false,
+          "canceledAt": null,
+          "endedAt": null,
+          "pendingUpdate": null,
+          "graceUntil": null,
+          "purchasedByUserId": "2c16ea07-9316-4908-9c55-9df2f5fd8c53",
+          "eventWatermark": 1791026695,
+          "lastSyncedAt": "2026-10-03T11:24:58.000Z",
+          "planChangeVersion": 0,
+          "createdAt": "2026-10-03T11:24:56.000Z",
+          "updatedAt": "2026-10-03T11:24:58.000Z"
+        }
+      ],
+      "customers": [
+        {
+          "id": "0db248cc-c339-4504-93ef-4aec347bfdcf",
+          "householdId": "d2948174-a58e-4d6f-bc1a-c7f8b604e51a",
+          "provider": "stripe",
+          "livemode": false,
+          "providerCustomerId": "cus_VNBQTaZD4RFSrh",
+          "billingEmail": "e2e-e10-musb1pps-5ead@example.test",
+          "createdAt": "2026-10-03T11:24:50.000Z",
+          "updatedAt": "2026-10-03T11:24:57.000Z"
+        }
+      ],
+      "transactions": [
+        {
+          "id": "09d73416-403c-44e5-ae5f-56af7084e44f",
+          "provider": "stripe",
+          "livemode": false,
+          "type": "payment",
+          "status": "paid",
+          "billingReason": "subscription_create",
+          "amount": 899,
+          "fee": 0,
+          "net": 899,
+          "disputeFee": null,
+          "fundsState": null,
+          "currency": "usd",
+          "householdId": "d2948174-a58e-4d6f-bc1a-c7f8b604e51a",
+          "userId": "2c16ea07-9316-4908-9c55-9df2f5fd8c53",
+          "subscriptionId": "24b392d9-94c5-477b-9db1-de44820060a0",
+          "matchStatus": "matched",
+          "householdNameSnapshot": "E2E E10 Household",
+          "payerEmailSnapshot": "e2e-e10-musb1pps-5ead@example.test",
+          "providerObjectId": "in_1UMR3f0dWk0w8nqYVagQqugI",
+          "providerInvoiceId": "in_1UMR3f0dWk0w8nqYVagQqugI",
+          "providerChargeId": "ch_3UMR3f0dWk0w8nqY1QQbk0p4",
+          "receiptUrl": "<stripe-url:pay.stripe.com>",
+          "description": "1 × Rootaroo Household: 5 members (at $8.99 / month)",
+          "occurredAt": "2026-10-03T11:24:49.000Z",
+          "lastEventId": "evt_1UMR3j0dWk0w8nqYDy1H5Ea1",
+          "createdAt": "2026-10-03T11:24:57.000Z",
+          "updatedAt": "2026-10-03T11:24:57.000Z"
+        },
+        {
+          "id": "81f394dc-456e-4776-81de-454e28f39c4a",
+          "provider": "stripe",
+          "livemode": false,
+          "type": "dispute",
+          "status": "needs_response",
+          "billingReason": null,
+          "amount": 899,
+          "fee": null,
+          "net": null,
+          "disputeFee": 0,
+          "fundsState": "withdrawn",
+          "currency": "usd",
+          "householdId": "d2948174-a58e-4d6f-bc1a-c7f8b604e51a",
+          "userId": "2c16ea07-9316-4908-9c55-9df2f5fd8c53",
+          "subscriptionId": "24b392d9-94c5-477b-9db1-de44820060a0",
+          "matchStatus": "matched",
+          "householdNameSnapshot": "E2E E10 Household",
+          "payerEmailSnapshot": "e2e-e10-musb1pps-5ead@example.test",
+          "providerObjectId": "du_1UMR3i0dWk0w8nqYsa3RsTMp",
+          "providerInvoiceId": "in_1UMR3f0dWk0w8nqYVagQqugI",
+          "providerChargeId": "ch_3UMR3f0dWk0w8nqY1QQbk0p4",
+          "receiptUrl": null,
+          "description": "dispute: fraudulent",
+          "occurredAt": "2026-10-03T11:24:54.000Z",
+          "lastEventId": "evt_1UMR3k0dWk0w8nqYRLLkpLVP",
+          "createdAt": "2026-10-03T11:24:59.000Z",
+          "updatedAt": "2026-10-03T11:24:59.000Z"
+        }
+      ],
+      "checkoutSessions": [],
+      "reviewItems": [
+        {
+          "id": "4124a5e4-5b79-450e-9b56-dcbd87f53aa8",
+          "runId": null,
+          "livemode": false,
+          "kind": "dispute_opened",
+          "entityType": "dispute",
+          "entityId": "d2948174-a58e-4d6f-bc1a-c7f8b604e51a",
+          "providerObjectId": "du_1UMR3i0dWk0w8nqYsa3RsTMp",
+          "before": null,
+          "after": {
+            "amount": 899,
+            "reason": "fraudulent"
+          },
+          "resolution": "needs_review",
+          "resolvedBy": null,
+          "resolutionNote": null,
+          "resolvedAt": null,
+          "createdAt": "2026-10-03T11:24:59.000Z",
+          "updatedAt": "2026-10-03T11:24:59.000Z"
+        }
+      ]
+    }
+  }
+}

@@ -1,3 +1,4 @@
+jest.mock('../../billing/socketGate', () => ({ emitToHousehold: jest.fn().mockResolvedValue(undefined) }));
 import { createCheckIn, listCheckIns, listMemberCheckIns } from '../service';
 import * as models from '../../../database/models';
 

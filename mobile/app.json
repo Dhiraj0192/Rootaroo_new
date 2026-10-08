@@ -2,7 +2,7 @@
   "expo": {
     "name": "Rootaroo",
     "slug": "rootaroo",
-    "scheme": "rootaru",
+    "scheme": "rootaroo",
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
@@ -91,6 +91,7 @@
         }
       ],
       "expo-font",
+      "expo-iap",
       [
         "@react-native-google-signin/google-signin",
         {

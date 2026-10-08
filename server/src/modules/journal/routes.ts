@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { authenticate } from '../../shared/middleware/auth';
+import { requireEntitlement } from '../billing/entitlement';
 import { validate } from '../../shared/middleware/validate';
 import { uploadFeedMedia } from '../../shared/middleware/upload';
 import * as ctrl from './controller';
@@ -15,6 +16,7 @@ import {
 const router = Router();
 
 router.use(authenticate);
+router.use(requireEntitlement);
 
 // Media upload + stats reads — all before /:id, or the UUID param route
 // would swallow them.

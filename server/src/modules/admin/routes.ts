@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { requireAdminApiKey } from '../../shared/middleware/adminApiKey';
+import { auditLog } from '../billing/admin/auth';
 import { validate } from '../../shared/middleware/validate';
 import { reviewActionRequestSchema } from './validation';
 import * as ctrl from './controller';
@@ -7,6 +8,8 @@ import * as ctrl from './controller';
 const router = Router();
 
 // Rootaroo-staff-only surface — guarded by a static API key, not a user JWT.
+// Audit first so rejected requests are logged too (spec 5.10).
+router.use(auditLog('admin'));
 router.use(requireAdminApiKey);
 
 /**

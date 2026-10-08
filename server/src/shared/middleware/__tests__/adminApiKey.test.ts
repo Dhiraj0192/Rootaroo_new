@@ -3,7 +3,7 @@ import { env } from '../../../config/env';
 
 describe('requireAdminApiKey', () => {
   const next = jest.fn();
-  const res = {} as any;
+  const res = { locals: {} } as any;
 
   beforeEach(() => {
     jest.clearAllMocks();

@@ -7,8 +7,18 @@
  * addColumn/addIndex hit "duplicate" errors there. On a migration-built
  * database these behave exactly like the unguarded calls.
  *
+ * Also makes a migration safe to re-run after a partial failure: MySQL commits
+ * each DDL statement on its own, so a failed run leaves earlier tables behind.
+ *
  * Lives outside migrations/ — sequelize-cli runs every file in that folder.
  */
+
+async function createTableIfMissing(queryInterface, table, attributes, options) {
+  const tables = await queryInterface.showAllTables();
+  if (tables.map((t) => (typeof t === 'string' ? t : t.tableName)).includes(table)) return false;
+  await queryInterface.createTable(table, attributes, options);
+  return true;
+}
 
 async function addColumnIfMissing(queryInterface, table, column, spec) {
   const columns = await queryInterface.describeTable(table);
@@ -23,4 +33,4 @@ async function addIndexIfMissing(queryInterface, table, fields, options) {
   await queryInterface.addIndex(table, fields, options);
 }
 
-module.exports = { addColumnIfMissing, addIndexIfMissing };
+module.exports = { createTableIfMissing, addColumnIfMissing, addIndexIfMissing };

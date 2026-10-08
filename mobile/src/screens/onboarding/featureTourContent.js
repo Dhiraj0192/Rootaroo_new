@@ -14,6 +14,8 @@
 
 /* ── Step 1 · Introduction ───────────────────────────────────────────── */
 
+import { planAmount } from '../../shared/billing/pricing';
+
 export const intro = {
   brand: 'ROOTAROO',
   // `{name}` is replaced with the household's real name at render time; the
@@ -189,52 +191,48 @@ export const oldWay = [
   { name: 'Location tracker', cost: '$180' },
 ];
 
-/** Pricing constants, lifted from the design's component state. */
-export const PRICE = {
-  yearBase: 79.99,
-  monthBase: 8.99,
-  extraPerMonth: 1.99,
-  includedSeats: 5,
-  minSeats: 1,
-  maxSeats: 10,
-  elsewhereYearly: 399,
-};
+/** What the same five apps cost a family per year elsewhere (marketing comparison, not a Rootaroo price). */
+export const ELSEWHERE_YEARLY = 399;
 
 /**
- * The design's pricing maths, verbatim. Given a plan and a household size,
- * returns every derived string the pricing screen renders.
+ * Every derived string the pricing screen renders, from the server's plan matrix
+ * (GET /billing/plans). `plans` is required: there are no client-side prices.
  */
-export function derivePricing(plan, size) {
+export function derivePricing(plan, size, plans) {
   const year = plan === 'year';
-  const extras = Math.max(0, size - PRICE.includedSeats);
-  const extraCost = (extras * PRICE.extraPerMonth).toFixed(2);
-  const yearTotal = (PRICE.yearBase + extras * PRICE.extraPerMonth * 12).toFixed(2);
-  const monthTotal = (PRICE.monthBase + extras * PRICE.extraPerMonth).toFixed(2);
-  const effYear = year ? yearTotal : (monthTotal * 12).toFixed(2);
+  const included = plans.seatsIncluded;
+  const extras = Math.max(0, size - included);
+  const monthCents = planAmount(plans, 'month', size);
+  const yearCents = planAmount(plans, 'year', size);
+  const extraMonthCents = planAmount(plans, 'month', included + 1) - planAmount(plans, 'month', included);
+  const monthTotal = (monthCents / 100).toFixed(2);
+  const yearTotal = (yearCents / 100).toFixed(2);
+  const extraEach = (extraMonthCents / 100).toFixed(2);
+  const effYearCents = year ? yearCents : monthCents * 12;
+  const effYear = (effYearCents / 100).toFixed(2);
   const big = year ? yearTotal : monthTotal;
 
   return {
     year,
     extras,
+    amountCents: year ? yearCents : monthCents,
     bigWhole: big.split('.')[0],
     bigCents: '.' + big.split('.')[1],
     bigPerShort: year ? 'per year' : 'per month',
-    headSub: year
-      ? `${size} people · about $${(yearTotal / 12).toFixed(2)} a month`
-      : `${size} people · cancel any time`,
+    headSub: year ? `${size} people · about $${(yearCents / 1200).toFixed(2)} a month` : `${size} people · cancel any time`,
     extraLine: extras
-      ? `${extras} extra ${extras === 1 ? 'member' : 'members'} · +$${extraCost}/mo`
-      : `Add more any time for $${PRICE.extraPerMonth.toFixed(2)}/mo each`,
-    savedAmount: '$' + Math.max(0, Math.round(PRICE.elsewhereYearly - effYear)),
+      ? `${extras} extra ${extras === 1 ? 'member' : 'members'} · +$${((extras * extraMonthCents) / 100).toFixed(2)}/mo`
+      : `Add more any time for $${extraEach}/mo each`,
+    savedAmount: '$' + Math.max(0, Math.round(ELSEWHERE_YEARLY - effYearCents / 100)),
     savedSub: year
       ? 'One bill, one login, every feature we add next'
-      : `Yearly drops it to $${yearTotal} — save $${(monthTotal * 12 - yearTotal).toFixed(2)} more`,
-    goldW: Math.round(Math.min(100, (effYear / PRICE.elsewhereYearly) * 100)) + '%',
+      : `Yearly drops it to $${yearTotal} — save $${((monthCents * 12 - yearCents) / 100).toFixed(2)} more`,
+    goldW: Math.round(Math.min(100, (effYearCents / 100 / ELSEWHERE_YEARLY) * 100)) + '%',
     rootYearly: `$${effYear}/YR`,
-    payLabel: year ? `Continue · $${yearTotal}/yr` : `Continue · $${monthTotal}/mo`,
+    payLabel: year ? `Subscribe · $${yearTotal}/yr` : `Subscribe · $${monthTotal}/mo`,
     payFine: extras
-      ? `${size} members · ${PRICE.includedSeats} included, ${extras} × $${PRICE.extraPerMonth.toFixed(2)}/mo · cancel any time`
-      : `${size} of ${PRICE.includedSeats} included members · cancel any time`,
+      ? `${size} members · ${included} included, ${extras} × $${extraEach}/mo · cancel any time`
+      : `${size} of ${included} included members · cancel any time`,
   };
 }
 

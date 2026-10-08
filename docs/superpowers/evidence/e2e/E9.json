@@ -1,0 +1,214 @@
+{
+  "scenario": "E9",
+  "title": "Partial and full refund",
+  "pass": true,
+  "startedAt": "2026-10-03T11:24:33.272Z",
+  "assertions": [
+    {
+      "name": "partial refund row: amount 300, status succeeded, positive",
+      "ok": true,
+      "detail": {
+        "amount": 300,
+        "status": "succeeded"
+      }
+    },
+    {
+      "name": "refunds total the payment (full refund)",
+      "ok": true,
+      "detail": [
+        300,
+        599
+      ]
+    },
+    {
+      "name": "refund rows are matched to the household",
+      "ok": true
+    },
+    {
+      "name": "summary: gross +payment, refunds +payment, net moved by -fee",
+      "ok": true,
+      "detail": {
+        "dGross": 899,
+        "dRef": 899,
+        "net": 0,
+        "fee": 0
+      }
+    }
+  ],
+  "data": {
+    "summary": {
+      "before": {
+        "mode": "test",
+        "from": "2020-01-01T00:00:00.000Z",
+        "to": "2031-01-01T00:00:00.000Z",
+        "currency": "usd",
+        "gross": 20166,
+        "refunds": 899,
+        "disputes": 899,
+        "fees": 0,
+        "disputeFees": 0,
+        "net": 18368,
+        "mrr": 6658,
+        "counts": {
+          "active": 6,
+          "pastDue": 1,
+          "inGrace": 1,
+          "failedCyclePayments": 2
+        }
+      },
+      "after": {
+        "mode": "test",
+        "from": "2020-01-01T00:00:00.000Z",
+        "to": "2031-01-01T00:00:00.000Z",
+        "currency": "usd",
+        "gross": 21065,
+        "refunds": 1798,
+        "disputes": 899,
+        "fees": 0,
+        "disputeFees": 0,
+        "net": 18368,
+        "mrr": 7557,
+        "counts": {
+          "active": 7,
+          "pastDue": 1,
+          "inGrace": 1,
+          "failedCyclePayments": 2
+        }
+      }
+    },
+    "snapshot": {
+      "subscriptions": [
+        {
+          "id": "f2e8374b-c0ee-41ce-a8f2-7b7b14925f76",
+          "householdId": "08dc29d5-5ce4-481e-a6f6-73d16946afdf",
+          "provider": "stripe",
+          "livemode": false,
+          "providerSubscriptionId": "sub_1UMR3R0dWk0w8nqYvrXKFYHI",
+          "status": "active",
+          "interval": "month",
+          "seats": 5,
+          "priceId": "price_1UMD3t0dWk0w8nqYoXd7ZLev",
+          "priceSet": "2026-10",
+          "unitAmount": 899,
+          "currency": "usd",
+          "currentPeriodStart": "2026-10-03T11:24:33.000Z",
+          "currentPeriodEnd": "2026-11-03T11:24:33.000Z",
+          "cancelAtPeriodEnd": false,
+          "canceledAt": null,
+          "endedAt": null,
+          "pendingUpdate": null,
+          "graceUntil": null,
+          "purchasedByUserId": "5f887843-e7ad-4bc1-b885-0bc309b138e8",
+          "eventWatermark": 1791026679,
+          "lastSyncedAt": "2026-10-03T11:24:42.000Z",
+          "planChangeVersion": 0,
+          "createdAt": "2026-10-03T11:24:40.000Z",
+          "updatedAt": "2026-10-03T11:24:42.000Z"
+        }
+      ],
+      "customers": [
+        {
+          "id": "3c6060d2-e2dc-4256-87bf-6c66599f3158",
+          "householdId": "08dc29d5-5ce4-481e-a6f6-73d16946afdf",
+          "provider": "stripe",
+          "livemode": false,
+          "providerCustomerId": "cus_VNBQEf0X9wntYK",
+          "billingEmail": "e2e-e9-musb1dts-a9a4@example.test",
+          "createdAt": "2026-10-03T11:24:35.000Z",
+          "updatedAt": "2026-10-03T11:24:42.000Z"
+        }
+      ],
+      "transactions": [
+        {
+          "id": "dec473d7-7fbb-4568-b594-14d0c8e050ea",
+          "provider": "stripe",
+          "livemode": false,
+          "type": "payment",
+          "status": "paid",
+          "billingReason": "subscription_create",
+          "amount": 899,
+          "fee": 0,
+          "net": 899,
+          "disputeFee": null,
+          "fundsState": null,
+          "currency": "usd",
+          "householdId": "08dc29d5-5ce4-481e-a6f6-73d16946afdf",
+          "userId": "5f887843-e7ad-4bc1-b885-0bc309b138e8",
+          "subscriptionId": "f2e8374b-c0ee-41ce-a8f2-7b7b14925f76",
+          "matchStatus": "matched",
+          "householdNameSnapshot": "E2E E9 Household",
+          "payerEmailSnapshot": "e2e-e9-musb1dts-a9a4@example.test",
+          "providerObjectId": "in_1UMR3R0dWk0w8nqYeFYuaV9Q",
+          "providerInvoiceId": "in_1UMR3R0dWk0w8nqYeFYuaV9Q",
+          "providerChargeId": "ch_3UMR3R0dWk0w8nqY1x5YtJip",
+          "receiptUrl": "<stripe-url:pay.stripe.com>",
+          "description": "1 × Rootaroo Household: 5 members (at $8.99 / month)",
+          "occurredAt": "2026-10-03T11:24:33.000Z",
+          "lastEventId": "evt_1UMR3T0dWk0w8nqYDSzDAyF6",
+          "createdAt": "2026-10-03T11:24:41.000Z",
+          "updatedAt": "2026-10-03T11:24:41.000Z"
+        },
+        {
+          "id": "35a31f09-e29a-40dd-8943-8d47b8aa30bc",
+          "provider": "stripe",
+          "livemode": false,
+          "type": "refund",
+          "status": "succeeded",
+          "billingReason": null,
+          "amount": 300,
+          "fee": null,
+          "net": null,
+          "disputeFee": null,
+          "fundsState": null,
+          "currency": "usd",
+          "householdId": "08dc29d5-5ce4-481e-a6f6-73d16946afdf",
+          "userId": "5f887843-e7ad-4bc1-b885-0bc309b138e8",
+          "subscriptionId": "f2e8374b-c0ee-41ce-a8f2-7b7b14925f76",
+          "matchStatus": "matched",
+          "householdNameSnapshot": "E2E E9 Household",
+          "payerEmailSnapshot": "e2e-e9-musb1dts-a9a4@example.test",
+          "providerObjectId": "re_3UMR3R0dWk0w8nqY1bV545eF",
+          "providerInvoiceId": "in_1UMR3R0dWk0w8nqYeFYuaV9Q",
+          "providerChargeId": "ch_3UMR3R0dWk0w8nqY1x5YtJip",
+          "receiptUrl": null,
+          "description": "refund",
+          "occurredAt": "2026-10-03T11:24:43.000Z",
+          "lastEventId": "evt_3UMR3R0dWk0w8nqY1MMhGJ5B",
+          "createdAt": "2026-10-03T11:24:45.000Z",
+          "updatedAt": "2026-10-03T11:24:46.000Z"
+        },
+        {
+          "id": "9b77e02f-ed44-4b0f-8887-279bc90bcc49",
+          "provider": "stripe",
+          "livemode": false,
+          "type": "refund",
+          "status": "succeeded",
+          "billingReason": null,
+          "amount": 599,
+          "fee": null,
+          "net": null,
+          "disputeFee": null,
+          "fundsState": null,
+          "currency": "usd",
+          "householdId": "08dc29d5-5ce4-481e-a6f6-73d16946afdf",
+          "userId": "5f887843-e7ad-4bc1-b885-0bc309b138e8",
+          "subscriptionId": "f2e8374b-c0ee-41ce-a8f2-7b7b14925f76",
+          "matchStatus": "matched",
+          "householdNameSnapshot": "E2E E9 Household",
+          "payerEmailSnapshot": "e2e-e9-musb1dts-a9a4@example.test",
+          "providerObjectId": "re_3UMR3R0dWk0w8nqY1BbP5N3f",
+          "providerInvoiceId": "in_1UMR3R0dWk0w8nqYeFYuaV9Q",
+          "providerChargeId": "ch_3UMR3R0dWk0w8nqY1x5YtJip",
+          "receiptUrl": null,
+          "description": "refund",
+          "occurredAt": "2026-10-03T11:24:45.000Z",
+          "lastEventId": "evt_3UMR3R0dWk0w8nqY1NIdHkQL",
+          "createdAt": "2026-10-03T11:24:47.000Z",
+          "updatedAt": "2026-10-03T11:24:48.000Z"
+        }
+      ],
+      "checkoutSessions": [],
+      "reviewItems": []
+    }
+  }
+}

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { authenticate } from '../../shared/middleware/auth';
+import { requireEntitlement } from '../billing/entitlement';
 import { validate } from '../../shared/middleware/validate';
 import * as ctrl from './controller';
 import {
@@ -14,6 +15,7 @@ import {
 const router = Router();
 
 router.use(authenticate);
+router.use(requireEntitlement);
 
 // Expense CRUD
 router.post('/', validate(createExpenseSchema), ctrl.createExpenseCtrl);           // FR-100

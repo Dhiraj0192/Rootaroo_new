@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import { fromZonedTime } from 'date-fns-tz';
+import { isEntitledBatch } from '../billing/entitlement';
 import { CalendarEvent, CalendarSyncState, EventInvitee, HouseholdMember, Household, User } from '../../database/models';
 import { Op } from 'sequelize';
 import { AppError, ForbiddenError, NotFoundError } from '../../shared/utils/errors';
@@ -22,7 +23,7 @@ import {
   deleteAppleEvent,
 } from '../../shared/utils/appleCalendar';
 import logger from '../../shared/utils/logger';
-import { getIO } from '../../shared/utils/socket';
+import { emitToHousehold } from '../billing/socketGate';
 import type {
   CalendarEventResponse,
   CreateEventBody,
@@ -151,7 +152,7 @@ export async function createEvent(
   const response = toResponse(withInvitees);
 
   try {
-    getIO().to(`household:${householdId}`).emit('calendar:event-created', response);
+    void emitToHousehold(householdId, 'calendar:event-created', response);
   } catch (e) {
     logger.warn('[WS] Calendar event broadcast failed:', (e as Error).message);
   }
@@ -364,14 +365,14 @@ export async function exportHouseholdIcs(userId: string): Promise<string> {
   const lines: string[] = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
-    'PRODID:-//Rootaru//Family Calendar//EN',
+    'PRODID:-//Rootaroo//Family Calendar//EN',
     'CALSCALE:GREGORIAN',
   ];
 
   for (const ev of events) {
     const dtStart = toIcsDateTime(String(ev.eventDate), ev.startTime);
     const dtEnd = toIcsDateTime(String(ev.eventDate), ev.endTime ?? ev.startTime);
-    const uid = `${ev.id}@rootaru`;
+    const uid = `${ev.id}@rootaroo`;
     const summary = escapeIcs(ev.title);
     const description = ev.description ? escapeIcs(ev.description) : '';
 
@@ -422,9 +423,11 @@ export async function notifyUpcomingEvents(): Promise<number> {
     where: { eventDate: { [Op.in]: candidateDates } },
     include: [{ model: Household, as: 'household', attributes: ['timezone'] }],
   });
+  const entitled = await isEntitledBatch(events.map((e) => e.householdId));
 
   let sent = 0;
   for (const ev of events) {
+    if (!entitled.has(ev.householdId)) continue;
     const startTime = ev.startTime || '00:00:00';
     // The event's date+time is the household's local wall-clock time, not
     // the server's — parsing it as a bare Date (previously) interpreted it
@@ -682,9 +685,18 @@ export async function disconnectOutlookCalendar(userId: string): Promise<void> {
 }
 
 /** Serves the `.ics` feed for a given feed token — public, unauthenticated route. */
+export function emptyCalendarIcs(): string {
+  return ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Rootaroo//Family Calendar//EN', 'CALSCALE:GREGORIAN', 'END:VCALENDAR'].join('\r\n') + '\r\n';
+}
+
 export async function getOutlookFeedIcs(token: string): Promise<string> {
   const state = await CalendarSyncState.findOne({ where: { outlookFeedToken: token, isActive: true } });
   if (!state) throw new AppError(404, 'Calendar feed not found');
+  // §7.2: a household without entitlement gets a valid, empty calendar.
+  const membership = await HouseholdMember.findOne({ where: { userId: state.userId }, attributes: ['householdId'] });
+  if (!membership) return emptyCalendarIcs();
+  const allowed = await isEntitledBatch([membership.householdId]);
+  if (!allowed.has(membership.householdId)) return emptyCalendarIcs();
   return exportHouseholdIcs(state.userId);
 }
 

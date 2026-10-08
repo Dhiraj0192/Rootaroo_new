@@ -1,0 +1,165 @@
+{
+  "scenario": "E3",
+  "title": "3DS card 4000 0025 0000 3155",
+  "pass": true,
+  "startedAt": "2026-10-03T20:43:50.409Z",
+  "assertions": [
+    {
+      "name": "household starts blocked (402)",
+      "ok": true
+    },
+    {
+      "name": "POST /billing/checkout returns a hosted URL and session id",
+      "ok": true,
+      "detail": {
+        "status": 200
+      }
+    },
+    {
+      "name": "entitlement active after completing the hosted page (sync)",
+      "ok": true,
+      "detail": {
+        "sessionId": "cs_test_a1XN77rTs6ybXj2ApIp9gZifu3qGdS5H8NYczetYFotptGTTkefY08SwKp",
+        "state": "complete"
+      }
+    },
+    {
+      "name": "subscription monthly with 5 seats",
+      "ok": true,
+      "detail": {
+        "provider": "stripe",
+        "status": "active",
+        "interval": "month",
+        "seats": 5,
+        "unitAmount": 899,
+        "currency": "usd",
+        "priceSet": "2026-10",
+        "currentPeriodEnd": "2026-11-03T20:45:14.000Z",
+        "cancelAtPeriodEnd": false,
+        "graceUntil": null,
+        "pendingUpdate": false
+      }
+    },
+    {
+      "name": "purchaser recorded on the subscription",
+      "ok": true
+    },
+    {
+      "name": "guarded route no longer 402",
+      "ok": true
+    },
+    {
+      "name": "ledger payment matched to household and purchaser",
+      "ok": true,
+      "detail": {
+        "amount": 899,
+        "match": "matched"
+      }
+    },
+    {
+      "name": "fee and net filled (now or after reconcile)",
+      "ok": true,
+      "detail": {
+        "fee": 0,
+        "net": 899
+      }
+    },
+    {
+      "name": "checkout session row marked complete",
+      "ok": true,
+      "detail": "complete"
+    }
+  ],
+  "data": {
+    "snapshot": {
+      "subscriptions": [
+        {
+          "id": "568b413a-758a-4bb6-8322-da6b4df5a269",
+          "householdId": "8cbeb5d0-1389-4f3d-92f2-c9093271c7b5",
+          "provider": "stripe",
+          "livemode": false,
+          "providerSubscriptionId": "sub_1UMZoJ0dWk0w8nqY0AaWtxyK",
+          "status": "active",
+          "interval": "month",
+          "seats": 5,
+          "priceId": "price_1UMD3t0dWk0w8nqYoXd7ZLev",
+          "priceSet": "2026-10",
+          "unitAmount": 899,
+          "currency": "usd",
+          "currentPeriodStart": "2026-10-03T20:45:14.000Z",
+          "currentPeriodEnd": "2026-11-03T20:45:14.000Z",
+          "cancelAtPeriodEnd": false,
+          "canceledAt": null,
+          "endedAt": null,
+          "pendingUpdate": null,
+          "graceUntil": null,
+          "purchasedByUserId": "f8d198b5-3b6a-4945-9b60-72479838fbf7",
+          "eventWatermark": 1791060337,
+          "lastSyncedAt": "2026-10-03T20:45:41.000Z",
+          "planChangeVersion": 0,
+          "createdAt": "2026-10-03T20:45:40.000Z",
+          "updatedAt": "2026-10-03T20:45:41.000Z"
+        }
+      ],
+      "customers": [
+        {
+          "id": "cbfcb43c-e9b0-4c30-842c-495508f9d19f",
+          "householdId": "8cbeb5d0-1389-4f3d-92f2-c9093271c7b5",
+          "provider": "stripe",
+          "livemode": false,
+          "providerCustomerId": "cus_VNKRTbjIkLrBzv",
+          "billingEmail": "e2e-e3-musv0mj0-4ad8@example.test",
+          "createdAt": "2026-10-03T20:43:57.000Z",
+          "updatedAt": "2026-10-03T20:45:17.000Z"
+        }
+      ],
+      "transactions": [
+        {
+          "id": "6e44b5dd-b382-4ab5-8cb4-ec19ccff2f9c",
+          "provider": "stripe",
+          "livemode": false,
+          "type": "payment",
+          "status": "paid",
+          "billingReason": "subscription_create",
+          "amount": 899,
+          "fee": 0,
+          "net": 899,
+          "disputeFee": null,
+          "fundsState": null,
+          "currency": "usd",
+          "householdId": "8cbeb5d0-1389-4f3d-92f2-c9093271c7b5",
+          "userId": "f8d198b5-3b6a-4945-9b60-72479838fbf7",
+          "subscriptionId": "568b413a-758a-4bb6-8322-da6b4df5a269",
+          "matchStatus": "matched",
+          "householdNameSnapshot": "E2E E3 Household",
+          "payerEmailSnapshot": "e2e-e3-musv0mj0-4ad8@example.test",
+          "providerObjectId": "in_1UMZny0dWk0w8nqYTOZYT9y7",
+          "providerInvoiceId": "in_1UMZny0dWk0w8nqYTOZYT9y7",
+          "providerChargeId": "ch_3UMZny0dWk0w8nqY1AKR03Ex",
+          "receiptUrl": "<stripe-url:pay.stripe.com>",
+          "description": "1 × Rootaroo Household: 5 members (at $8.99 / month)",
+          "occurredAt": "2026-10-03T20:45:33.000Z",
+          "lastEventId": "evt_1UMZoM0dWk0w8nqY2LcqIa50",
+          "createdAt": "2026-10-03T20:45:43.000Z",
+          "updatedAt": "2026-10-03T20:45:43.000Z"
+        }
+      ],
+      "checkoutSessions": [
+        {
+          "id": "83343f3b-06c9-406e-887e-35ebfab27e0f",
+          "householdId": "8cbeb5d0-1389-4f3d-92f2-c9093271c7b5",
+          "livemode": false,
+          "providerSessionId": "cs_test_a1XN77rTs6ybXj2ApIp9gZifu3qGdS5H8NYczetYFotptGTTkefY08SwKp",
+          "createdByUserId": "f8d198b5-3b6a-4945-9b60-72479838fbf7",
+          "interval": "month",
+          "seats": 5,
+          "status": "complete",
+          "expiresAt": "2026-10-03T21:14:55.000Z",
+          "createdAt": "2026-10-03T20:43:57.000Z",
+          "updatedAt": "2026-10-03T20:45:38.000Z"
+        }
+      ],
+      "reviewItems": []
+    }
+  }
+}

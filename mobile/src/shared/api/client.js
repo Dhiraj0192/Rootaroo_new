@@ -66,6 +66,31 @@ function onRefreshFailed(error) {
   refreshQueue = [];
 }
 
+// ── Billing hooks ──
+// A 402 from any guarded route means entitlement changed server-side; the
+// billing store registers a single-flight refresh here (no import cycle).
+let paymentRequiredHandler = null;
+
+export function setPaymentRequiredHandler(fn) {
+  paymentRequiredHandler = fn;
+}
+
+// Routing (spec §12): which purchase flow the server offers depends on the
+// platform and store country. The IAP module sets the storefront country once
+// the store connection reports it; until then (and on web) it is ZZ.
+let storeCountry = 'ZZ';
+
+export function setStoreCountry(code) {
+  storeCountry = /^[A-Z]{2}$/.test(code) ? code : 'ZZ';
+}
+
+export function platformHeaders() {
+  return {
+    'X-Platform': Platform.OS === 'ios' || Platform.OS === 'android' ? Platform.OS : 'web',
+    'X-Store-Country': storeCountry,
+  };
+}
+
 apiClient.interceptors.request.use(
   (config) => {
     const token = useAuthStore.getState().accessToken;
@@ -81,6 +106,7 @@ apiClient.interceptors.request.use(
       } catch {
         /* Intl unavailable — server falls back to the household's stored zone */
       }
+      Object.entries(platformHeaders()).forEach(([k, v]) => { config.headers[k] = v; });
     }
     return config;
   },
@@ -90,6 +116,9 @@ apiClient.interceptors.request.use(
 apiClient.interceptors.response.use(
   (response) => response,
   async (error) => {
+    if (error.response?.status === 402 && paymentRequiredHandler) {
+      try { paymentRequiredHandler(error.response.data); } catch { /* never block the original rejection */ }
+    }
     const original = error.config;
     if (error.response?.status === 401 && !original._retry) {
       if (isRefreshing) {

@@ -47,3 +47,7 @@ yarn-error.*
 # Claude Code worktrees
 .claude/worktrees/
 .env
+
+# Never commit any env variant (only .env.example is tracked)
+.env.*
+!.env.example

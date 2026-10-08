@@ -1,3 +1,6 @@
+jest.mock('../../billing/entitlement', () => ({ isEntitledBatch: jest.fn(async (ids: string[]) => new Set(ids)) }));
+import { isEntitledBatch } from '../../billing/entitlement';
+jest.mock('../../billing/socketGate', () => ({ emitToHousehold: jest.fn().mockResolvedValue(undefined) }));
 import {
   createEvent,
   listEvents,
@@ -18,6 +21,7 @@ import {
   connectAppleCalendar,
   disconnectAppleCalendar,
   syncAppleUserCalendar,
+  emptyCalendarIcs,
 } from '../service';
 import { ForbiddenError } from '../../../shared/utils/errors';
 
@@ -256,6 +260,13 @@ describe('exportHouseholdIcs (FR-185)', () => {
 
     const ics = await exportHouseholdIcs(userId);
     expect(ics).toContain('RRULE:FREQ=WEEKLY');
+  });
+
+  it('uses the rootaroo UID domain and product id (branding)', async () => {
+    (modelsMock.CalendarEvent.findAll as jest.Mock).mockResolvedValue([fakeEvent({ id: 'ev-1' })]);
+    const ics = await exportHouseholdIcs(userId);
+    expect(ics).toContain('UID:ev-1@rootaroo');
+    expect(ics).toContain('PRODID:-//Rootaroo//Family Calendar//EN');
   });
 });
 
@@ -545,6 +556,18 @@ describe('Outlook Calendar sync (one-way ICS feed)', () => {
       expect(modelsMock.CalendarSyncState.destroy).toHaveBeenCalledWith({
         where: { userId: syncUserId, provider: 'outlook' },
       });
+    });
+  });
+
+  describe('Outlook ICS feed paywall (B10)', () => {
+    it('returns a valid empty calendar for a blocked household', async () => {
+      (modelsMock.CalendarSyncState.findOne as jest.Mock).mockResolvedValue({ userId: 'user-1' });
+      (modelsMock.HouseholdMember.findOne as jest.Mock).mockResolvedValue({ householdId: 'hh-1' });
+      (isEntitledBatch as jest.Mock).mockResolvedValueOnce(new Set());
+      const ics = await getOutlookFeedIcs('tok');
+      expect(ics).toBe(emptyCalendarIcs());
+      expect(ics).toContain('BEGIN:VCALENDAR');
+      expect(ics).not.toContain('BEGIN:VEVENT');
     });
   });
 

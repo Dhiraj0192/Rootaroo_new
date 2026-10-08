@@ -1,6 +1,6 @@
 import * as SecureStore from 'expo-secure-store';
 
-const KEY = 'rootaru_signup_progress';
+const KEY = 'rootaroo_signup_progress';
 
 const STEP_TO_ROUTE = {
   name: 'SignupStepName',
