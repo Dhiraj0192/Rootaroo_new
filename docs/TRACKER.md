@@ -25,6 +25,8 @@ One place for work that is planned, waiting on someone, finished or dropped. Upd
 | T13 | External cryptography review | security | owner | Before any public "end-to-end encrypted" claim. Covers W10–W12. |
 | T14 | Re-encrypt household vault files when a member leaves | server, mobile | dev | Optional hardening after W12. |
 | T15 | "Streak about to break" campaign rule | server | dev | Left out of the first campaign engine; needs the dashboard streak logic shared with the job. |
+| T17 | Run the location-sharing device checklist on iOS and Android | mobile, release | owner | [`docs/location-sharing-device-checklist.md`](location-sharing-device-checklist.md). Needs a new development build (`expo-task-manager`, background location). |
+| T18 | Background location: store review notes and Privacy Policy wording | release, legal | owner, client | Apple and Google ask why "Always" location is needed: sharing runs only while a share the user started is active, and stops at the timer. Add to T4 and the submission notes. |
 | T16 | Run the push device checklist on iOS and Android | mobile, release | owner | [`docs/push/device-test-checklist.md`](push/device-test-checklist.md). Needs a new development build (journal lock adds a native module). |
 
 ## Go-live steps
@@ -69,7 +71,8 @@ In order, after the checklist in [`docs/billing/runbooks.md`](billing/runbooks.m
 | `jest` and `jest-expo` moved to dev dependencies | PR #2 review |
 | Checkout locked to USD | PR #2 review |
 | W1 journal lock; W2 push fixes (chat push, live chat delivery, tap routing, badge, receipts, reminder de-dup) | PR #3 |
-| W3 push campaign; W4 service adapters; W9 device registry | Medium PR |
+| W3 push campaign; W4 service adapters; W9 device registry | PR #4 |
+| W5 location sharing (presets up to 8 h, background, live map, share without a request) | Large PR |
 
 ## Dropped
 
