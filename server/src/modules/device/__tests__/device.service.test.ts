@@ -4,6 +4,9 @@ jest.mock('../../../database/models', () => ({
   DeviceToken: { destroy: jest.fn() },
 }));
 
+jest.mock('../../../config/redis', () => ({ __esModule: true, default: { set: jest.fn(), del: jest.fn() } }));
+
+import redis from '../../../config/redis';
 import { Device, RefreshToken, DeviceToken } from '../../../database/models';
 import { upsertDevice, listDevices, revokeDevice, touchDevice } from '../service';
 import { NotFoundError } from '../../../shared/utils/errors';
@@ -117,5 +120,19 @@ describe('touchDevice', () => {
     expect(await touchDevice('d1')).toBe(false);
     (Device.findOne as jest.Mock).mockResolvedValue(null);
     expect(await touchDevice('gone')).toBe(false);
+  });
+});
+
+describe('revocation marker for live access tokens', () => {
+  it('revokeDevice flags the device in Redis for a day', async () => {
+    (Device.findOne as jest.Mock).mockResolvedValue(row());
+    await revokeDevice(userId, 'd1');
+    expect(redis.set).toHaveBeenCalledWith('device:revoked:d1', '1', 'EX', 86400);
+  });
+
+  it('signing in again on a revoked device clears the flag', async () => {
+    (Device.findOne as jest.Mock).mockResolvedValue(row({ revokedAt: new Date() }));
+    await upsertDevice(userId, info);
+    expect(redis.del).toHaveBeenCalledWith('device:revoked:d1');
   });
 });

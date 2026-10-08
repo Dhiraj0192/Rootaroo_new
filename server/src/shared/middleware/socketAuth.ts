@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import { env } from '../../config/env';
 import { HouseholdMember } from '../../database/models';
 import logger from '../utils/logger';
+import { isDeviceRevoked } from './auth';
 import { isSocketEntitled } from '../../modules/billing/socketGate';
 
 // ── Typed socket data ──
@@ -16,6 +17,8 @@ export interface SocketUserData {
   billingCheckedAt?: number;
   billingHouseholdId?: string;
   viewingConversationId?: string | null;
+  /** Which device this socket belongs to; push skips only the device that is viewing. */
+  deviceId?: string;
 }
 
 export interface AuthenticatedSocket extends Socket {
@@ -40,13 +43,20 @@ export function socketAuthMiddleware(io: SocketIOServer): void {
         email: string;
         role: string;
         householdId?: string;
+        deviceId?: string;
       };
+
+      if (decoded.deviceId && (await isDeviceRevoked(decoded.deviceId))) {
+        logger.warn(`Socket auth rejected: device signed out (${socket.id})`);
+        return next(new Error('Device signed out'));
+      }
 
       // Attach user data to socket
       socket.data.userId = decoded.userId;
       socket.data.email = decoded.email;
       socket.data.role = decoded.role;
       socket.data.householdId = decoded.householdId ?? null;
+      socket.data.deviceId = decoded.deviceId;
 
       // If householdId wasn't in the JWT, look up the active membership
       if (!socket.data.householdId) {

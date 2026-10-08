@@ -103,7 +103,7 @@ async function rotateRefreshToken(oldToken: string): Promise<AuthTokens> {
 
   if (!(await touchDevice(record.deviceId))) {
     await record.destroy();
-    throw new UnauthorizedError('This device was signed out');
+    throw new UnauthorizedError('This device was signed out', 'DEVICE_REVOKED');
   }
 
   // Rotate: delete old, issue new
@@ -111,6 +111,12 @@ async function rotateRefreshToken(oldToken: string): Promise<AuthTokens> {
   const user = record.user;
   const accessToken = generateAccessToken(user, record.deviceId);
   const refreshToken = await generateRefreshToken(user.id, record.deviceId);
+
+  // A removal that landed after the check above would otherwise leave a live session.
+  if (!(await touchDevice(record.deviceId))) {
+    await RefreshToken.destroy({ where: { deviceId: record.deviceId } });
+    throw new UnauthorizedError('This device was signed out', 'DEVICE_REVOKED');
+  }
 
   return { accessToken, refreshToken };
 }

@@ -58,6 +58,23 @@ describe('sessions are tied to a device', () => {
     expect(models.RefreshToken.create).not.toHaveBeenCalled();
   });
 
+  it('refresh reports DEVICE_REVOKED for a removed device', async () => {
+    const record = { userId: 'u1', deviceId: 'dev-1', expiresAt: new Date(Date.now() + 60_000), user, destroy: jest.fn() };
+    (models.RefreshToken.findOne as jest.Mock).mockResolvedValue(record);
+    (touchDevice as jest.Mock).mockResolvedValueOnce(false);
+    await expect(refresh('old')).rejects.toMatchObject({ statusCode: 401, code: 'DEVICE_REVOKED' });
+  });
+
+  it('a removal racing the refresh destroys the freshly issued token', async () => {
+    const record = { userId: 'u1', deviceId: 'dev-1', expiresAt: new Date(Date.now() + 60_000), user, destroy: jest.fn() };
+    const created = { destroy: jest.fn() };
+    (models.RefreshToken.findOne as jest.Mock).mockResolvedValue(record);
+    (models.RefreshToken.create as jest.Mock).mockResolvedValue(created);
+    (touchDevice as jest.Mock).mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    await expect(refresh('old')).rejects.toMatchObject({ statusCode: 401, code: 'DEVICE_REVOKED' });
+    expect(models.RefreshToken.destroy).toHaveBeenCalledWith({ where: { deviceId: 'dev-1' } });
+  });
+
   it('refresh tokens from before devices existed are rejected', async () => {
     const record = { userId: 'u1', deviceId: null, expiresAt: new Date(Date.now() + 60_000), user, destroy: jest.fn() };
     (models.RefreshToken.findOne as jest.Mock).mockResolvedValue(record);
