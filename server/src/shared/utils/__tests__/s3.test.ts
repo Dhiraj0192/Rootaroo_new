@@ -15,6 +15,7 @@ jest.mock('../../../config/s3', () => ({ s3Client: {}, S3_BUCKET: 'test-bucket' 
 jest.mock('@aws-sdk/s3-request-presigner', () => ({
   getSignedUrl: jest.fn().mockResolvedValue('https://test-bucket.s3.amazonaws.com/presigned'),
 }));
+import { getSignedUrl as presign } from '@aws-sdk/s3-request-presigner';
 jest.mock('../logger');
 
 import { getSignedUrl } from '../s3';
@@ -34,6 +35,12 @@ describe('getSignedUrl', () => {
     expect(await getSignedUrl(url)).toBe(url);
   });
 
+  it('uses the default one-hour S3 presign when no ttl is given', async () => {
+    (presign as jest.Mock).mockClear();
+    await getSignedUrl('feed/images/a.jpg');
+    expect((presign as jest.Mock).mock.calls[0][2]).toEqual({ expiresIn: 3600 });
+  });
+
   it('falls back to S3 presigning when CloudFront is not configured', async () => {
     expect(await getSignedUrl('feed/images/a.jpg')).toBe('https://test-bucket.s3.amazonaws.com/presigned');
   });
@@ -41,6 +48,13 @@ describe('getSignedUrl', () => {
   describe('with CloudFront configured', () => {
     beforeEach(() => {
       mockEnv.cloudfront = { domain: 'd123.cloudfront.net', keyPairId: 'KTEST123', privateKey };
+    });
+
+    it('noCdn skips CloudFront and presigns on S3 for the requested number of seconds', async () => {
+      (presign as jest.Mock).mockClear();
+      const url = await getSignedUrl('vault/u1/a', { ttlSeconds: 300, noCdn: true });
+      expect(url).toBe('https://test-bucket.s3.amazonaws.com/presigned');
+      expect((presign as jest.Mock).mock.calls[0][2]).toEqual({ expiresIn: 300 });
     });
 
     it('returns a CloudFront-signed URL for the key', async () => {

@@ -1,4 +1,4 @@
-import { Op, UniqueConstraintError } from 'sequelize';
+import { Op, UniqueConstraintError, Transaction } from 'sequelize';
 import {
   sequelize,
   VaultDocument,
@@ -27,6 +27,8 @@ const MAX_STORAGE_BYTES = 2 * 1024 * 1024 * 1024; // 2GB
 const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
 const ADULT_ROLES = ['admin', 'member'];
 const PENDING_GRANTS_LIMIT = 100;
+// Download links stop working soon after access is lost, so they are short and never the cached CDN link.
+const DOWNLOAD_URL_OPTIONS = { ttlSeconds: 300, noCdn: true };
 
 export async function getUserHousehold(userId: string): Promise<string> {
   return getUserHouseholdCore(userId, 'You must belong to a household to use the vault');
@@ -84,7 +86,7 @@ async function toResponse(doc: VaultDocument, mySealedKey: string | null): Promi
     ...toCreated(doc),
     mySealedKey,
     pending: mySealedKey === null,
-    downloadUrl: mySealedKey === null ? null : await getSignedUrl(doc.s3Key),
+    downloadUrl: mySealedKey === null ? null : await getSignedUrl(doc.s3Key, DOWNLOAD_URL_OPTIONS),
   };
 }
 
@@ -95,9 +97,10 @@ async function toResponses(docs: VaultDocument[], userId: string): Promise<Vault
   return Promise.all(docs.map((doc) => toResponse(doc, byDocument.get(doc.id) ?? null)));
 }
 
-async function checkStorageQuota(userId: string, additionalBytes: number): Promise<void> {
+async function checkStorageQuota(userId: string, additionalBytes: number, transaction?: Transaction): Promise<void> {
   const totalSize = await VaultDocument.sum('sizeBytes', {
     where: { uploadedBy: userId },
+    transaction,
   }) || 0;
 
   if (totalSize + additionalBytes > MAX_STORAGE_BYTES) {
@@ -107,11 +110,18 @@ async function checkStorageQuota(userId: string, additionalBytes: number): Promi
   }
 }
 
-/** Every user must be a current adult member of the household with an account key; returns their public keys. */
-async function adultsWithKeys(householdId: string, userIds: string[]): Promise<Map<string, string>> {
+/**
+ * Every user must be a current adult member of the household with an account key; returns their public keys.
+ * With a transaction the membership rows are locked (FOR UPDATE), so a removal or demotion running at the
+ * same time either finishes first (and this fails) or waits until the caller's insert is done.
+ */
+async function adultsWithKeys(householdId: string, userIds: string[], transaction?: Transaction): Promise<Map<string, string>> {
   const [members, accountKeys] = await Promise.all([
-    HouseholdMember.findAll({ where: { householdId, userId: userIds, role: { [Op.in]: ADULT_ROLES } } }),
-    AccountKey.findAll({ where: { userId: userIds } }),
+    HouseholdMember.findAll({
+      where: { householdId, userId: userIds, role: { [Op.in]: ADULT_ROLES } },
+      ...(transaction ? { transaction, lock: true } : {}),
+    }),
+    AccountKey.findAll({ where: { userId: userIds }, transaction }),
   ]);
   const adults = new Set(members.map((m) => m.userId));
   const publicKeys = new Map(accountKeys.map((k) => [k.userId, k.publicKey]));
@@ -129,8 +139,8 @@ function assertNoDuplicates(keys: SealedKeyInput[]): void {
   }
 }
 
-async function assertNoExistingKeys(documentId: string, keys: SealedKeyInput[]): Promise<void> {
-  const existing = await VaultDocumentKey.findAll({ where: { documentId, userId: keys.map((k) => k.userId) } });
+async function assertNoExistingKeys(documentId: string, keys: SealedKeyInput[], transaction?: Transaction): Promise<void> {
+  const existing = await VaultDocumentKey.findAll({ where: { documentId, userId: keys.map((k) => k.userId) }, transaction });
   const have = new Set(existing.map((k) => k.userId));
   if (keys.some((k) => have.has(k.userId))) {
     throw new ConflictError('Someone you are granting already has a key for this file');
@@ -152,8 +162,13 @@ export async function uploadDocument(
   if (!caller.householdId) throw new ForbiddenError('You must belong to a household to use the vault');
   const householdId = caller.householdId;
 
-  if (body.sizeBytes > MAX_FILE_SIZE || fileBuffer.length > MAX_FILE_SIZE) {
+  // The uploaded ciphertext is the only size we trust: quota and the stored size come from it, not from the client.
+  const sizeBytes = fileBuffer.length;
+  if (sizeBytes > MAX_FILE_SIZE) {
     throw new ForbiddenError(`File size exceeds ${MAX_FILE_SIZE / (1024 * 1024)}MB limit`);
+  }
+  if (body.sizeBytes !== sizeBytes) {
+    throw new ValidationError('The declared file size does not match the uploaded file');
   }
 
   assertNoDuplicates(body.keys);
@@ -167,18 +182,22 @@ export async function uploadDocument(
     await adultsWithKeys(householdId, body.keys.map((k) => k.userId));
   }
 
-  await checkStorageQuota(userId, body.sizeBytes);
+  // Cheap early check; the authoritative one runs under a lock below.
+  await checkStorageQuota(userId, sizeBytes);
 
   const uploadResult = await uploadBuffer(fileBuffer, userUploadFolder('vault', userId), 'application/octet-stream');
 
   let documentId: string;
   try {
     documentId = await sequelize.transaction(async (transaction) => {
+      // Parallel uploads by one person queue here, so the usage sum below cannot be overshot.
+      await User.findByPk(userId, { attributes: ['id'], transaction, lock: true });
+      await checkStorageQuota(userId, sizeBytes, transaction);
       const doc = await VaultDocument.create({
         householdId,
         scope: body.scope,
         sealedMeta: body.sealedMeta,
-        sizeBytes: body.sizeBytes,
+        sizeBytes,
         s3Key: uploadResult.key,
         uploadedBy: userId,
       }, { transaction });
@@ -289,19 +308,21 @@ export async function listPendingGrants(userId: string): Promise<PendingGrantRes
 // ─── Grant keys to adults who are still pending ───
 
 export async function grantKeys(documentId: string, userId: string, grants: SealedKeyInput[]): Promise<void> {
-  const document = await VaultDocument.findByPk(documentId);
-  if (!document) throw new NotFoundError('Document');
-
-  const myKey = await VaultDocumentKey.findOne({ where: { documentId, userId } });
-  if (!myKey) throw new ForbiddenError('You can only grant access to a file you can open');
-  if (document.scope !== 'household') throw new ValidationError('Only household files can be shared');
-
   assertNoDuplicates(grants);
-  await adultsWithKeys(document.householdId, grants.map((g) => g.userId));
-  await assertNoExistingKeys(documentId, grants);
-
   try {
     await sequelize.transaction(async (transaction) => {
+      // Lock order: the file, then the caller's own key, then each target's membership. Making a file
+      // personal locks the file row first, and a removal deletes membership and keys together, so every
+      // state read here is still true when the insert happens.
+      const document = await VaultDocument.findByPk(documentId, { transaction, lock: true });
+      if (!document) throw new NotFoundError('Document');
+
+      const myKey = await VaultDocumentKey.findOne({ where: { documentId, userId }, transaction, lock: true });
+      if (!myKey) throw new ForbiddenError('You can only grant access to a file you can open');
+      if (document.scope !== 'household') throw new ValidationError('Only household files can be shared');
+
+      await adultsWithKeys(document.householdId, grants.map((g) => g.userId), transaction);
+      await assertNoExistingKeys(documentId, grants, transaction);
       await VaultDocumentKey.bulkCreate(keyRows(documentId, grants), { transaction });
     });
   } catch (error) {
@@ -335,6 +356,8 @@ export async function changeScope(documentId: string, userId: string, body: Chan
 
   if (body.scope === 'personal') {
     await sequelize.transaction(async (transaction) => {
+      // Lock the file first: a grant running at the same moment waits, then sees 'personal' and fails.
+      await document.reload({ transaction, lock: true });
       await VaultDocumentKey.destroy({ where: { documentId, userId: { [Op.ne]: userId } }, transaction });
       document.scope = 'personal';
       await document.save({ transaction });
@@ -347,12 +370,13 @@ export async function changeScope(documentId: string, userId: string, body: Chan
     // The uploader already holds a key; only other people need one added.
     const added = (body.keys ?? []).filter((k) => k.userId !== userId);
     assertNoDuplicates(added);
-    if (added.length > 0) {
-      await adultsWithKeys(document.householdId, added.map((k) => k.userId));
-      await assertNoExistingKeys(documentId, added);
-    }
     await sequelize.transaction(async (transaction) => {
-      if (added.length > 0) await VaultDocumentKey.bulkCreate(keyRows(documentId, added), { transaction });
+      await document.reload({ transaction, lock: true });
+      if (added.length > 0) {
+        await adultsWithKeys(document.householdId, added.map((k) => k.userId), transaction);
+        await assertNoExistingKeys(documentId, added, transaction);
+        await VaultDocumentKey.bulkCreate(keyRows(documentId, added), { transaction });
+      }
       document.scope = 'household';
       await document.save({ transaction });
     });

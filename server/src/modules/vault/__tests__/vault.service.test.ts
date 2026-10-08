@@ -70,6 +70,7 @@ const mockDoc = (overrides: any = {}) => ({
   get: (key: string) => (key === 'uploader' ? { id: overrides.uploadedBy ?? userId, displayName: 'Test User' } : null),
   save: jest.fn(),
   destroy: jest.fn(),
+  reload: jest.fn(),
   ...overrides,
 });
 
@@ -105,6 +106,7 @@ describe('Vault Service', () => {
   });
 
   describe('uploadDocument', () => {
+    const ciphertext = Buffer.alloc(1024, 7);
     const body = (over: any = {}) => ({
       scope: 'household' as const,
       sealedMeta: meta,
@@ -114,7 +116,7 @@ describe('Vault Service', () => {
     });
 
     it('stores a household file under the uploader folder with a key per recipient', async () => {
-      const result = await uploadDocument(userId, body(), Buffer.from('x'));
+      const result = await uploadDocument(userId, body(), ciphertext);
       expect(uploadBuffer).toHaveBeenCalledWith(expect.any(Buffer), `vault/${userId}`, 'application/octet-stream');
       expect(VaultDocumentKey.bulkCreate).toHaveBeenCalledWith(
         [
@@ -128,50 +130,87 @@ describe('Vault Service', () => {
     });
 
     it('allows adults without a key yet to be left out (they become pending)', async () => {
-      await expect(uploadDocument(userId, body({ keys: [{ userId, sealedKey: sealed }] }), Buffer.from('x'))).resolves.toBeDefined();
+      await expect(uploadDocument(userId, body({ keys: [{ userId, sealedKey: sealed }] }), ciphertext)).resolves.toBeDefined();
     });
 
     it('requires the uploader own key', async () => {
-      await expect(uploadDocument(userId, body({ keys: [{ userId: otherUserId, sealedKey: sealed }] }), Buffer.from('x')))
+      await expect(uploadDocument(userId, body({ keys: [{ userId: otherUserId, sealedKey: sealed }] }), ciphertext))
         .rejects.toThrow(ValidationError);
       expect(uploadBuffer).not.toHaveBeenCalled();
     });
 
     it('personal files take exactly the uploader key', async () => {
-      await expect(uploadDocument(userId, body({ scope: 'personal' }), Buffer.from('x'))).rejects.toThrow(ValidationError);
-      await expect(uploadDocument(userId, body({ scope: 'personal', keys: [{ userId, sealedKey: sealed }] }), Buffer.from('x')))
+      await expect(uploadDocument(userId, body({ scope: 'personal' }), ciphertext)).rejects.toThrow(ValidationError);
+      await expect(uploadDocument(userId, body({ scope: 'personal', keys: [{ userId, sealedKey: sealed }] }), ciphertext))
         .resolves.toBeDefined();
     });
 
     it('refuses a key for a child, an outsider or someone without an account key', async () => {
       for (const target of [childId, outsiderId]) {
-        await expect(uploadDocument(userId, body({ keys: [{ userId, sealedKey: sealed }, { userId: target, sealedKey: sealed }] }), Buffer.from('x')))
+        await expect(uploadDocument(userId, body({ keys: [{ userId, sealedKey: sealed }, { userId: target, sealedKey: sealed }] }), ciphertext))
           .rejects.toThrow(ValidationError);
       }
       (AccountKey.findAll as jest.Mock).mockResolvedValue([{ userId, publicKey: 'pk' }]);
-      await expect(uploadDocument(userId, body(), Buffer.from('x'))).rejects.toThrow(ValidationError);
+      await expect(uploadDocument(userId, body(), ciphertext)).rejects.toThrow(ValidationError);
       expect(uploadBuffer).not.toHaveBeenCalled();
     });
 
     it('refuses duplicate recipients', async () => {
-      await expect(uploadDocument(userId, body({ keys: [{ userId, sealedKey: sealed }, { userId, sealedKey: sealed }] }), Buffer.from('x')))
+      await expect(uploadDocument(userId, body({ keys: [{ userId, sealedKey: sealed }, { userId, sealedKey: sealed }] }), ciphertext))
         .rejects.toThrow(ValidationError);
     });
 
     it('a child can only upload personal files', async () => {
-      await expect(uploadDocument(childId, body({ keys: [{ userId: childId, sealedKey: sealed }] }), Buffer.from('x')))
+      await expect(uploadDocument(childId, body({ keys: [{ userId: childId, sealedKey: sealed }] }), ciphertext))
         .rejects.toThrow(ForbiddenError);
     });
 
     it('rejects files over 20MB and uploads over the quota', async () => {
-      await expect(uploadDocument(userId, body({ sizeBytes: 21 * 1024 * 1024 }), Buffer.from('x'))).rejects.toThrow(ForbiddenError);
+      const big = Buffer.alloc(21 * 1024 * 1024);
+      await expect(uploadDocument(userId, body({ sizeBytes: big.length }), big)).rejects.toThrow(ForbiddenError);
       (VaultDocument.sum as jest.Mock).mockResolvedValue(2 * 1024 * 1024 * 1024);
-      await expect(uploadDocument(userId, body(), Buffer.from('x'))).rejects.toThrow(ForbiddenError);
+      await expect(uploadDocument(userId, body(), ciphertext)).rejects.toThrow(ForbiddenError);
+    });
+
+    it('refuses a declared size that differs from the uploaded bytes (400) before storing anything', async () => {
+      await expect(uploadDocument(userId, body({ sizeBytes: 5 }), ciphertext)).rejects.toThrow(ValidationError);
+      expect(uploadBuffer).not.toHaveBeenCalled();
+      expect(VaultDocument.create).not.toHaveBeenCalled();
+    });
+
+    it('stores and counts the real ciphertext length', async () => {
+      await uploadDocument(userId, body(), ciphertext);
+      expect(VaultDocument.create).toHaveBeenCalledWith(
+        expect.objectContaining({ sizeBytes: ciphertext.length }),
+        expect.anything(),
+      );
+    });
+
+    it('sums usage and inserts in one transaction that first locks the uploader row', async () => {
+      const txn = { id: 'txn-upload' };
+      (sequelize.transaction as jest.Mock).mockImplementation(async (cb: any) => cb(txn));
+      await uploadDocument(userId, body(), ciphertext);
+
+      const lock = (User.findByPk as jest.Mock).mock.invocationCallOrder[0];
+      const sum = (VaultDocument.sum as jest.Mock).mock.invocationCallOrder.at(-1)!;
+      const create = (VaultDocument.create as jest.Mock).mock.invocationCallOrder[0];
+      expect(User.findByPk).toHaveBeenCalledWith(userId, expect.objectContaining({ transaction: txn, lock: true }));
+      expect((VaultDocument.sum as jest.Mock).mock.calls.at(-1)![1]).toEqual(expect.objectContaining({ transaction: txn }));
+      expect(lock).toBeLessThan(sum);
+      expect(sum).toBeLessThan(create);
+    });
+
+    it('re-checks the quota under the lock, and removes the stored file when it is exceeded', async () => {
+      // Passes the cheap early check, then a parallel upload has used the space by the time the lock is held.
+      (VaultDocument.sum as jest.Mock).mockResolvedValueOnce(0).mockResolvedValueOnce(2 * 1024 * 1024 * 1024);
+      await expect(uploadDocument(userId, body(), ciphertext)).rejects.toThrow(ForbiddenError);
+      expect(VaultDocument.create).not.toHaveBeenCalled();
+      expect(deleteObject).toHaveBeenCalledWith(`vault/${userId}/abc`);
     });
 
     it('removes the stored file when the database write fails', async () => {
       (VaultDocument.create as jest.Mock).mockRejectedValue(new Error('db down'));
-      await expect(uploadDocument(userId, body(), Buffer.from('x'))).rejects.toThrow('db down');
+      await expect(uploadDocument(userId, body(), ciphertext)).rejects.toThrow('db down');
       expect(deleteObject).toHaveBeenCalledWith(`vault/${userId}/abc`);
     });
   });
@@ -190,6 +229,8 @@ describe('Vault Service', () => {
       expect(result.documents[0]).toEqual(expect.objectContaining({
         id: 'd1', mySealedKey: 'mine', pending: false, downloadUrl: expect.stringContaining('https://signed'),
       }));
+      // Vault links are short-lived and never the cached CDN link, so they stop working soon after access is lost.
+      expect(getSignedUrl).toHaveBeenCalledWith(expect.any(String), { ttlSeconds: 300, noCdn: true });
       expect(result.documents[1]).toEqual(expect.objectContaining({ id: 'd2', mySealedKey: null, pending: true, downloadUrl: null }));
       expect(result.documents[0].uploadedBy).toEqual({ id: userId, displayName: 'Test User' });
       expect(result.hasMore).toBe(false);
@@ -273,6 +314,38 @@ describe('Vault Service', () => {
       (VaultDocumentKey.findOne as jest.Mock).mockResolvedValue({ documentId, userId, wrappedKey: 'mine' });
     });
 
+    it('runs in one transaction: locks the file, re-checks my key, locks each target membership, then inserts', async () => {
+      const txn = { id: 'txn-grant' };
+      (sequelize.transaction as jest.Mock).mockImplementation(async (cb: any) => cb(txn));
+      await grantKeys(documentId, userId, [{ userId: otherUserId, sealedKey: sealed }]);
+
+      expect(VaultDocument.findByPk).toHaveBeenCalledWith(documentId, expect.objectContaining({ transaction: txn, lock: true }));
+      expect(VaultDocumentKey.findOne).toHaveBeenCalledWith(expect.objectContaining({ where: { documentId, userId }, transaction: txn, lock: true }));
+      const memberCall = (HouseholdMember.findAll as jest.Mock).mock.calls.find((c) => c[0].lock === true)!;
+      expect(memberCall[0]).toEqual(expect.objectContaining({ transaction: txn, lock: true }));
+      expect(memberCall[0].where).toEqual(expect.objectContaining({ householdId: householdId, userId: [otherUserId] }));
+
+      const order = (m: jest.Mock, i = 0) => m.mock.invocationCallOrder[i];
+      const memberOrder = (HouseholdMember.findAll as jest.Mock).mock.invocationCallOrder[(HouseholdMember.findAll as jest.Mock).mock.calls.indexOf(memberCall)];
+      expect(order(VaultDocument.findByPk as jest.Mock)).toBeLessThan(order(VaultDocumentKey.findOne as jest.Mock));
+      expect(order(VaultDocumentKey.findOne as jest.Mock)).toBeLessThan(memberOrder);
+      expect(memberOrder).toBeLessThan(order(VaultDocumentKey.bulkCreate as jest.Mock));
+      expect(VaultDocumentKey.bulkCreate).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ transaction: txn }));
+    });
+
+    it('refuses when the target was removed or demoted by the time the membership is locked', async () => {
+      // Lock sees no adult row for the target: removal or demotion won the race.
+      (HouseholdMember.findAll as jest.Mock).mockResolvedValue([]);
+      await expect(grantKeys(documentId, userId, [{ userId: otherUserId, sealedKey: sealed }])).rejects.toThrow(ValidationError);
+      expect(VaultDocumentKey.bulkCreate).not.toHaveBeenCalled();
+    });
+
+    it('refuses when my own key was deleted by the time the transaction looks again', async () => {
+      (VaultDocumentKey.findOne as jest.Mock).mockResolvedValue(null);
+      await expect(grantKeys(documentId, userId, [{ userId: otherUserId, sealedKey: sealed }])).rejects.toThrow(ForbiddenError);
+      expect(VaultDocumentKey.bulkCreate).not.toHaveBeenCalled();
+    });
+
     it('seals the file for an adult who has none', async () => {
       (VaultDocumentKey.findAll as jest.Mock).mockResolvedValue([{ documentId, userId, wrappedKey: 'mine' }]);
       await grantKeys(documentId, userId, [{ userId: otherUserId, sealedKey: sealed }]);
@@ -342,6 +415,20 @@ describe('Vault Service', () => {
       expect(arg.where.documentId).toBe(documentId);
       const ne = Object.getOwnPropertySymbols(arg.where.userId).map((sym) => arg.where.userId[sym]);
       expect(ne).toEqual([userId]);
+    });
+
+    it('to personal locks the file row before deleting the keys, so a concurrent grant waits and then sees personal', async () => {
+      const txn = { id: 'txn-scope' };
+      (sequelize.transaction as jest.Mock).mockImplementation(async (cb: any) => cb(txn));
+      const doc = mockDoc();
+      (VaultDocument.findOne as jest.Mock).mockResolvedValue(doc);
+
+      await changeScope(documentId, userId, { scope: 'personal' });
+
+      expect(doc.reload).toHaveBeenCalledWith(expect.objectContaining({ transaction: txn, lock: true }));
+      expect((doc.reload as jest.Mock).mock.invocationCallOrder[0])
+        .toBeLessThan((VaultDocumentKey.destroy as jest.Mock).mock.invocationCallOrder[0]);
+      expect(VaultDocumentKey.destroy).toHaveBeenCalledWith(expect.objectContaining({ transaction: txn }));
     });
 
     it('to household adds the given keys', async () => {

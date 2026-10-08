@@ -39,7 +39,9 @@ Another adult's phone resolves it:
 
 ## Leaving, removal, becoming a child
 
-`onMemberLostVaultAccess(userId, householdId)` in `server/src/modules/vault/access.ts` deletes the person's keys for that household's household files. It runs when a member is removed, leaves, is made a child, and for every member when a household is purged. Personal files are not touched.
+`onMemberLostVaultAccess(userId, householdId)` in `server/src/modules/vault/access.ts` deletes the person's keys for that household's household files. It runs when a member is removed, leaves, is made a child, and for every member when a household is purged. Personal files are not touched. It runs inside the same transaction as the membership change, so a grant never sees the member gone with the key still there. `onMemberGainedVaultAccess` clears leftover keys when someone joins or a child becomes an adult, so access only comes from a fresh grant.
+
+A grant runs in one transaction that locks the file row, re-checks the caller's own key, and locks each target's membership row; making a file Personal locks the file row first. Downloads use a 5-minute S3 link (never the cached CDN link). The upload size and quota come from the real ciphertext length (a different declared `sizeBytes` is a 400), counted under a lock on the uploader's user row.
 
 ## Known limits
 

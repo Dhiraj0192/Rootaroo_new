@@ -14,8 +14,11 @@ jest.mock('../../../shared/utils/s3', () => ({
 }));
 import { deleteObject } from '../../../shared/utils/s3';
 
-jest.mock('../../vault/access', () => ({ onMemberLostVaultAccess: jest.fn().mockResolvedValue(undefined) }));
-import { onMemberLostVaultAccess } from '../../vault/access';
+jest.mock('../../vault/access', () => ({
+  onMemberLostVaultAccess: jest.fn().mockResolvedValue(undefined),
+  onMemberGainedVaultAccess: jest.fn().mockResolvedValue(undefined),
+}));
+import { onMemberLostVaultAccess, onMemberGainedVaultAccess } from '../../vault/access';
 
 jest.mock('../../../shared/utils/mailer', () => ({
   sendAdminAlertEmail: jest.fn().mockResolvedValue(undefined),
@@ -181,6 +184,12 @@ describe('Household Service — Invitations', () => {
       expect(clearEntitlementCache).toHaveBeenCalledWith(householdId);
     });
 
+    it('clears any stale vault keys of the joiner inside the join transaction', async () => {
+      arrangeValidInvite();
+      await joinViaCode(otherUserId, { code: 'INVITE99' });
+      expect(onMemberGainedVaultAccess).toHaveBeenCalledWith(otherUserId, householdId, expect.anything());
+    });
+
     it('tells the rest of the household that someone joined', async () => {
       arrangeValidInvite();
       (models.User.findByPk as jest.Mock).mockResolvedValue({ id: otherUserId, displayName: 'Mina' });
@@ -286,7 +295,21 @@ describe('Household Service — Member Management', () => {
 
       await removeMember(userId, householdId, otherUserId);
 
-      expect(onMemberLostVaultAccess).toHaveBeenCalledWith(otherUserId, householdId);
+      expect(onMemberLostVaultAccess).toHaveBeenCalledWith(otherUserId, householdId, expect.anything());
+    });
+
+    it('deletes the membership and the vault keys in one transaction (no grant can slip in between)', async () => {
+      const txn = { id: 'txn-remove' };
+      (models.sequelize.transaction as jest.Mock).mockImplementationOnce((cb: any) => cb(txn));
+      const destroy = jest.fn().mockResolvedValue(undefined);
+      (models.HouseholdMember.findOne as jest.Mock)
+        .mockResolvedValueOnce({ role: 'admin' })
+        .mockResolvedValueOnce({ role: 'member', destroy });
+
+      await removeMember(userId, householdId, otherUserId);
+
+      expect(destroy).toHaveBeenCalledWith({ transaction: txn });
+      expect(onMemberLostVaultAccess).toHaveBeenCalledWith(otherUserId, householdId, txn);
     });
 
     it('should throw ForbiddenError if requester is not an admin', async () => {
@@ -329,7 +352,19 @@ describe('Household Service — Member Management', () => {
 
       await expect(leaveHousehold(userId, householdId)).resolves.toBeUndefined();
       expect(destroy).toHaveBeenCalled();
-      expect(onMemberLostVaultAccess).toHaveBeenCalledWith(userId, householdId);
+      expect(onMemberLostVaultAccess).toHaveBeenCalledWith(userId, householdId, expect.anything());
+    });
+
+    it('deletes the membership and the vault keys in one transaction', async () => {
+      const txn = { id: 'txn-leave' };
+      (models.sequelize.transaction as jest.Mock).mockImplementationOnce((cb: any) => cb(txn));
+      const destroy = jest.fn().mockResolvedValue(undefined);
+      (models.HouseholdMember.findOne as jest.Mock).mockResolvedValue({ role: 'member', destroy });
+
+      await leaveHousehold(userId, householdId);
+
+      expect(destroy).toHaveBeenCalledWith({ transaction: txn });
+      expect(onMemberLostVaultAccess).toHaveBeenCalledWith(userId, householdId, txn);
     });
 
     it('should throw ForbiddenError if admin tries to leave without transferring', async () => {
@@ -406,7 +441,7 @@ describe('Household Service — Member Management', () => {
 
       const result = await changeMemberRole(userId, householdId, otherUserId, body);
 
-      expect(update).toHaveBeenCalledWith({ role: 'member' });
+      expect(update).toHaveBeenCalledWith({ role: 'member' }, expect.anything());
       expect(result.role).toBe('member');
       expect(result.userId).toBe(otherUserId);
       expect(onMemberLostVaultAccess).not.toHaveBeenCalled();
@@ -422,7 +457,37 @@ describe('Household Service — Member Management', () => {
 
       await changeMemberRole(userId, householdId, otherUserId, { role: 'child' });
 
-      expect(onMemberLostVaultAccess).toHaveBeenCalledWith(otherUserId, householdId);
+      expect(onMemberLostVaultAccess).toHaveBeenCalledWith(otherUserId, householdId, expect.anything());
+    });
+
+    it('changes the role and removes the vault keys in one transaction', async () => {
+      const txn = { id: 'txn-role' };
+      (models.sequelize.transaction as jest.Mock).mockImplementationOnce((cb: any) => cb(txn));
+      const update = jest.fn();
+      (models.HouseholdMember.findOne as jest.Mock)
+        .mockResolvedValueOnce({ role: 'admin' })
+        .mockResolvedValueOnce({
+          userId: otherUserId, role: 'member', joinedAt: new Date(), update,
+          user: { displayName: 'Other User', email: 'other@test.com', avatarUrl: null, avatarEmoji: null },
+        });
+
+      await changeMemberRole(userId, householdId, otherUserId, { role: 'child' });
+
+      expect(update).toHaveBeenCalledWith({ role: 'child' }, { transaction: txn });
+      expect(onMemberLostVaultAccess).toHaveBeenCalledWith(otherUserId, householdId, txn);
+    });
+
+    it('clears any leftover vault keys when a child is promoted to an adult', async () => {
+      (models.HouseholdMember.findOne as jest.Mock)
+        .mockResolvedValueOnce({ role: 'admin' })
+        .mockResolvedValueOnce({
+          userId: otherUserId, role: 'child', joinedAt: new Date(), update: jest.fn(),
+          user: { displayName: 'Other User', email: 'other@test.com', avatarUrl: null, avatarEmoji: null },
+        });
+
+      await changeMemberRole(userId, householdId, otherUserId, { role: 'member' });
+
+      expect(onMemberGainedVaultAccess).toHaveBeenCalledWith(otherUserId, householdId, expect.anything());
     });
 
     it('should throw ForbiddenError if requester is not admin', async () => {
@@ -898,7 +963,8 @@ describe('finalizeDueHouseholdDeletions vault access', () => {
 
     await expect(finalizeDueHouseholdDeletions()).resolves.toBe(1);
 
-    expect(onMemberLostVaultAccess).toHaveBeenCalledWith(userId, householdId);
-    expect(onMemberLostVaultAccess).toHaveBeenCalledWith(otherUserId, householdId);
+    expect(onMemberLostVaultAccess).toHaveBeenCalledWith(userId, householdId, expect.anything());
+    expect(onMemberLostVaultAccess).toHaveBeenCalledWith(otherUserId, householdId, expect.anything());
+    expect(models.HouseholdMember.destroy).toHaveBeenCalledWith({ where: { householdId }, transaction: expect.anything() });
   });
 });

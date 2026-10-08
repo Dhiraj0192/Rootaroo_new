@@ -10,7 +10,7 @@ import { getIO } from '../../shared/utils/socket';
 import { withDeadlockRetry } from '../../shared/utils/dbRetry';
 import { assertSeatAvailable, clearEntitlementCache } from '../billing/entitlement';
 import { onHouseholdDeletionScheduled, onHouseholdDeletionCancelled, onHouseholdPurged, syncBillingEmail, reportDeletionHookFailure } from '../billing/deletion';
-import { onMemberLostVaultAccess } from '../vault/access';
+import { onMemberLostVaultAccess, onMemberGainedVaultAccess } from '../vault/access';
 import logger from '../../shared/utils/logger';
 import * as notificationService from '../../shared/services/notifications';
 import type {
@@ -243,6 +243,7 @@ export async function joinViaCode(userId: string, body: JoinHouseholdBody): Prom
       }, { transaction });
 
       await User.update({ role: 'member' }, { where: { id: userId }, transaction });
+      await onMemberGainedVaultAccess(userId, household.id, transaction);
 
       // Mark invitation as accepted if using an invitation record
       if (invitation && !invitation.acceptedAt) {
@@ -338,8 +339,11 @@ export async function removeMember(
     throw new ForbiddenError('Cannot remove another admin. Transfer their role first.');
   }
 
-  await target.destroy();
-  await onMemberLostVaultAccess(targetUserId, householdId);
+  // Same transaction: a vault grant must never see the member gone but their key still there (or the reverse).
+  await sequelize.transaction(async (transaction) => {
+    await target.destroy({ transaction });
+    await onMemberLostVaultAccess(targetUserId, householdId, transaction);
+  });
   await removeFromHouseholdConversation(householdId, targetUserId);
   await clearEntitlementCache(householdId);
 }
@@ -349,16 +353,20 @@ export async function removeMember(
  * — only from approveActionRequest, once Rootaroo approves a pending
  * 'leave' request (see requestLeaveHousehold below).
  */
-export async function leaveHousehold(userId: string, householdId: string): Promise<void> {
+export async function leaveHousehold(userId: string, householdId: string, outer?: Transaction): Promise<void> {
   const membership = await getMembership(householdId, userId);
   if (membership.role === 'admin') {
     throw new ForbiddenError(
       'Transfer admin role to another member before leaving the household.',
     );
   }
-  await membership.destroy();
-  await onMemberLostVaultAccess(userId, householdId);
-  await User.update({ role: 'member' }, { where: { id: userId } });
+  const removeAndRevoke = async (transaction: Transaction) => {
+    await membership.destroy({ transaction });
+    await onMemberLostVaultAccess(userId, householdId, transaction);
+    await User.update({ role: 'member' }, { where: { id: userId }, transaction });
+  };
+  if (outer) await removeAndRevoke(outer);
+  else await sequelize.transaction(removeAndRevoke);
   await removeFromHouseholdConversation(householdId, userId);
   await clearEntitlementCache(householdId);
 }
@@ -422,10 +430,15 @@ export async function changeMemberRole(
   if (!target) throw new NotFoundError('Member');
   if (!target.user) throw new AppError(500, 'Member record references a deleted user');
 
-  await target.update({ role: body.role });
-  await User.update({ role: body.role }, { where: { id: targetUserId } });
-  // Children never hold keys to the household's shared files.
-  if (body.role === 'child') await onMemberLostVaultAccess(targetUserId, householdId);
+  const wasChild = target.role === 'child';
+  await sequelize.transaction(async (transaction) => {
+    await target.update({ role: body.role }, { transaction });
+    await User.update({ role: body.role }, { where: { id: targetUserId }, transaction });
+    // Children never hold keys to the household's shared files.
+    if (body.role === 'child') await onMemberLostVaultAccess(targetUserId, householdId, transaction);
+    // A promoted child starts with no keys: access only comes from a fresh grant.
+    else if (wasChild) await onMemberGainedVaultAccess(targetUserId, householdId, transaction);
+  });
   void syncBillingEmail(householdId).catch(() => undefined);
 
   return {
@@ -600,7 +613,7 @@ export async function approveActionRequest(
     }
 
     if (request.type === 'leave') {
-      await leaveHousehold(request.requestedBy, request.householdId);
+      await leaveHousehold(request.requestedBy, request.householdId, transaction);
     } else {
       const household = await Household.findByPk(request.householdId, { transaction });
       if (!household) throw new NotFoundError('Household');
@@ -771,10 +784,12 @@ async function finalizeHouseholdDeletion(household: Household): Promise<void> {
   // (paranoid) so its data can still be audited/recovered if needed — same
   // lightweight approach used for account deletion, no cascading purge of
   // owned content (feed posts, tasks, vault docs, etc.).
-  const members = await HouseholdMember.findAll({ where: { householdId: household.id } });
-  for (const member of members) await onMemberLostVaultAccess(member.userId, household.id);
-  await HouseholdMember.destroy({ where: { householdId: household.id } });
-  await household.destroy();
+  await sequelize.transaction(async (transaction) => {
+    const members = await HouseholdMember.findAll({ where: { householdId: household.id }, transaction });
+    for (const member of members) await onMemberLostVaultAccess(member.userId, household.id, transaction);
+    await HouseholdMember.destroy({ where: { householdId: household.id }, transaction });
+    await household.destroy({ transaction });
+  });
 }
 
 /**

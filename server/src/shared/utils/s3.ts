@@ -89,10 +89,17 @@ export async function downloadObjectBuffer(key: string): Promise<Buffer> {
  * sign-ins) store an external URL we don't own, not an S3 key, and signing
  * that would produce a broken link.
  */
-export async function getSignedUrl(key: string | null | undefined): Promise<string | null> {
+export interface SignedUrlOptions {
+  /** Link lifetime in seconds (S3 presign only; CloudFront links always use the fixed window). */
+  ttlSeconds?: number;
+  /** Skip the cached CloudFront link and presign directly on S3, so the link really is short-lived. */
+  noCdn?: boolean;
+}
+
+export async function getSignedUrl(key: string | null | undefined, options: SignedUrlOptions = {}): Promise<string | null> {
   if (!key) return null;
   if (/^https?:\/\//i.test(key)) return key;
-  if (cloudfrontEnabled()) {
+  if (cloudfrontEnabled() && !options.noCdn) {
     try {
       return signCloudfrontUrl(key);
     } catch (error) {
@@ -102,6 +109,6 @@ export async function getSignedUrl(key: string | null | undefined): Promise<stri
     }
   }
   return presign(s3Client, new GetObjectCommand({ Bucket: S3_BUCKET, Key: key }), {
-    expiresIn: SIGNED_URL_TTL_SECONDS,
+    expiresIn: options.ttlSeconds ?? SIGNED_URL_TTL_SECONDS,
   });
 }

@@ -12,6 +12,8 @@ const { addColumnIfMissing, addIndexIfMissing, createTableIfMissing } = require(
  * (vault_keys) is gone, the account key replaces it.
  * Written to be safe to re-run after a partial failure: each step checks before it acts.
  */
+const tableExists = async (queryInterface, table) =>
+  (await queryInterface.showAllTables()).map((t) => (typeof t === 'string' ? t : t.tableName)).includes(table);
 const has = async (queryInterface, table, column) => Boolean((await queryInterface.describeTable(table))[column]);
 
 module.exports = {
@@ -28,7 +30,7 @@ module.exports = {
     });
     await addIndexIfMissing(queryInterface, 'vault_documents', ['household_id', 'scope'], { name: 'idx_vault_documents_household_scope' });
 
-    await queryInterface.dropTable('vault_keys');
+    if (await tableExists(queryInterface, 'vault_keys')) await queryInterface.dropTable('vault_keys');
   },
 
   async down(queryInterface, Sequelize) {

@@ -3,7 +3,7 @@ import { randomBytes } from 'crypto';
 import { QueryTypes } from 'sequelize';
 import app from '../../../app';
 import sequelize from '../../../config/database';
-import { setupAssociations, AccountKey, VaultDocumentKey } from '../../../database/models';
+import { setupAssociations, AccountKey, VaultDocumentKey, HouseholdMember } from '../../../database/models';
 import { resetDb, closeIntResources } from '../../../test/int/db';
 import { createHouseholdWithAdmin, addMember, authHeaderFor } from '../../../test/factories';
 import type User from '../../../database/models/User';
@@ -112,6 +112,60 @@ describe('shared vault (real database)', () => {
     await removeMember(admin.id, household.id, other.id);
     expect(await VaultDocumentKey.count({ where: { documentId: id, userId: other.id } })).toBe(0);
     expect(await VaultDocumentKey.count({ where: { documentId: id, userId: admin.id } })).toBe(1);
+  });
+
+  it('refuses a grant to someone who was removed, and from someone who was removed', async () => {
+    const { household, admin, ravi } = await family();
+    const removed = await withKey(await addMember(household.id));
+    const up = await upload(admin, { scope: 'household', sealedMeta: b64(80), sizeBytes: 256, keys: [admin, ravi].map((u) => ({ userId: u.id, sealedKey: b64(92) })) });
+    const id = up.body.data.id;
+    const { removeMember } = await import('../../household/service');
+    await removeMember(admin.id, household.id, removed.id);
+
+    const toRemoved = await request(app).post(`/api/v1/vault/${id}/keys`).set(authHeaderFor(admin)).send({ grants: [{ userId: removed.id, sealedKey: b64(92) }] });
+    expect(toRemoved.status).toBe(400);
+    expect(await VaultDocumentKey.count({ where: { documentId: id, userId: removed.id } })).toBe(0);
+
+    await removeMember(admin.id, household.id, ravi.id);
+    const fromRemoved = await request(app).post(`/api/v1/vault/${id}/keys`).set(authHeaderFor(ravi)).send({ grants: [{ userId: admin.id, sealedKey: b64(92) }] });
+    expect([403, 404, 409]).toContain(fromRemoved.status);
+  });
+
+  it('a grant after the file became personal is refused', async () => {
+    const { household, admin } = await family();
+    const other = await withKey(await addMember(household.id));
+    const up = await upload(admin, { scope: 'household', sealedMeta: b64(80), sizeBytes: 256, keys: [{ userId: admin.id, sealedKey: b64(92) }] });
+    const id = up.body.data.id;
+    expect((await request(app).patch(`/api/v1/vault/${id}/scope`).set(authHeaderFor(admin)).send({ scope: 'personal' })).status).toBe(200);
+    const res = await request(app).post(`/api/v1/vault/${id}/keys`).set(authHeaderFor(admin)).send({ grants: [{ userId: other.id, sealedKey: b64(92) }] });
+    expect(res.status).toBe(400);
+    expect(await VaultDocumentKey.count({ where: { documentId: id, userId: other.id } })).toBe(0);
+  });
+
+  it('clears a stale key row when the person rejoins or is promoted from child', async () => {
+    const { household, admin, kid } = await family();
+    const leaver = await withKey(await addMember(household.id));
+    const up = await upload(admin, { scope: 'household', sealedMeta: b64(80), sizeBytes: 256, keys: [admin, leaver].map((u) => ({ userId: u.id, sealedKey: b64(92) })) });
+    const id = up.body.data.id;
+    const { removeMember, joinViaCode, changeMemberRole } = await import('../../household/service');
+
+    await removeMember(admin.id, household.id, leaver.id);
+    // A key that slipped in around the removal (the race this guards against).
+    await VaultDocumentKey.create({ documentId: id, userId: leaver.id, wrappedKey: b64(92) });
+    // Removal is a soft delete and its row blocks the unique (household, user) pair; clear it so the rejoin can run.
+    await HouseholdMember.destroy({ where: { userId: leaver.id }, force: true });
+    await joinViaCode(leaver.id, { code: household.inviteCode });
+    expect(await VaultDocumentKey.count({ where: { documentId: id, userId: leaver.id } })).toBe(0);
+
+    await VaultDocumentKey.create({ documentId: id, userId: kid.id, wrappedKey: b64(92) });
+    await changeMemberRole(admin.id, household.id, kid.id, { role: 'member' });
+    expect(await VaultDocumentKey.count({ where: { documentId: id, userId: kid.id } })).toBe(0);
+  });
+
+  it('rejects a declared size that does not match the uploaded bytes', async () => {
+    const { admin } = await family();
+    const res = await upload(admin, { scope: 'personal', sealedMeta: b64(80), sizeBytes: 255, keys: [{ userId: admin.id, sealedKey: b64(92) }] });
+    expect(res.status).toBe(400);
   });
 
   it('only the uploader changes Personal/Household; an admin can still delete', async () => {
