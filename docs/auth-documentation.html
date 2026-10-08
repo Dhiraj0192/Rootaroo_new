@@ -441,8 +441,8 @@
   <div class="card">
     <ul style="line-height:1.9;font-size:14px;margin:0;">
       <li>Signed with <code>env.jwt.accessSecret</code>, expiry from <code>env.jwt.accessExpiry</code> (config-driven, not hardcoded).</li>
-      <li>Payload: <code>{ userId, email, role }</code> — <code>householdId</code> is also read by the socket layer if present.</li>
-      <li>Never stored in the database — verified purely by signature + expiry on every request.</li>
+      <li>Payload: <code>{ userId, email, role, deviceId }</code> — <code>householdId</code> is also read by the socket layer if present.</li>
+      <li>Never stored in the database — verified by signature + expiry on every request, plus a check that its device hasn't been removed (Redis revoke marker, falling back to the database if Redis is down). A removed device gets <code>401</code> with code <code>DEVICE_REVOKED</code> at once.</li>
       <li>Checked by <code>authenticate</code> middleware for HTTP, and by <code>socketAuthMiddleware</code> for WebSocket connections.</li>
     </ul>
   </div>
@@ -453,7 +453,7 @@
       <li>Just a random UUID v4 string — <strong>not</strong> a JWT, carries no payload of its own.</li>
       <li>Persisted in the <code>refresh_tokens</code> table, 30-day expiry.</li>
       <li><strong>Single-use rotation</strong>: every call to <code>/auth/refresh</code> deletes the old row and issues a brand-new refresh token + access token. A stolen/replayed old token simply fails once the legitimate client rotates it.</li>
-      <li><strong>Capped at 5 per user</strong>: on issuance, if the user already has ≥5 refresh tokens, the oldest are deleted so at most 5 (roughly — the newest ones) remain.</li>
+      <li><strong>One per device</strong>: every sign-in registers the device from the <code>X-Device-Id</code>, <code>X-Device-Name</code>, <code>X-Platform</code> and <code>X-App-Version</code> headers (<code>devices</code> table) and replaces that device's previous refresh token. Users see and remove devices in Privacy &amp; security (<code>GET/DELETE /devices</code>). Refreshing on a removed device fails with <code>DEVICE_REVOKED</code>, and the app then forgets its private-space key and signs out.</li>
       <li>Logout deletes the specific token row. Account deletion/cancel-pending wipes <em>all</em> refresh tokens for that user.</li>
     </ul>
   </div>
