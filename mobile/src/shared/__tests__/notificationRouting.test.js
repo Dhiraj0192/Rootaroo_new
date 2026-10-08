@@ -42,6 +42,16 @@ describe('routeForNotification', () => {
     expect(routeForNotification(data)).toEqual(expected);
   });
 
+  it.each([
+    ['task_due_tomorrow', tab('TasksStack', 'TaskList', undefined)],
+    ['no_checkin_today', tab('MoreStack', 'CheckIn', undefined)],
+    ['new_member_first_post', { name: 'MainTabs', params: { screen: 'FeedStack' } }],
+    ['inactive_3d', { name: 'MainTabs', params: { screen: 'KnowsDashboard' } }],
+    ['something_else', { name: 'MainTabs', params: { screen: 'KnowsDashboard' } }],
+  ])('a campaign push for %s opens a useful screen, not the notification list', (rule, expected) => {
+    expect(routeForNotification({ type: 'campaign', rule })).toEqual(expected);
+  });
+
   it('falls back to the notification list for unknown types or missing ids', () => {
     expect(routeForNotification({ type: 'something_new' })).toEqual({ name: 'Notifications' });
     expect(routeForNotification({ type: 'chat' })).toEqual({ name: 'Notifications' });

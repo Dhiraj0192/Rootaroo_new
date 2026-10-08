@@ -22,6 +22,15 @@ const ROUTES = {
 
 const FALLBACK = { name: 'Notifications' };
 
+// Campaign pushes are not kept in the notification list, so each rule opens
+// the screen it nudges towards; anything else lands on Home.
+const CAMPAIGN_ROUTES = {
+  task_due_tomorrow: { name: 'MainTabs', params: { screen: 'TasksStack', params: { screen: 'TaskList', params: undefined } } },
+  no_checkin_today: { name: 'MainTabs', params: { screen: 'MoreStack', params: { screen: 'CheckIn', params: undefined } } },
+  new_member_first_post: { name: 'MainTabs', params: { screen: 'FeedStack' } },
+};
+const HOME = { name: 'MainTabs', params: { screen: 'KnowsDashboard' } };
+
 const handledIds = new Set();
 let pendingRoute = null;
 
@@ -33,6 +42,7 @@ function resolveRoute(type) {
 
 export function routeForNotification(data) {
   if (!data) return FALLBACK;
+  if (data.type === 'campaign') return CAMPAIGN_ROUTES[data.rule] || HOME;
   const match = resolveRoute(data.type);
   if (!match) return FALLBACK;
   const [tab, screen, idKey] = match;
