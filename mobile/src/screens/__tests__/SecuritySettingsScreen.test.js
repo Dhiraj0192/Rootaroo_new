@@ -6,6 +6,7 @@ jest.mock('expo-local-authentication', () => ({
   isEnrolledAsync: jest.fn(async () => true),
   authenticateAsync: jest.fn(async () => ({ success: true })),
 }));
+jest.mock('../../shared/api/devices', () => ({ devicesApi: { list: jest.fn(async () => []), revoke: jest.fn() } }));
 
 const { useJournalLockStore } = require('../../shared/store/journalLockStore');
 const SecuritySettingsScreen = require('../SecuritySettingsScreen').default;

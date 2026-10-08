@@ -1,9 +1,20 @@
-import React, { useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Switch, StatusBar } from 'react-native';
+import React, { useCallback, useEffect, useState } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Switch, StatusBar, Alert } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { formatDistanceToNow } from 'date-fns';
 import { useJournalLockStore } from '../shared/store/journalLockStore';
+import { devicesApi } from '../shared/api/devices';
 import { colors, fonts, radius, withAlpha } from '../shared/theme';
 import { useTabBarDockHeight } from '../shared/hooks/useTabBarDockHeight';
+
+const PLATFORM_LABELS = { ios: 'iPhone', android: 'Android' };
+const ACTIVE_NOW_MS = 5 * 60 * 1000;
+
+function deviceActivity(lastSeenAt) {
+  const seen = new Date(lastSeenAt);
+  if (Date.now() - seen.getTime() < ACTIVE_NOW_MS) return 'Active now';
+  return `Active ${formatDistanceToNow(seen, { addSuffix: true })}`;
+}
 
 export default function SecuritySettingsScreen({ navigation }) {
   const insets = useSafeAreaInsets();
@@ -12,10 +23,45 @@ export default function SecuritySettingsScreen({ navigation }) {
   const available = useJournalLockStore((s) => s.available);
   const load = useJournalLockStore((s) => s.load);
   const setEnabled = useJournalLockStore((s) => s.setEnabled);
+  const [devices, setDevices] = useState([]);
+  const [devicesError, setDevicesError] = useState(false);
 
   useEffect(() => {
     if (enabled === null) load();
   }, [enabled, load]);
+
+  const loadDevices = useCallback(() => {
+    setDevicesError(false);
+    return devicesApi.list()
+      .then(setDevices)
+      .catch(() => setDevicesError(true));
+  }, []);
+
+  useEffect(() => {
+    loadDevices();
+  }, [loadDevices]);
+
+  const removeDevice = (device) => {
+    Alert.alert(
+      `Remove ${device.name}?`,
+      'It will be signed out and stop getting notifications.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await devicesApi.revoke(device.id);
+            } catch {
+              Alert.alert("Couldn't remove that device. Try again.");
+            }
+            loadDevices();
+          },
+        },
+      ],
+    );
+  };
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
@@ -56,6 +102,31 @@ export default function SecuritySettingsScreen({ navigation }) {
           {!available && (
             <Text style={styles.hint}>Set a screen lock on this device to use journal lock.</Text>
           )}
+        </View>
+        <Text style={styles.sectionTitle}>Signed-in devices</Text>
+        <View style={styles.card}>
+          {devicesError && <Text style={styles.hint}>Couldn't load your devices.</Text>}
+          {devices.map((d) => (
+            <View key={d.id} style={styles.row}>
+              <View style={styles.rowText}>
+                <Text style={styles.rowLabel}>{d.name}</Text>
+                <Text style={styles.rowSub}>
+                  {`${PLATFORM_LABELS[d.platform] ?? d.platform} · ${deviceActivity(d.lastSeenAt)}`}
+                </Text>
+                {d.current && <Text style={styles.currentTag}>This device</Text>}
+              </View>
+              {!d.current && (
+                <TouchableOpacity
+                  style={styles.removeBtn}
+                  onPress={() => removeDevice(d)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Remove ${d.name}`}
+                >
+                  <Text style={styles.removeText}>Remove</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          ))}
         </View>
       </ScrollView>
     </View>
@@ -107,4 +178,16 @@ const styles = StyleSheet.create({
   rowLabel: { fontSize: 16, fontFamily: fonts.bodySemiBold, color: colors.ink },
   rowSub: { marginTop: 2, fontSize: 13, fontFamily: fonts.body, color: colors.textMuted },
   hint: { fontSize: 13, fontFamily: fonts.body, color: colors.textMuted },
+  sectionTitle: {
+    marginTop: 22,
+    marginBottom: -4,
+    fontSize: 13,
+    fontFamily: fonts.bodySemiBold,
+    color: colors.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  },
+  currentTag: { marginTop: 4, fontSize: 12, fontFamily: fonts.bodySemiBold, color: colors.gold },
+  removeBtn: { paddingHorizontal: 10, paddingVertical: 6 },
+  removeText: { fontSize: 14, fontFamily: fonts.bodySemiBold, color: colors.danger },
 });

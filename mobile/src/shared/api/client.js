@@ -2,6 +2,7 @@ import axios from 'axios';
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 import { useAuthStore } from '../store/authStore';
+import { deviceHeaders } from '../device/deviceInfo';
 
 // Expo's dev client already knows a reachable host for this machine — it just
 // downloaded the JS bundle from it. Deriving the API host from it means a
@@ -48,7 +49,10 @@ const apiClient = axios.create({
  * first-screen request 401 and retry.
  */
 export async function requestTokenRefresh(refreshToken, timeout = 15000) {
-  const { data } = await axios.post(`${BASE_URL}/auth/refresh`, { refreshToken }, { timeout });
+  const { data } = await axios.post(`${BASE_URL}/auth/refresh`, { refreshToken }, {
+    timeout,
+    headers: deviceHeaders(),
+  });
   return data.data;
 }
 
@@ -106,7 +110,7 @@ apiClient.interceptors.request.use(
       } catch {
         /* Intl unavailable — server falls back to the household's stored zone */
       }
-      Object.entries(platformHeaders()).forEach(([k, v]) => { config.headers[k] = v; });
+      Object.entries({ ...platformHeaders(), ...deviceHeaders() }).forEach(([k, v]) => { config.headers[k] = v; });
     }
     return config;
   },

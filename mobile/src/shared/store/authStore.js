@@ -9,6 +9,7 @@ import { warmScreenCache, clearScreenCache, clearSharedRequests } from '../cache
 import { prefetchHome } from '../cache/homePrefetch';
 import { useFeedStore } from './feedStore';
 import { unregisterPushNotificationsAsync } from '../pushNotifications';
+import { loadDeviceId } from '../device/deviceInfo';
 
 // Access tokens live 15 minutes, so almost every cold start finds an
 // expired one. Refreshing during the splash beats letting the first
@@ -131,6 +132,7 @@ export const useAuthStore = create((set, get) => ({
 
   restoreSession: async () => {
     try {
+      await loadDeviceId();
       const [{ accessToken, refreshToken, user, householdId }, progress] = await Promise.all([
         loadTokens(),
         loadSignupProgress(),
