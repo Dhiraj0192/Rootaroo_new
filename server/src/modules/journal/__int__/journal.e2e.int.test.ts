@@ -1,5 +1,5 @@
 import request from 'supertest';
-import { randomBytes } from 'crypto';
+import { randomBytes, randomUUID } from 'crypto';
 import { QueryTypes } from 'sequelize';
 import app from '../../../app';
 import sequelize from '../../../config/database';
@@ -12,7 +12,7 @@ beforeEach(() => resetDb());
 afterAll(() => closeIntResources());
 
 const b64 = (n: number) => randomBytes(n).toString('base64');
-const entryBody = (extra: Record<string, unknown> = {}) => ({ ciphertext: b64(300), sealedKey: b64(92), format: 1, ...extra });
+const entryBody = (extra: Record<string, unknown> = {}) => ({ id: randomUUID(), ciphertext: b64(300), sealedKey: b64(92), format: 1, ...extra });
 
 describe('encrypted journal (real database)', () => {
   it('the table no longer has readable content columns', async () => {
@@ -76,5 +76,18 @@ describe('encrypted journal (real database)', () => {
     expect(upd.body.data.ciphertext).toBe(next);
     expect((await request(app).delete(`/api/v1/journal/${id}`).set(authHeaderFor(admin))).status).toBeLessThan(300);
     expect((await request(app).get(`/api/v1/journal/${id}`).set(authHeaderFor(admin))).status).toBe(404);
+    // Hard delete: the row (and its ciphertext) is gone, not just hidden.
+    const rows = await sequelize.query('SELECT id FROM journal_entries WHERE id = ?', { replacements: [id], type: QueryTypes.SELECT });
+    expect(rows).toHaveLength(0);
+  });
+
+  it('the phone picks the entry id: it must be a v4 uuid and cannot be reused', async () => {
+    const { admin } = await createHouseholdWithAdmin({ cohort: 'test' });
+    const body = entryBody();
+    expect((await request(app).post('/api/v1/journal').set(authHeaderFor(admin)).send(body)).status).toBe(201);
+    expect((await request(app).post('/api/v1/journal').set(authHeaderFor(admin)).send(body)).status).toBe(409);
+    const noId = { ciphertext: body.ciphertext, sealedKey: body.sealedKey, format: 1 };
+    expect((await request(app).post('/api/v1/journal').set(authHeaderFor(admin)).send(noId)).status).toBe(400);
+    expect((await request(app).post('/api/v1/journal').set(authHeaderFor(admin)).send({ ...body, id: 'not-a-uuid' })).status).toBe(400);
   });
 });

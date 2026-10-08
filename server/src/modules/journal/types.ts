@@ -14,6 +14,8 @@ interface EncryptedBody {
 }
 
 export interface CreateEntryBody extends EncryptedBody {
+  /** v4 uuid chosen by the phone; the ciphertext is bound to it. */
+  id: string;
   media?: EntryMediaInput[];
 }
 

@@ -44,7 +44,7 @@ router.use(requireEntitlement);
  *     JournalEntryInput:
  *       type: object
  *       additionalProperties: false
- *       required: [ciphertext, sealedKey, format]
+ *       required: [id, ciphertext, sealedKey, format]
  *       properties:
  *         ciphertext: { type: string, description: "Base64, at most 96 KB decoded" }
  *         sealedKey: { type: string, description: "Base64, at most 256 bytes" }
@@ -69,7 +69,7 @@ router.use(requireEntitlement);
  * /journal/media/upload:
  *   post:
  *     tags: [Journal]
- *     summary: Upload up to 10 encrypted photo blobs (the phone encrypts photo and thumbnail first)
+ *     summary: Upload up to 5 encrypted photo blobs per request (the phone encrypts photo and thumbnail first)
  *     security: [{ bearerAuth: [] }]
  *     requestBody:
  *       required: true
@@ -80,11 +80,12 @@ router.use(requireEntitlement);
  *             properties:
  *               files:
  *                 type: array
- *                 maxItems: 10
- *                 items: { type: string, format: binary, description: "application/octet-stream ciphertext, 15 MB max each" }
+ *                 maxItems: 5
+ *                 items: { type: string, format: binary, description: "application/octet-stream ciphertext, 10 MB max each; 2 GB per user in total" }
  *     responses:
  *       201: { description: "[{ fileName (the storage key), size }]" }
  *       400: { description: No files, or a file that is not application/octet-stream }
+ *       413: { description: Journal photo storage limit reached }
  */
 router.post('/media/upload', uploadJournalBlobs.array('files', 10), ctrl.uploadMedia);
 

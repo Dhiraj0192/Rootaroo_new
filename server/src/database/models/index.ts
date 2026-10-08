@@ -49,6 +49,7 @@ import Conversation from './Conversation';
 import ConversationParticipant from './ConversationParticipant';
 import JournalEntry from './JournalEntry';
 import JournalMedia from './JournalMedia';
+import JournalUpload from './JournalUpload';
 import BillingCustomer from './BillingCustomer';
 import BillingSubscription from './BillingSubscription';
 import BillingCheckoutSession from './BillingCheckoutSession';
@@ -109,6 +110,7 @@ const models = {
   CampaignSetting,
   JournalEntry,
   JournalMedia,
+  JournalUpload,
   BillingCustomer,
   BillingSubscription,
   BillingCheckoutSession,
@@ -387,6 +389,7 @@ export {
   CampaignSetting,
   JournalEntry,
   JournalMedia,
+  JournalUpload,
   BillingCustomer,
   BillingSubscription,
   BillingCheckoutSession,

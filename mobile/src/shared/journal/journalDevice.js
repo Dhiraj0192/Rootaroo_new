@@ -3,6 +3,7 @@
 import { File, Paths } from 'expo-file-system';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { journalApi } from '../api/journal';
+import { deleteTempFiles as deleteTempFilesIn } from './tempFiles';
 
 const THUMBNAIL_WIDTH = 480;
 
@@ -46,3 +47,7 @@ export async function uploadBlobs(blobs) {
     }
   }
 }
+
+/** Removes plain picker/camera copies from the app cache (see tempFiles.js). */
+export const deleteTempFiles = (uris) =>
+  deleteTempFilesIn(uris, { cacheDir: Paths.cache.uri, remove: async (uri) => { new File(uri).delete(); } });

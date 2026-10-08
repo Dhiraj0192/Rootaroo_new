@@ -9,8 +9,8 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   StatusBar,
-  Image,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
@@ -41,27 +41,62 @@ const ATTACH_ACTIONS = [
  * Compose or edit one entry.
  *
  * Route params:
- *   `entry`   — the full entry object when editing (passed straight from the
- *               detail screen, so opening the editor costs no extra fetch)
+ *   `entryId` — the entry to edit. Only the id travels in navigation params:
+ *               the decrypted text and the entry key are loaded from the repo
+ *               here, so they never sit in the navigation state.
  *   `prompt`  — the day's writing prompt, when arrived at from the prompt card
  */
 export default function JournalEntryEditorScreen({ navigation, route }) {
   const insets = useSafeAreaInsets();
-  const existing = route.params?.entry || null;
+  const entryId = route.params?.entryId || null;
   const prompt = route.params?.prompt || null;
-  const isEditing = !!existing;
+  const isEditing = !!entryId;
 
-  const [content, setContent] = useState(existing?.text || '');
-  const [mood, setMood] = useState(existing?.mood || null);
-  const [tags, setTags] = useState(existing?.tags || []);
+  const [existing, setExisting] = useState(null);
+  const [loadState, setLoadState] = useState(entryId ? 'loading' : 'ready');
+  const [content, setContent] = useState('');
+  const [mood, setMood] = useState(null);
+  const [tags, setTags] = useState([]);
   const [tagDraft, setTagDraft] = useState(null);
   const [saving, setSaving] = useState(false);
   // Existing attachments are decrypted for preview; newly picked ones stay local
   // until Save, which encrypts and uploads them.
-  const [media, setMedia] = useState(() =>
-    (existing?.media || []).map((m) => ({ key: m.id, id: m.id, previewUri: null })),
-  );
+  const [media, setMedia] = useState([]);
   const tagInputRef = useRef(null);
+
+  const loadExisting = useCallback(async () => {
+    setLoadState('loading');
+    try {
+      const entry = await getJournalRepo().loadEntry(entryId);
+      if (entry.unreadable) {
+        setLoadState('failed');
+        return;
+      }
+      setExisting(entry);
+      setContent(entry.text || '');
+      setMood(entry.mood || null);
+      setTags(entry.tags || []);
+      setMedia((entry.media || []).map((m) => ({ key: m.id, id: m.id, previewUri: null })));
+      setLoadState('ready');
+    } catch {
+      setLoadState('failed');
+    }
+  }, [entryId]);
+
+  useEffect(() => {
+    if (entryId) loadExisting();
+  }, [entryId, loadExisting]);
+
+  // Picked photos are copies in the app cache, in plain form. Whatever is still
+  // there when this screen goes away (saved, discarded or backed out of) is deleted.
+  const draftUrisRef = useRef([]);
+  draftUrisRef.current = media.filter((m) => !m.id).map((m) => m.uri);
+  useEffect(
+    () => () => {
+      getJournalRepo().discardPhotos(draftUrisRef.current);
+    },
+    [],
+  );
 
   // The header date names the entry's own day, not today — editing last
   // Tuesday's entry must not relabel it "Today".
@@ -83,7 +118,7 @@ export default function JournalEntryEditorScreen({ navigation, route }) {
     let live = true;
     existing.media.forEach((m) => {
       getJournalRepo()
-        .loadPhoto(m, existing.entryKey)
+        .loadPhoto(m, existing)
         .then((uri) => live && setMedia((cur) => cur.map((x) => (x.id === m.id ? { ...x, previewUri: uri } : x))))
         .catch(() => live && setMedia((cur) => cur.map((x) => (x.id === m.id ? { ...x, failedPreview: true } : x))));
     });
@@ -125,7 +160,11 @@ export default function JournalEntryEditorScreen({ navigation, route }) {
   }, []);
 
   const removeMedia = useCallback((key) => {
-    setMedia((current) => current.filter((m) => m.key !== key));
+    setMedia((current) => {
+      const gone = current.find((m) => m.key === key);
+      if (gone && !gone.id) getJournalRepo().discardPhotos([gone.uri]);
+      return current.filter((m) => m.key !== key);
+    });
   }, []);
 
   const addAssets = useCallback((assets) => {
@@ -179,7 +218,7 @@ export default function JournalEntryEditorScreen({ navigation, route }) {
       };
       const repo = getJournalRepo();
       if (isEditing) {
-        await repo.updateEntry(existing.id, {
+        await repo.updateEntry(entryId, {
           ...input,
           keepMedia: media.filter((m) => m.id).map((m) => m.id),
           entryKey: existing.entryKey,
@@ -217,6 +256,27 @@ export default function JournalEntryEditorScreen({ navigation, route }) {
       { text: 'Discard', style: 'destructive', onPress: () => navigation.goBack() },
     ]);
   }, [isEditing, content, mood, tags, withPendingTag, media, existing, navigation]);
+
+  if (loadState !== 'ready') {
+    return (
+      <View style={[styles.screen, styles.flex, { paddingTop: insets.top, alignItems: 'center', justifyContent: 'center' }]}>
+        <StatusBar barStyle="light-content" backgroundColor={colors.canvas} />
+        {loadState === 'loading' ? (
+          <ActivityIndicator color={colors.gold} />
+        ) : (
+          <>
+            <Text style={styles.cancel}>We couldn't open this entry.</Text>
+            <TouchableOpacity onPress={loadExisting} hitSlop={12} activeOpacity={0.7}>
+              <Text style={styles.save}>Try again</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={12} activeOpacity={0.7}>
+              <Text style={styles.cancel}>Go back</Text>
+            </TouchableOpacity>
+          </>
+        )}
+      </View>
+    );
+  }
 
   return (
     <KeyboardAvoidingView
@@ -295,7 +355,7 @@ export default function JournalEntryEditorScreen({ navigation, route }) {
             {media.map((item) => (
               <View key={item.key} style={styles.mediaThumb}>
                 {item.previewUri ? (
-                  <Image source={{ uri: item.previewUri }} style={styles.mediaImage} />
+                  <Image source={{ uri: item.previewUri }} style={styles.mediaImage} cachePolicy="none" />
                 ) : (
                   <View style={styles.mediaOverlay}>
                     {item.failedPreview ? (

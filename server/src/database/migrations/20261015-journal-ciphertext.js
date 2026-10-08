@@ -8,14 +8,20 @@ const { addColumnIfMissing } = require('../migrationHelpers');
  * Decision D1 (docs/TRACKER.md): pre-launch journal data is test data, so every entry and
  * attachment row is deleted here rather than converted (the server cannot encrypt it for
  * the phone). S3 objects under journal/ are not touched by a migration; clear them by hand.
- * Written to be safe to re-run after a partial failure: each step checks before it acts.
+ * Written to be safe to re-run after a partial failure: each step checks before it acts. In
+ * particular the DELETEs only run while a table still has its old columns, so running this
+ * again (or running down() on the old schema) can never delete encrypted rows.
  */
 const has = async (queryInterface, table, column) => Boolean((await queryInterface.describeTable(table))[column]);
 
 module.exports = {
   async up(queryInterface, Sequelize) {
-    await queryInterface.sequelize.query('DELETE FROM journal_media');
-    await queryInterface.sequelize.query('DELETE FROM journal_entries');
+    if (await has(queryInterface, 'journal_media', 'media_url')) {
+      await queryInterface.sequelize.query('DELETE FROM journal_media');
+    }
+    if (await has(queryInterface, 'journal_entries', 'content')) {
+      await queryInterface.sequelize.query('DELETE FROM journal_entries');
+    }
 
     for (const column of ['content', 'mood', 'tags']) {
       if (await has(queryInterface, 'journal_entries', column)) await queryInterface.removeColumn('journal_entries', column);
@@ -38,8 +44,13 @@ module.exports = {
   },
 
   async down(queryInterface, Sequelize) {
-    await queryInterface.sequelize.query('DELETE FROM journal_media');
-    await queryInterface.sequelize.query('DELETE FROM journal_entries');
+    // Rows written in the new format cannot be converted back; only clear them while they exist.
+    if (await has(queryInterface, 'journal_media', 'blob_key')) {
+      await queryInterface.sequelize.query('DELETE FROM journal_media');
+    }
+    if (await has(queryInterface, 'journal_entries', 'ciphertext')) {
+      await queryInterface.sequelize.query('DELETE FROM journal_entries');
+    }
 
     for (const column of ['ciphertext', 'sealed_key', 'format']) {
       if (await has(queryInterface, 'journal_entries', column)) await queryInterface.removeColumn('journal_entries', column);

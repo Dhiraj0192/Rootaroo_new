@@ -59,10 +59,14 @@ export const useJournalLockStore = create((set, get) => ({
     } else if (nextState === 'active') {
       if (enabled && backgroundedAt !== null && now - backgroundedAt >= JOURNAL_LOCK_GRACE_MS) {
         set({ locked: true });
+        require('../journal/journalRepo').clearJournalSecrets();
       }
       set({ backgroundedAt: null });
     }
   },
 
-  reset: () => set({ ...initial }),
+  reset: () => {
+    set({ ...initial });
+    try { require('../journal/journalRepo').clearJournalSecrets(); } catch { /* not loaded yet */ }
+  },
 }));
