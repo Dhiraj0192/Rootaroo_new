@@ -8,7 +8,7 @@ export interface Candidate {
   userId: string;
   rule: CampaignRule;
   timezone: string;
-  vars: Record<string, string>;
+  vars: Record<string, string | undefined>;
 }
 
 export interface RecentSend {

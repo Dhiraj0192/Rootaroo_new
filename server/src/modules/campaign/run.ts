@@ -9,6 +9,7 @@ import { isEntitledBatch } from '../billing/entitlement';
 import { sendToUser } from '../notification/service';
 import logger from '../../shared/utils/logger';
 import { pickLine, type CampaignRule } from './copy';
+import { enabledRules } from './settings';
 import { selectSends, type Candidate, type RecentSend } from './select';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -17,6 +18,7 @@ export interface CampaignDeps {
   gatherCandidates(now: Date): Promise<Candidate[]>;
   recentSends(since: Date): Promise<RecentSend[]>;
   tipsOff(userIds: string[]): Promise<Set<string>>;
+  enabledRules(): Promise<Set<CampaignRule>>;
   lastLine(userId: string, rule: CampaignRule): Promise<string | null>;
   send(userId: string, rule: CampaignRule, line: string): Promise<void>;
   record(entry: { userId: string; rule: CampaignRule; line: string; sentAt: Date }): Promise<void>;
@@ -24,7 +26,10 @@ export interface CampaignDeps {
 
 /** Returns how many pushes went out. A failed send is logged and skipped, so it isn't recorded against the cap. */
 export async function runCampaigns(now: Date, deps: CampaignDeps): Promise<number> {
-  const candidates = await deps.gatherCandidates(now);
+  const on = await deps.enabledRules();
+  if (on.size === 0) return 0;
+
+  const candidates = (await deps.gatherCandidates(now)).filter((c) => on.has(c.rule));
   if (candidates.length === 0) return 0;
 
   const recent = await deps.recentSends(new Date(now.getTime() - 7 * DAY_MS));
@@ -47,6 +52,7 @@ export async function runCampaigns(now: Date, deps: CampaignDeps): Promise<numbe
 export function defaultCampaignDeps(): CampaignDeps {
   return {
     gatherCandidates,
+    enabledRules,
     async recentSends(since) {
       const rows = await CampaignSend.findAll({ where: { sentAt: { [Op.gte]: since } } });
       return rows.map((r) => ({ userId: r.userId, rule: r.rule, sentAt: r.sentAt }));

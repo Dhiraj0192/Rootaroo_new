@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { formatInTimeZone } from 'date-fns-tz';
-import { setupAssociations, Device, HouseholdMember, Task, TaskAssignee, CampaignSend, NotificationPreference } from '../../../database/models';
+import { setupAssociations, Device, HouseholdMember, Task, TaskAssignee, CampaignSend, NotificationPreference, CampaignSetting } from '../../../database/models';
+import { CAMPAIGN_SETTING_KEYS } from '../settings';
 import { resetDb, closeIntResources } from '../../../test/int/db';
 import { createHouseholdWithAdmin, addMember } from '../../../test/factories';
 import { defaultCampaignDeps, runCampaigns } from '../run';
@@ -19,6 +20,8 @@ async function device(userId: string, lastSeenAt: Date) {
 }
 
 async function seed() {
+  // Campaigns are off by default; these tests exercise them switched on.
+  await CampaignSetting.bulkCreate(CAMPAIGN_SETTING_KEYS.map((key) => ({ key, enabled: true, updatedBy: 'test' })));
   const { household, admin } = await createHouseholdWithAdmin({ name: 'The Raos', cohort: 'test' });
   await household.update({ timezone: 'UTC' });
   await device(admin.id, ago(60_000));
@@ -66,5 +69,11 @@ describe('campaign candidates (real queries)', () => {
     await NotificationPreference.create({ id: uuidv4(), userId: idle.id, tips: false });
     await runCampaigns(NOW, defaultCampaignDeps());
     expect(await CampaignSend.count({ where: { userId: idle.id } })).toBe(0);
+  });
+
+  it('sends nothing while campaigns are switched off', async () => {
+    await seed();
+    await CampaignSetting.update({ enabled: false }, { where: { key: 'all' } });
+    expect(await runCampaigns(NOW, defaultCampaignDeps())).toBe(0);
   });
 });

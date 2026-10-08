@@ -40,6 +40,7 @@ In order, after the checklist in [`docs/billing/runbooks.md`](billing/runbooks.m
 | G5 | Set `BILLING_ENABLED=true` in production and restart | dev |
 | G6 | Delete pre-launch test households, or move the ones testers keep to cohort `test` | dev |
 | G7 | Remove the `BILLING_ENABLED` switch from the code | dev |
+| G8 | Review the campaign copy and switch campaigns on (`PUT /api/v1/admin/campaigns/...`) | owner |
 
 ## Waiting on a decision
 
