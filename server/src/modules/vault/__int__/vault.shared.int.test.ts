@@ -3,7 +3,7 @@ import { randomBytes } from 'crypto';
 import { QueryTypes } from 'sequelize';
 import app from '../../../app';
 import sequelize from '../../../config/database';
-import { setupAssociations, AccountKey, VaultDocumentKey, HouseholdMember } from '../../../database/models';
+import { setupAssociations, AccountKey, VaultDocumentKey } from '../../../database/models';
 import { resetDb, closeIntResources } from '../../../test/int/db';
 import { createHouseholdWithAdmin, addMember, authHeaderFor } from '../../../test/factories';
 import type User from '../../../database/models/User';
@@ -152,8 +152,6 @@ describe('shared vault (real database)', () => {
     await removeMember(admin.id, household.id, leaver.id);
     // A key that slipped in around the removal (the race this guards against).
     await VaultDocumentKey.create({ documentId: id, userId: leaver.id, wrappedKey: b64(92) });
-    // Removal is a soft delete and its row blocks the unique (household, user) pair; clear it so the rejoin can run.
-    await HouseholdMember.destroy({ where: { userId: leaver.id }, force: true });
     await joinViaCode(leaver.id, { code: household.inviteCode });
     expect(await VaultDocumentKey.count({ where: { documentId: id, userId: leaver.id } })).toBe(0);
 

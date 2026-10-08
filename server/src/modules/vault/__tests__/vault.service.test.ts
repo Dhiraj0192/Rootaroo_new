@@ -8,7 +8,6 @@ import {
   renameDocument,
   changeScope,
   deleteDocument,
-  hardDeleteDocument,
   getStorageUsage,
 } from '../service';
 import { NotFoundError, ForbiddenError, ValidationError, ConflictError } from '../../../shared/utils/errors';
@@ -493,20 +492,6 @@ describe('Vault Service', () => {
     it('404s for a document nobody can reach', async () => {
       (VaultDocument.findOne as jest.Mock).mockResolvedValue(null);
       await expect(deleteDocument(documentId, userId)).rejects.toThrow(NotFoundError);
-    });
-  });
-
-  describe('hardDeleteDocument', () => {
-    it('lets an admin remove a household file for good', async () => {
-      const doc = mockDoc();
-      (VaultDocument.findOne as jest.Mock).mockResolvedValue(doc);
-      await hardDeleteDocument(documentId, adminUserId);
-      expect(deleteObject).toHaveBeenCalled();
-      expect(doc.destroy).toHaveBeenCalledWith({ force: true, transaction: expect.anything() });
-    });
-
-    it('refuses non-admins', async () => {
-      await expect(hardDeleteDocument(documentId, userId)).rejects.toThrow(ForbiddenError);
     });
   });
 

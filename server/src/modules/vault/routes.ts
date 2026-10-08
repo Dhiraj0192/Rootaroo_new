@@ -232,18 +232,4 @@ router.post('/:id/keys', validate(grantKeysSchema), ctrl.grantKeysCtrl);
  */
 router.delete('/:id', validate(documentIdParamSchema), ctrl.deleteDocumentCtrl);
 
-/**
- * @swagger
- * /vault/{id}/hard:
- *   delete:
- *     tags: [Vault]
- *     summary: Permanently delete a household file (admin only, FR-130)
- *     security: [{ bearerAuth: [] }]
- *     parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
- *     responses:
- *       200: { description: Deleted }
- *       403: { description: Not an admin }
- */
-router.delete('/:id/hard', validate(documentIdParamSchema), ctrl.hardDeleteDocumentCtrl);
-
 export default router;

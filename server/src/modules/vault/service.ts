@@ -10,7 +10,7 @@ import {
 import { NotFoundError, ForbiddenError, ValidationError, ConflictError } from '../../shared/utils/errors';
 import { uploadBuffer, deleteObject, getSignedUrl } from '../../shared/utils/s3';
 import { userUploadFolder } from '../../shared/utils/uploadKeys';
-import { isCurrentHouseholdAdmin, getUserHousehold as getUserHouseholdCore } from '../../shared/utils/household';
+import { getUserHousehold as getUserHouseholdCore } from '../../shared/utils/household';
 import type {
   CreateVaultDocumentBody,
   ChangeScopeBody,
@@ -431,20 +431,4 @@ export async function getStorageUsage(userId: string): Promise<VaultStorageUsage
 
   const usedBytes = documents.reduce((sum, doc) => sum + doc.sizeBytes, 0);
   return { usedBytes, limitBytes: MAX_STORAGE_BYTES, documentCount: documents.length };
-}
-
-// ─── Hard Delete (admin only, FR-130) ───
-
-export async function hardDeleteDocument(documentId: string, userId: string): Promise<void> {
-  const householdId = await getUserHousehold(userId);
-
-  // Permanent delete — never relies on the caller's JWT `role` claim alone (F-06).
-  if (!(await isCurrentHouseholdAdmin(userId, householdId))) {
-    throw new ForbiddenError('Only admins can permanently delete documents');
-  }
-
-  const document = await VaultDocument.findOne({ where: { id: documentId, householdId, scope: 'household' } });
-  if (!document) throw new NotFoundError('Document');
-
-  await purge(document);
 }

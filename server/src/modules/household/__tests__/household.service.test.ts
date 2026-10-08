@@ -207,6 +207,30 @@ describe('Household Service — Invitations', () => {
       expect(notifyHousehold).not.toHaveBeenCalledWith(householdId, 'member_joined', expect.anything(), expect.anything(), expect.anything(), expect.anything());
     });
 
+    it('restores a soft-deleted membership instead of creating a second row', async () => {
+      const row = { deletedAt: new Date(), restore: jest.fn(), update: jest.fn() };
+      (models.HouseholdMember.findOne as jest.Mock)
+        .mockResolvedValueOnce(null)   // not in any household now
+        .mockResolvedValueOnce(row);   // but a removed row exists for this household
+      (models.Invitation.findOne as jest.Mock).mockResolvedValue(fakeInvitation());
+      (models.HouseholdMember.count as jest.Mock).mockResolvedValue(2);
+      (models.HouseholdMember.create as jest.Mock).mockClear();
+
+      await joinViaCode(otherUserId, { code: 'INVITE99' });
+
+      expect(models.HouseholdMember.findOne).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { householdId, userId: otherUserId }, paranoid: false }),
+      );
+      expect(row.restore).toHaveBeenCalledWith(expect.objectContaining({ transaction: expect.anything() }));
+      expect(row.update).toHaveBeenCalledWith(
+        expect.objectContaining({ role: 'member', joinedAt: expect.any(Date) }),
+        expect.objectContaining({ transaction: expect.anything() }),
+      );
+      expect(models.HouseholdMember.create).not.toHaveBeenCalled();
+      expect(assertSeatAvailable).toHaveBeenCalled();
+      expect(onMemberGainedVaultAccess).toHaveBeenCalledWith(otherUserId, householdId, expect.anything());
+    });
+
     it('propagates 402 SEAT_LIMIT and creates no membership', async () => {
       (models.HouseholdMember.create as jest.Mock).mockClear();
       arrangeValidInvite();

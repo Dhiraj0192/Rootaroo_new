@@ -138,19 +138,6 @@ export async function deleteDocumentCtrl(
   }
 }
 
-export async function hardDeleteDocumentCtrl(
-  req: Request,
-  res: Response,
-  next: NextFunction
-): Promise<void> {
-  try {
-    await vaultService.hardDeleteDocument(req.params.id, getUserId(req));
-    res.json({ success: true });
-  } catch (error) {
-    next(error);
-  }
-}
-
 export async function getStorageUsageCtrl(
   req: Request,
   res: Response,

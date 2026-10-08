@@ -220,12 +220,16 @@ export async function joinViaCode(userId: string, body: JoinHouseholdBody): Prom
         household = h;
       }
 
-      // Check that the user isn't already a member (double-check)
-      const alreadyMember = await HouseholdMember.findOne({
+      // Check that the user isn't already a member (double-check). paranoid:
+      // false also finds a row soft-deleted by an earlier removal/leave — it
+      // still occupies the unique (household_id, user_id) pair, so it is
+      // restored below rather than a second row being created.
+      const priorRow = await HouseholdMember.findOne({
         where: { householdId: household.id, userId },
+        paranoid: false,
         transaction,
       });
-      if (alreadyMember) {
+      if (priorRow && !priorRow.deletedAt) {
         throw new ConflictError('You are already a member of this household.');
       }
 
@@ -234,13 +238,18 @@ export async function joinViaCode(userId: string, body: JoinHouseholdBody): Prom
       await assertSeatAvailable(household.id, transaction);
 
       // Join
-      await HouseholdMember.create({
-        id: uuidv4(),
-        householdId: household.id,
-        userId,
-        role: 'member',
-        joinedAt: new Date(),
-      }, { transaction });
+      if (priorRow) {
+        await priorRow.restore({ transaction });
+        await priorRow.update({ role: 'member', joinedAt: new Date() }, { transaction });
+      } else {
+        await HouseholdMember.create({
+          id: uuidv4(),
+          householdId: household.id,
+          userId,
+          role: 'member',
+          joinedAt: new Date(),
+        }, { transaction });
+      }
 
       await User.update({ role: 'member' }, { where: { id: userId }, transaction });
       await onMemberGainedVaultAccess(userId, household.id, transaction);
