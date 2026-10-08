@@ -23,7 +23,7 @@ Rootaroo cannot read the journal or vault, reset the backup password, or recover
 
 | Key | Kind | Where it lives | Used for |
 |---|---|---|---|
-| Account key pair `(ak_sk, ak_pk)` | X25519 | `ak_sk` only on the key-holding phone (SecureStore, biometric); `ak_pk` on the server (`account_keys`) | Receiving sealed item keys: own journal entries and vault files (W11, W12), household vault files from other adults (W12) |
+| Account key pair `(ak_sk, ak_pk)` | X25519 | `ak_sk` only on the key-holding phone (SecureStore, biometric); `ak_pk` on the server (`account_keys`) | Receiving sealed item keys: own journal entries and vault files (W11, W12), household vault files from other household members (W12) |
 | Item key | AES-256-GCM, random per item | Never stored in the clear; sealed to one or more `ak_pk` | Encrypting one journal entry, photo or vault file |
 | Transfer ephemeral keys | X25519, per transfer | Memory only | One QR transfer |
 | Backup keys `auth_key`, `enc_key` | 32 bytes each, from Argon2id(password) | Memory only | Proving the password to the server; decrypting the backup |
