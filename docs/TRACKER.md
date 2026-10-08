@@ -24,6 +24,8 @@ One place for work that is planned, waiting on someone, finished or dropped. Upd
 | T12 | Sign every API request with the device identity key | server, mobile | dev | Makes a stolen session token useless on another device. After W9. |
 | T13 | External cryptography review | security | owner | Before any public "end-to-end encrypted" claim. Covers W10–W12. |
 | T14 | Re-encrypt household vault files when a member leaves | server, mobile | dev | Optional hardening after W12. |
+| T15 | "Streak about to break" campaign rule | server | dev | Left out of the first campaign engine; needs the dashboard streak logic shared with the job. |
+| T16 | Run the push device checklist on iOS and Android | mobile, release | owner | [`docs/push/device-test-checklist.md`](push/device-test-checklist.md). Needs a new development build (journal lock adds a native module). |
 
 ## Go-live steps
 
@@ -44,6 +46,7 @@ In order, after the checklist in [`docs/billing/runbooks.md`](billing/runbooks.m
 | ID | Question | Who decides | Notes |
 |---|---|---|---|
 | D2 | How often the "come back" email (T3) goes out | owner | "Every few months" agreed; proposal: every 3 months. |
+| D6 | Approve the campaign push copy | owner | Draft lines are in `server/src/modules/campaign/copy.ts` (signed-in) and `mobile/src/shared/signedOutNudges.js` (signed-out). Approve or edit before the medium PR merges. |
 
 ## Decisions made
 
@@ -65,6 +68,8 @@ In order, after the checklist in [`docs/billing/runbooks.md`](billing/runbooks.m
 | Back button on the Subscription screen | PR #2 review |
 | `jest` and `jest-expo` moved to dev dependencies | PR #2 review |
 | Checkout locked to USD | PR #2 review |
+| W1 journal lock; W2 push fixes (chat push, live chat delivery, tap routing, badge, receipts, reminder de-dup) | PR #3 |
+| W3 push campaign; W4 service adapters; W9 device registry | Medium PR |
 
 ## Dropped
 
