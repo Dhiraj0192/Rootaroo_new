@@ -4,6 +4,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatDistanceToNow } from 'date-fns';
 import { useJournalLockStore } from '../shared/store/journalLockStore';
 import { devicesApi } from '../shared/api/devices';
+import { usePrivateSpaceStore } from '../shared/store/privateSpaceStore';
+import { fingerprint } from '../shared/crypto/accountKey';
 import { colors, fonts, radius, withAlpha } from '../shared/theme';
 import { useTabBarDockHeight } from '../shared/hooks/useTabBarDockHeight';
 
@@ -16,6 +18,13 @@ function deviceActivity(lastSeenAt) {
   return `Active ${formatDistanceToNow(seen, { addSuffix: true })}`;
 }
 
+function backupSummary(hasBackup, backup) {
+  if (!hasBackup) return 'No backup. Add one so you can recover if you lose this phone.';
+  if (backup?.kind === 'recovery_code') return 'Recovery code';
+  if (backup?.kind === 'password') return 'Backup password';
+  return 'Backed up';
+}
+
 export default function SecuritySettingsScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const dockHeight = useTabBarDockHeight();
@@ -25,6 +34,21 @@ export default function SecuritySettingsScreen({ navigation }) {
   const setEnabled = useJournalLockStore((s) => s.setEnabled);
   const [devices, setDevices] = useState([]);
   const [devicesError, setDevicesError] = useState(false);
+  const space = usePrivateSpaceStore((st) => st.status);
+  const publicKey = usePrivateSpaceStore((st) => st.publicKey);
+  const hasBackup = usePrivateSpaceStore((st) => st.hasBackup);
+  const backup = usePrivateSpaceStore((st) => st.backup);
+  const [fingerprintText, setFingerprintText] = useState('');
+
+  useEffect(() => {
+    const store = usePrivateSpaceStore.getState();
+    store.refresh().then(() => store.loadBackup());
+  }, []);
+
+  useEffect(() => {
+    if (!publicKey) return;
+    fingerprint(publicKey).then(setFingerprintText).catch(() => setFingerprintText(''));
+  }, [publicKey]);
 
   useEffect(() => {
     if (enabled === null) load();
@@ -102,6 +126,56 @@ export default function SecuritySettingsScreen({ navigation }) {
           {!available && (
             <Text style={styles.hint}>Set a screen lock on this device to use journal lock.</Text>
           )}
+        </View>
+        <Text style={styles.sectionTitle}>Private space</Text>
+        <View style={styles.card}>
+          {space === 'here' && (
+            <>
+              <View style={styles.rowText}>
+                <Text style={styles.rowLabel}>This phone holds your private space</Text>
+                {!!fingerprintText && <Text style={styles.rowSub}>{`Key fingerprint ${fingerprintText}`}</Text>}
+              </View>
+              <TouchableOpacity style={styles.row} onPress={() => navigation.navigate('ApproveMove')} accessibilityRole="button" accessibilityLabel="Move to a new phone">
+                <View style={styles.rowText}>
+                  <Text style={styles.rowLabel}>Move to a new phone</Text>
+                  <Text style={styles.rowSub}>Scan the code on your new phone. This phone is signed out afterwards.</Text>
+                </View>
+                <Text style={styles.chevron}>›</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.row} onPress={() => navigation.navigate('PrivateSpaceSetup', { mode: 'backup' })} accessibilityRole="button" accessibilityLabel="Backup">
+                <View style={styles.rowText}>
+                  <Text style={styles.rowLabel}>Backup</Text>
+                  <Text style={styles.rowSub}>{backupSummary(hasBackup, backup)}</Text>
+                </View>
+                <Text style={styles.chevron}>›</Text>
+              </TouchableOpacity>
+            </>
+          )}
+          {space === 'none' && (
+            <TouchableOpacity style={styles.row} onPress={() => navigation.navigate('PrivateSpaceSetup')} accessibilityRole="button" accessibilityLabel="Set up your private space">
+              <View style={styles.rowText}>
+                <Text style={styles.rowLabel}>Set up your private space</Text>
+                <Text style={styles.rowSub}>Lock your journal and vault with a key that stays on your phone.</Text>
+              </View>
+              <Text style={styles.chevron}>›</Text>
+            </TouchableOpacity>
+          )}
+          {space === 'elsewhere' && (
+            <>
+              <Text style={styles.rowSub}>Your private space is on another phone.</Text>
+              <TouchableOpacity style={styles.row} onPress={() => navigation.navigate('MoveHere')} accessibilityRole="button" accessibilityLabel="Move it here">
+                <Text style={[styles.rowLabel, styles.rowText]}>Move it here</Text>
+                <Text style={styles.chevron}>›</Text>
+              </TouchableOpacity>
+              {hasBackup && (
+                <TouchableOpacity style={styles.row} onPress={() => navigation.navigate('Restore')} accessibilityRole="button" accessibilityLabel="Restore from backup">
+                  <Text style={[styles.rowLabel, styles.rowText]}>Restore from backup</Text>
+                  <Text style={styles.chevron}>›</Text>
+                </TouchableOpacity>
+              )}
+            </>
+          )}
+          {space === 'unknown' && <Text style={styles.hint}>Checking your private space…</Text>}
         </View>
         <Text style={styles.sectionTitle}>Signed-in devices</Text>
         <View style={styles.card}>
@@ -187,6 +261,7 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 0.6,
   },
+  chevron: { fontSize: 24, color: colors.textMuted },
   currentTag: { marginTop: 4, fontSize: 12, fontFamily: fonts.bodySemiBold, color: colors.gold },
   removeBtn: { paddingHorizontal: 10, paddingVertical: 6 },
   removeText: { fontSize: 14, fontFamily: fonts.bodySemiBold, color: colors.danger },

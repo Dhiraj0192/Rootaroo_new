@@ -58,6 +58,7 @@ import JournalEntryDetailScreen from '../screens/JournalEntryDetailScreen';
 import JournalHistoryScreen from '../screens/JournalHistoryScreen';
 import SecuritySettingsScreen from '../screens/SecuritySettingsScreen';
 import { withJournalLock } from '../shared/components/JournalLockGate';
+import { withPrivateSpace } from '../shared/components/PrivateSpaceGate';
 import { useJournalLockStore } from '../shared/store/journalLockStore';
 import CommentsScreen from '../screens/CommentsScreen';
 import PhotoGalleryScreen from '../screens/PhotoGalleryScreen';
@@ -78,7 +79,10 @@ import CreateExpenseScreen from '../screens/CreateExpenseScreen';
 import MemberBalanceDetailScreen from '../screens/MemberBalanceDetailScreen';
 
 import VaultUploadScreen from '../screens/VaultUploadScreen';
-import VaultSetupScreen from '../screens/VaultSetupScreen';
+import PrivateSpaceSetupScreen from '../screens/PrivateSpaceSetupScreen';
+import MoveHereScreen from '../screens/MoveHereScreen';
+import ApproveMoveScreen from '../screens/ApproveMoveScreen';
+import RestoreScreen from '../screens/RestoreScreen';
 import VaultViewerScreen from '../screens/VaultViewerScreen';
 import VaultListScreen from '../screens/VaultListScreen';
 import ChatScreen from '../screens/ChatScreen';
@@ -94,13 +98,14 @@ const ChatNav = createNativeStackNavigator();
 const MoreNav = createNativeStackNavigator();
 const PaywallStack = createNativeStackNavigator();
 
-const LockedJournalScreen = withJournalLock(JournalScreen);
-const LockedJournalHistoryScreen = withJournalLock(JournalHistoryScreen);
-const LockedJournalEntryDetailScreen = withJournalLock(JournalEntryDetailScreen);
-const LockedJournalEntryEditorScreen = withJournalLock(JournalEntryEditorScreen);
+const PrivateVaultListScreen = withPrivateSpace(VaultListScreen);
+const LockedJournalScreen = withPrivateSpace(withJournalLock(JournalScreen));
+const LockedJournalHistoryScreen = withPrivateSpace(withJournalLock(JournalHistoryScreen));
+const LockedJournalEntryDetailScreen = withPrivateSpace(withJournalLock(JournalEntryDetailScreen));
+const LockedJournalEntryEditorScreen = withPrivateSpace(withJournalLock(JournalEntryEditorScreen));
 
 /* Vault screens are a fully immersive dark experience — no floating tab dock. */
-const VAULT_ROUTES = ['Vault', 'VaultUpload', 'VaultSetup', 'VaultViewer'];
+const VAULT_ROUTES = ['Vault', 'VaultUpload', 'VaultViewer'];
 // Writing and reading one entry are full-screen tasks — the dock would only
 // compete with the composer's own footer and the detail screen's actions.
 const JOURNAL_FULLSCREEN_ROUTES = ['JournalEditor', 'JournalEntry'];
@@ -200,13 +205,16 @@ function MoreNavigator() {
       <MoreNav.Screen name="MemberBalanceDetail" component={MemberBalanceDetailScreen} />
       <MoreNav.Screen name="NotificationPreferences" component={NotificationPreferencesScreen} />
       <MoreNav.Screen name="SecuritySettings" component={SecuritySettingsScreen} />
-      <MoreNav.Screen name="Vault" component={VaultListScreen} />
+      <MoreNav.Screen name="PrivateSpaceSetup" component={PrivateSpaceSetupScreen} />
+      <MoreNav.Screen name="MoveHere" component={MoveHereScreen} />
+      <MoreNav.Screen name="ApproveMove" component={ApproveMoveScreen} />
+      <MoreNav.Screen name="Restore" component={RestoreScreen} />
+      <MoreNav.Screen name="Vault" component={PrivateVaultListScreen} />
       <MoreNav.Screen
         name="VaultUpload"
         component={VaultUploadScreen}
         options={{ headerShown: false, presentation: 'transparentModal', animation: 'slide_from_bottom' }}
       />
-      <MoreNav.Screen name="VaultSetup" component={VaultSetupScreen} />
       <MoreNav.Screen name="VaultViewer" component={VaultViewerScreen} />
       <MoreNav.Screen name="Journal" component={LockedJournalScreen} />
       <MoreNav.Screen name="JournalHistory" component={LockedJournalHistoryScreen} />

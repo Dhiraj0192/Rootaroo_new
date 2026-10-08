@@ -7,6 +7,7 @@ jest.mock('expo-local-authentication', () => ({
   isEnrolledAsync: jest.fn(async () => true),
   authenticateAsync: jest.fn(async () => ({ success: true })),
 }));
+jest.mock('../../shared/api/e2e', () => ({ e2eApi: { getAccountKey: jest.fn(async () => ({ publicKey: null, holdsKey: false, hasBackup: false })), getBackup: jest.fn(async () => null) } }));
 jest.mock('../../shared/api/devices', () => ({
   devicesApi: { list: jest.fn(), revoke: jest.fn(async () => {}) },
 }));

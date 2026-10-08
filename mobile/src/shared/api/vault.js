@@ -45,18 +45,4 @@ export const vaultApi = {
     apiClient
       .get('/vault/summary')
       .then((r) => r.data.data),
-
-  // Key management
-  storeKey: (publicKey, privateKeyEncrypted) =>
-    apiClient
-      .post('/vault/keys/me', {
-        publicKey,
-        privateKeyEncrypted,
-      })
-      .then((r) => r.data.data),
-
-  getMyKey: () =>
-    apiClient
-      .get('/vault/keys/me')
-      .then((r) => r.data.data),
 };

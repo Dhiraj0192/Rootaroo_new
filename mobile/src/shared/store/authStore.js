@@ -105,6 +105,7 @@ export const useAuthStore = create((set, get) => ({
     scheduleNudges();
     // Lazy require: billingStore → api → client → authStore would be a cycle at import time.
     try { require('./billingStore').useBillingStore.getState().reset(); } catch { /* not loaded yet */ }
+    try { require('./privateSpaceStore').usePrivateSpaceStore.getState().reset(); } catch { /* not loaded yet */ }
     try { require('./journalLockStore').useJournalLockStore.getState().reset(); } catch { /* not loaded yet */ }
     useFeedStore.setState({ posts: [], cursor: null, hasMore: true, lastFetchedAt: null });
   },

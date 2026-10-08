@@ -11,6 +11,7 @@ import {
   ScrollView,
 } from 'react-native';
 import { showAlert } from '../shared/services/themedAlert';
+import { usePrivateSpaceStore } from '../shared/store/privateSpaceStore';
 import { useAuthStore } from '../shared/store/authStore';
 import { authApi } from '../shared/api/auth';
 import { colors, fonts, withAlpha } from '../shared/theme';
@@ -81,6 +82,8 @@ export default function AccountDeletionScreen({ navigation }) {
     );
   };
   const handleLogout = () => {
+    // The account is gone, so the key that opened its private data goes too.
+    usePrivateSpaceStore.getState().forget();
     logout();
   };
   if (step === 'done') {

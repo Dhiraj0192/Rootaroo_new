@@ -102,7 +102,6 @@ const initialState = {
   loading: false,
   refreshing: false,
   error: null,
-  justSetUpVault: false,
   storageUsage: null,
   storageLoading: false,
   fetchDocuments: () => Promise.resolve(),

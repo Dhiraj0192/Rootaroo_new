@@ -23,11 +23,10 @@ import {
 import { showAlert } from '../shared/services/themedAlert';
 import Svg, { SvgXml, Rect, Path, Circle } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useFocusEffect } from '@react-navigation/native';
 import { useVaultStore } from '../shared/store/vaultStore';
 import { useAuthStore } from '../shared/store/authStore';
 import { vaultApi } from '../shared/api/vault';
-import { getPrivateKey } from '../shared/crypto/secureKeyStore';
+import { loadAccountPrivateKey } from '../shared/crypto/accountKey';
 import Avatar from '../components/Avatar';
 import { formatFileSize, formatDate } from '../shared/utils/format';
 import { colors, fonts, goldButton, radius, withAlpha } from '../shared/theme';
@@ -62,7 +61,6 @@ export default function VaultListScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const { documents, loading, refreshing, error } = useVaultStore();
   const [locked, setLocked] = useState(true);
-  const [checkingSetup, setCheckingSetup] = useState(true);
   const [unlockLoading, setUnlockLoading] = useState(false);
   const [autoLockSeconds, setAutoLockSeconds] = useState(AUTO_LOCK_SECONDS);
   const [showActionSheet, setShowActionSheet] = useState({
@@ -75,30 +73,6 @@ export default function VaultListScreen({ navigation }) {
     value: '',
   });
   const [deleteDoc, setDeleteDoc] = useState(null);
-
-  // Before ever showing "Unlock vault", check the server for whether a vault
-  // key exists at all — no key means first-time setup, so skip straight there
-  // instead of showing an unlock screen for a vault that doesn't exist yet.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const myKey = await vaultApi.getMyKey();
-        if (cancelled) return;
-        if (!myKey) {
-          navigation.replace('VaultSetup');
-          return;
-        }
-      } catch {
-        // Network/error — fall back to the normal locked screen; Unlock will retry.
-      } finally {
-        if (!cancelled) setCheckingSetup(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [navigation]);
 
   // Auto-lock countdown runs only while unlocked
   useEffect(() => {
@@ -117,56 +91,29 @@ export default function VaultListScreen({ navigation }) {
       const user = useAuthStore.getState().user;
       if (!user?.id) return;
 
-      // Key exists on this device → getPrivateKey fires the Face ID / fingerprint
-      // prompt (hardware keychain requireAuthentication) → unlock on success.
-      let priv;
+      // Loading the key fires the Face ID / fingerprint prompt (hardware keychain
+      // requireAuthentication). The gate around this screen guarantees this phone holds it.
+      let key;
       try {
-        priv = await getPrivateKey(user.id);
+        key = await loadAccountPrivateKey(user.id);
       } catch {
-        // A key exists on this device but authentication failed/was cancelled —
-        // stay locked. Must NOT fall through to the "no local key" branch below,
-        // which would unlock without ever requiring biometric confirmation.
+        // Authentication failed or was cancelled: stay locked.
         showAlert(
           'Authentication failed',
           'Could not verify your fingerprint or Face ID. Please try again.',
         );
         return;
       }
-      if (priv) {
-        setLocked(false);
-        setAutoLockSeconds(AUTO_LOCK_SECONDS);
+      if (!key) {
+        showAlert('Private space not on this phone', 'Move it here or restore it from your backup in Privacy & security.');
         return;
       }
-
-      // No key on this device at all (fresh device). If a key exists on the
-      // server (set up elsewhere), let the user in — passphrase recovery
-      // happens when opening a document.
-      const myKey = await vaultApi.getMyKey().catch(() => null);
-      if (myKey?.publicKey) {
-        setLocked(false);
-        setAutoLockSeconds(AUTO_LOCK_SECONDS);
-        return;
-      }
-
-      // First-time user — no vault key anywhere. Send them through setup
-      // (passphrase + biometric) before they can unlock.
-      navigation.navigate('VaultSetup');
+      setLocked(false);
+      setAutoLockSeconds(AUTO_LOCK_SECONDS);
     } finally {
       setUnlockLoading(false);
     }
-  }, [navigation]);
-
-  // After first-time setup returns, a key now exists locally → auto-unlock (biometric)
-  useFocusEffect(
-    useCallback(() => {
-      if (useVaultStore.getState().justSetUpVault) {
-        useVaultStore.setState({
-          justSetUpVault: false,
-        });
-        handleUnlock();
-      }
-    }, [handleUnlock]),
-  );
+  }, []);
 
   // Fetch documents when vault becomes unlocked
   useEffect(() => {
@@ -309,16 +256,6 @@ export default function VaultListScreen({ navigation }) {
       </View>
     );
   };
-
-  // ── Checking whether a vault key exists at all (pre-locked) ──
-  if (checkingSetup) {
-    return (
-      <View style={[styles.root, styles.checkingRoot]}>
-        <StatusBar barStyle="light-content" backgroundColor={colors.shadow} />
-        <ActivityIndicator size="small" color={colors.gold} />
-      </View>
-    );
-  }
 
   // ── Locked state (SCREEN 25) ──
   if (locked) {
@@ -594,10 +531,6 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: colors.surfaceRaised,
-  },
-  checkingRoot: {
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   buttonDisabled: {
     opacity: 0.6,

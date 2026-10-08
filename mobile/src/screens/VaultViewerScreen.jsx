@@ -8,14 +8,9 @@
  *     path briefly writes to the app-private cache directory and deletes it
  *     again shortly after (or on unmount). No other code path touches disk.
  *   - Screenshots are blocked at the OS level via expo-screen-capture.
- *   - The RSA private key is loaded from the hardware keychain (biometric-gated).
- *   - On recovery: if the private key is missing, we branch on backup mode:
- *       'passphrase' → prompt passphrase, decrypt server backup, restore keychain,
- *                      then re-pin own public key to the TOFU store so the restored
- *                      key is trusted for future ceremony operations.
- *       'none'       → vault access is permanently lost on this device by design.
- *                      The user sees an explicit, honest message — not a generic error.
- *       null         → key setup was never completed; direct user to set up vault.
+ *   - The account private key is loaded from the hardware keychain (biometric-gated)
+ *     and opens the sealed file key. A phone without the key never gets this far:
+ *     the vault screen shows the "private space is on another phone" gate instead.
  *
  * Design: full-bleed dark viewer — header/footer float as translucent overlays
  * over the content so every file type gets a true full-screen preview:
@@ -32,7 +27,6 @@ import {
   ActivityIndicator,
   TouchableOpacity,
   StatusBar,
-  Alert,
   Modal,
   TextInput,
 } from 'react-native';
@@ -44,14 +38,9 @@ import * as Sharing from 'expo-sharing';
 import * as FileSystem from 'expo-file-system';
 import { vaultApi } from '../shared/api/vault';
 import { useAuthStore } from '../shared/store/authStore';
-import {
-  importPrivateKey,
-  unwrapKey,
-  decryptFile,
-  decryptPrivateKeyFromBackup,
-} from '../shared/crypto/vaultCrypto';
-import { getPrivateKey, storePrivateKey, getBackupMode } from '../shared/crypto/secureKeyStore';
-import { verifyPublicKey } from '../shared/crypto/keyPinStore';
+import { importAesKey, decryptFile } from '../shared/crypto/vaultCrypto';
+import { loadAccountPrivateKey, open } from '../shared/crypto/accountKey';
+import { base64ToBytes } from '../shared/crypto/bytes';
 import { formatFileSize } from '../shared/utils/format';
 import * as ScreenCapture from 'expo-screen-capture';
 import { colors, fonts, goldButton, withAlpha } from '../shared/theme';
@@ -126,54 +115,6 @@ export default function VaultViewerScreen({ navigation, route }) {
     if (autoCloseSeconds === 0 && doc) navigation.goBack();
   }, [autoCloseSeconds, doc, navigation]);
 
-  /**
-   * Prompt for passphrase using a native secure-text Alert.
-   */
-  const promptPassphrase = () =>
-    new Promise((resolve, reject) => {
-      Alert.prompt(
-        'Enter Vault Passphrase',
-        'Your vault private key is missing on this device. Enter your passphrase to restore access:',
-        [
-          {
-            text: 'Cancel',
-            style: 'cancel',
-            onPress: () => reject(new Error('Cancelled')),
-          },
-          {
-            text: 'Unlock',
-            onPress: (pwd) => resolve(pwd || ''),
-          },
-        ],
-        'secure-text',
-      );
-    });
-
-  /**
-   * Attempt to restore a missing private key from the server-backed passphrase
-   * encrypted blob. Salt is now embedded in the blob, so this works even on a
-   * fresh reinstall where SecureStore (and the local backup mode flag) has been wiped.
-   */
-  const attemptPassphraseRecovery = async (userId) => {
-    const myKeyBackup = await vaultApi.getMyKey();
-    if (!myKeyBackup?.privateKeyEncrypted || myKeyBackup.privateKeyEncrypted === 'none') {
-      return null;
-    }
-    const passphrase = await promptPassphrase();
-    const recoveredJwk = await decryptPrivateKeyFromBackup(
-      myKeyBackup.privateKeyEncrypted,
-      passphrase,
-    );
-    await storePrivateKey(userId, recoveredJwk);
-    if (myKeyBackup.publicKey) {
-      const pinResult = await verifyPublicKey(userId, myKeyBackup.publicKey);
-      if (pinResult === 'changed') {
-        const { updatePublicKeyPin } = await import('../shared/crypto/keyPinStore');
-        await updatePublicKeyPin(userId, myKeyBackup.publicKey);
-      }
-    }
-    return recoveredJwk;
-  };
   const loadAndDecrypt = useCallback(async () => {
     try {
       setStatusMessage('Loading document...');
@@ -201,9 +142,9 @@ export default function VaultViewerScreen({ navigation, route }) {
         return;
       }
       setStatusMessage('Authenticating...');
-      let privateKeyJwk;
+      let accountKey;
       try {
-        privateKeyJwk = await getPrivateKey(user.id);
+        accountKey = await loadAccountPrivateKey(user.id);
       } catch {
         showAlert('Authentication failed', 'Could not verify your fingerprint or Face ID.', [
           {
@@ -213,55 +154,19 @@ export default function VaultViewerScreen({ navigation, route }) {
         ]);
         return;
       }
-      if (!privateKeyJwk) {
-        const backupMode = await getBackupMode(user.id);
-        if (backupMode === 'none') {
-          showAlert(
-            'Vault Access Lost',
-            'This vault was set up in zero-knowledge mode — no server backup was created. ' +
-              'The private key only existed on your original device.\n\n' +
-              'Vault access on this device cannot be recovered. This is by design.',
-            [
-              {
-                text: 'OK',
-                onPress: () => navigation.goBack(),
-              },
-            ],
-          );
-          return;
-        }
-        setStatusMessage('Recovering vault key from backup...');
-        try {
-          privateKeyJwk = await attemptPassphraseRecovery(user.id);
-        } catch (recoveryErr) {
-          const msg = recoveryErr?.message?.includes('Cancelled')
-            ? 'Recovery cancelled.'
-            : 'Wrong passphrase — decryption failed. Please try again.';
-          showAlert('Recovery Failed', msg);
-          setDecryptFailed(true);
-          return;
-        }
-        if (!privateKeyJwk) {
-          showAlert(
-            'No Vault Key',
-            backupMode === null
-              ? 'No vault key backup was found on the server for this account. ' +
-                  'If you used zero-knowledge mode, vault access cannot be recovered. ' +
-                  'If you expected a passphrase backup, contact your administrator.'
-              : 'Could not recover vault key. The passphrase backup may be missing or corrupted.',
-            [
-              {
-                text: 'OK',
-                onPress: () => navigation.goBack(),
-              },
-            ],
-          );
-          return;
-        }
+      if (!accountKey) {
+        showAlert('Private space not on this phone', 'Move it here or restore it from your backup in Privacy & security.', [
+          {
+            text: 'OK',
+            onPress: () => navigation.goBack(),
+          },
+        ]);
+        return;
       }
       setStatusMessage('Decrypting...');
-      const privateKey = await importPrivateKey(privateKeyJwk);
-      const aesKey = await unwrapKey(wrappedKey, privateKey);
+      const rawFileKey = await open(accountKey.privateKey, base64ToBytes(wrappedKey));
+      const aesKey = await importAesKey(rawFileKey);
+      rawFileKey.fill(0);
       const encryptedBytes = new Uint8Array(encryptedArrayBuffer);
       const authTag = encryptedBytes.slice(encryptedBytes.length - 16);
       const ciphertext = encryptedBytes.slice(0, encryptedBytes.length - 16);
