@@ -34,6 +34,7 @@ const TYPE_TO_PREFERENCE_FIELD: Partial<Record<string, keyof NotificationPrefere
   chat: 'chatMessage',
   task_completed: 'taskCompleted',
   member_joined: 'memberJoined',
+  campaign: 'tips',
 };
 
 // ── Device Token Management ── (DB-backed)
@@ -157,6 +158,7 @@ export async function getPreferences(
       chatMessage: true,
       calendarEvent: true,
       memberJoined: true,
+      tips: true,
     });
   }
 
@@ -170,6 +172,7 @@ export async function getPreferences(
     chatMessage: prefs.chatMessage,
     calendarEvent: prefs.calendarEvent,
     memberJoined: prefs.memberJoined,
+    tips: prefs.tips,
   };
 }
 
@@ -196,6 +199,7 @@ export async function updatePreferences(
     if (body.chatMessage !== undefined) prefs.chatMessage = body.chatMessage;
     if (body.calendarEvent !== undefined) prefs.calendarEvent = body.calendarEvent;
     if (body.memberJoined !== undefined) prefs.memberJoined = body.memberJoined;
+    if (body.tips !== undefined) prefs.tips = body.tips;
     await prefs.save();
   }
 
@@ -209,6 +213,7 @@ export async function updatePreferences(
     chatMessage: prefs.chatMessage,
     calendarEvent: prefs.calendarEvent,
     memberJoined: prefs.memberJoined,
+    tips: prefs.tips,
   };
 }
 

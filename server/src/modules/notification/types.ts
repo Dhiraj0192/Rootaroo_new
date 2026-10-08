@@ -24,6 +24,7 @@ export interface NotificationPreferencesResponse {
   chatMessage: boolean;
   calendarEvent: boolean;
   memberJoined: boolean;
+  tips: boolean;
 }
 
 export interface UpdatePreferencesBody {
@@ -36,4 +37,5 @@ export interface UpdatePreferencesBody {
   chatMessage?: boolean;
   calendarEvent?: boolean;
   memberJoined?: boolean;
+  tips?: boolean;
 }

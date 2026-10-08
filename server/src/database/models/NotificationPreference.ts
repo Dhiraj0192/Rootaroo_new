@@ -13,6 +13,7 @@ class NotificationPreference extends Model {
   declare chatMessage: boolean;
   declare calendarEvent: boolean;
   declare memberJoined: boolean;
+  declare tips: boolean;
   declare createdAt: CreationOptional<Date>;
   declare updatedAt: CreationOptional<Date>;
 }
@@ -74,6 +75,11 @@ NotificationPreference.init(
       type: DataTypes.BOOLEAN,
       defaultValue: true,
       field: 'member_joined',
+    },
+    tips: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: true,
+      field: 'tips',
     },
     createdAt: {
       type: DataTypes.DATE,

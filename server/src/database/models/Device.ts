@@ -31,6 +31,8 @@ Device.init(
   {
     sequelize,
     tableName: 'devices',
+    // Removal is revokedAt, not a soft delete; the table has no deleted_at.
+    paranoid: false,
     indexes: [
       { name: 'uq_devices_user_device_key', fields: ['user_id', 'device_key'], unique: true },
       { name: 'idx_devices_user_id', fields: ['user_id'] },

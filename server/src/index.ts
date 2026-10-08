@@ -16,6 +16,7 @@ import { startBillingEventSweepJob } from './jobs/billing-event-sweep';
 import { startBillingCheckoutSweepJob } from './jobs/billing-checkout-sweep';
 import { startBillingReconcileJobs } from './jobs/billing-reconcile';
 import { startBillingPriceNoticesJob } from './jobs/billing-price-notices';
+import { startCampaignsJob } from './jobs/campaigns';
 import { setIO } from './shared/utils/socket';
 import {
   socketAuthMiddleware,
@@ -104,6 +105,7 @@ async function start(): Promise<void> {
     startOverduePointsReductionJob();
     startPurgeScheduledDeletionsJob();
     startPingExpiryJob();
+    if (process.env.CAMPAIGNS_ENABLED !== 'false') startCampaignsJob();
     if (getBillingConfig().enabled) {
       startBillingEventSweepJob();
       startBillingCheckoutSweepJob();

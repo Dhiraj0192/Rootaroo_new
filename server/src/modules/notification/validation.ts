@@ -16,7 +16,9 @@ export const updatePreferencesSchema: ValidationSchemas = {
     checkIn: z.boolean().optional(),
     newExpense: z.boolean().optional(),
     chatMessage: z.boolean().optional(),
+    pingRequest: z.boolean().optional(),
     calendarEvent: z.boolean().optional(),
     memberJoined: z.boolean().optional(),
+    tips: z.boolean().optional(),
   }),
 };
