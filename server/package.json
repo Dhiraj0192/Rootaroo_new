@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "npx sequelize-cli db:migrate && tsx watch src/index.ts",
-    "build": "tsc",
+    "build": "tsc && cp src/database/billingSeeds.js dist/database/billingSeeds.js",
     "start": "npx sequelize-cli db:migrate && node dist/index.js",
     "lint": "eslint src/ --ext .ts",
     "lint:fix": "eslint src/ --ext .ts --fix",
