@@ -43,7 +43,7 @@ In order, after the checklist in [`docs/billing/runbooks.md`](billing/runbooks.m
 | G6 | Delete pre-launch test households, or move the ones testers keep to cohort `test` | dev |
 | G7 | Remove the `BILLING_ENABLED` switch from the code | dev |
 | G8 | Review the campaign copy and switch campaigns on (`PUT /api/v1/admin/campaigns/...`) | owner |
-| G9 | Create the AWS KMS keys (HMAC + symmetric, separate for test and live) and set `KEY_VAULT_*` in production | owner |
+| G9 | Optional: move backup protection to AWS KMS (~$2/month). Set `KEY_VAULT_PROVIDER=aws-kms` and the KMS vars, keep `KEY_VAULT_LOCAL_SECRET` until every backup has been re-protected. | owner |
 
 ## Waiting on a decision
 
@@ -60,6 +60,7 @@ In order, after the checklist in [`docs/billing/runbooks.md`](billing/runbooks.m
 | D4 | A lapsed household gets a hard paywall but keeps Settings, profile, account deletion, help and the privacy policy. | 2026-10-08 |
 | D5 | Data is kept 12 months after a lapse, with an email warning before deletion (T2). | 2026-10-08 |
 | D6 | Campaign copy approved by owner, with the roo and due-tomorrow edits. | 2026-10-08 |
+| D7 | Household vault files are shared with everyone in the household, children included. | 2026-10-09 |
 
 ## Done
 

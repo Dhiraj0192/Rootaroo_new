@@ -41,9 +41,9 @@ describe('shared vault (real database)', () => {
     for (const gone of ['name', 'mime_type', 'encrypted_key', 'iv']) expect(names).not.toContain(gone);
   });
 
-  it('a household file is visible to adults with their own sealed key, never to children', async () => {
+  it('a household file is visible to everyone in the household, children included, with their own sealed key', async () => {
     const { admin, ravi, kid } = await family();
-    const up = await upload(admin, { scope: 'household', sealedMeta: b64(80), sizeBytes: 256, keys: [{ userId: admin.id, sealedKey: b64(92) }, { userId: ravi.id, sealedKey: b64(92) }] });
+    const up = await upload(admin, { scope: 'household', sealedMeta: b64(80), sizeBytes: 256, keys: [admin, ravi, kid].map((u) => ({ userId: u.id, sealedKey: b64(92) })) });
     expect(up.status).toBe(201);
     const id = up.body.data.id;
 
@@ -53,14 +53,25 @@ describe('shared vault (real database)', () => {
     expect(doc).toEqual(expect.objectContaining({ scope: 'household', sealedMeta: expect.any(String), mySealedKey: expect.any(String) }));
 
     const kidList = await request(app).get('/api/v1/vault').set(authHeaderFor(kid));
-    expect(kidList.body.data.documents.map((d: { id: string }) => d.id)).not.toContain(id);
-    expect((await request(app).get(`/api/v1/vault/${id}`).set(authHeaderFor(kid))).status).toBe(404);
+    expect(kidList.body.data.documents.map((d: { id: string }) => d.id)).toContain(id);
+    const kidDoc = await request(app).get(`/api/v1/vault/${id}`).set(authHeaderFor(kid));
+    expect(kidDoc.status).toBe(200);
+    expect(kidDoc.body.data.mySealedKey).toEqual(expect.any(String));
   });
 
-  it('refuses to seal a household file to a child or an outsider', async () => {
+  it('a child can upload a household file that adults can open', async () => {
     const { admin, kid } = await family();
-    const toKid = await upload(admin, { scope: 'household', sealedMeta: b64(80), sizeBytes: 256, keys: [{ userId: admin.id, sealedKey: b64(92) }, { userId: kid.id, sealedKey: b64(92) }] });
-    expect(toKid.status).toBe(400);
+    const up = await upload(kid, { scope: 'household', sealedMeta: b64(80), sizeBytes: 256, keys: [kid, admin].map((u) => ({ userId: u.id, sealedKey: b64(92) })) });
+    expect(up.status).toBe(201);
+    expect((await request(app).get(`/api/v1/vault/${up.body.data.id}`).set(authHeaderFor(admin))).status).toBe(200);
+  });
+
+  it('refuses to seal a household file to an outsider', async () => {
+    const { admin } = await family();
+    const { household: otherHousehold } = await createHouseholdWithAdmin({ cohort: 'test' });
+    const stranger = await withKey(await addMember(otherHousehold.id));
+    const toStranger = await upload(admin, { scope: 'household', sealedMeta: b64(80), sizeBytes: 256, keys: [{ userId: admin.id, sealedKey: b64(92) }, { userId: stranger.id, sealedKey: b64(92) }] });
+    expect(toStranger.status).toBe(400);
   });
 
   it('a personal file is only for the uploader', async () => {
@@ -72,9 +83,9 @@ describe('shared vault (real database)', () => {
     expect(badPersonal.status).toBe(400);
   });
 
-  it('an adult without a key yet sees the file as pending, and another adult can grant it', async () => {
-    const { household, admin, ravi } = await family();
-    const up = await upload(admin, { scope: 'household', sealedMeta: b64(80), sizeBytes: 256, keys: [{ userId: admin.id, sealedKey: b64(92) }, { userId: ravi.id, sealedKey: b64(92) }] });
+  it('a member without a key yet sees the file as pending, and another member can grant it', async () => {
+    const { household, admin, ravi, kid } = await family();
+    const up = await upload(admin, { scope: 'household', sealedMeta: b64(80), sizeBytes: 256, keys: [admin, ravi, kid].map((u) => ({ userId: u.id, sealedKey: b64(92) })) });
     const id = up.body.data.id;
     const newcomer = await withKey(await addMember(household.id));
 
@@ -88,7 +99,7 @@ describe('shared vault (real database)', () => {
     expect(give.status).toBe(200);
     const after = await request(app).get(`/api/v1/vault/${id}`).set(authHeaderFor(newcomer));
     expect(after.body.data.mySealedKey).toEqual(expect.any(String));
-    // Granting twice or to a child is refused.
+    // Granting twice is refused.
     expect((await request(app).post(`/api/v1/vault/${id}/keys`).set(authHeaderFor(ravi)).send({ grants: [{ userId: newcomer.id, sealedKey: b64(92) }] })).status).toBe(409);
   });
 
@@ -101,14 +112,15 @@ describe('shared vault (real database)', () => {
     expect(res.status).toBe(403);
   });
 
-  it('becoming a child or leaving removes household access', async () => {
+  it('becoming a child keeps household access; leaving or removal removes it', async () => {
     const { household, admin, ravi } = await family();
     const other = await withKey(await addMember(household.id));
     const up = await upload(admin, { scope: 'household', sealedMeta: b64(80), sizeBytes: 256, keys: [admin, ravi, other].map((u) => ({ userId: u.id, sealedKey: b64(92) })) });
     const id = up.body.data.id;
     const { changeMemberRole, removeMember } = await import('../../household/service');
     await changeMemberRole(admin.id, household.id, ravi.id, { role: 'child' });
-    expect(await VaultDocumentKey.count({ where: { documentId: id, userId: ravi.id } })).toBe(0);
+    expect(await VaultDocumentKey.count({ where: { documentId: id, userId: ravi.id } })).toBe(1);
+    expect((await request(app).get(`/api/v1/vault/${id}`).set(authHeaderFor(ravi))).status).toBe(200);
     await removeMember(admin.id, household.id, other.id);
     expect(await VaultDocumentKey.count({ where: { documentId: id, userId: other.id } })).toBe(0);
     expect(await VaultDocumentKey.count({ where: { documentId: id, userId: admin.id } })).toBe(1);
@@ -142,12 +154,12 @@ describe('shared vault (real database)', () => {
     expect(await VaultDocumentKey.count({ where: { documentId: id, userId: other.id } })).toBe(0);
   });
 
-  it('clears a stale key row when the person rejoins or is promoted from child', async () => {
-    const { household, admin, kid } = await family();
+  it('clears a stale key row when the person rejoins', async () => {
+    const { household, admin } = await family();
     const leaver = await withKey(await addMember(household.id));
     const up = await upload(admin, { scope: 'household', sealedMeta: b64(80), sizeBytes: 256, keys: [admin, leaver].map((u) => ({ userId: u.id, sealedKey: b64(92) })) });
     const id = up.body.data.id;
-    const { removeMember, joinViaCode, changeMemberRole } = await import('../../household/service');
+    const { removeMember, joinViaCode } = await import('../../household/service');
 
     await removeMember(admin.id, household.id, leaver.id);
     // A key that slipped in around the removal (the race this guards against).
@@ -155,9 +167,6 @@ describe('shared vault (real database)', () => {
     await joinViaCode(leaver.id, { code: household.inviteCode });
     expect(await VaultDocumentKey.count({ where: { documentId: id, userId: leaver.id } })).toBe(0);
 
-    await VaultDocumentKey.create({ documentId: id, userId: kid.id, wrappedKey: b64(92) });
-    await changeMemberRole(admin.id, household.id, kid.id, { role: 'member' });
-    expect(await VaultDocumentKey.count({ where: { documentId: id, userId: kid.id } })).toBe(0);
   });
 
   it('rejects a declared size that does not match the uploaded bytes', async () => {
@@ -177,11 +186,10 @@ describe('shared vault (real database)', () => {
     expect((await request(app).delete(`/api/v1/vault/${id}`).set(authHeaderFor(admin))).status).toBeLessThan(300);
   });
 
-  it('lists the adults and their public keys for sealing', async () => {
+  it('lists everyone in the household and their public keys for sealing', async () => {
     const { admin, ravi, kid } = await family();
     const res = await request(app).get('/api/v1/vault/members').set(authHeaderFor(admin));
     const ids = res.body.data.map((m: { userId: string }) => m.userId);
-    expect(ids).toEqual(expect.arrayContaining([admin.id, ravi.id]));
-    expect(ids).not.toContain(kid.id);
+    expect(ids).toEqual(expect.arrayContaining([admin.id, ravi.id, kid.id]));
   });
 });

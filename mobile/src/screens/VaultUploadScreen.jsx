@@ -7,7 +7,7 @@
  *
  * Security: the vault repo encrypts the file, its name and its type on this
  * phone (AES-256-GCM, fresh key per file) and seals the file key to this
- * phone's account key, plus every adult's key for Household files.
+ * phone's account key, plus every member's key for Household files.
  */
 import React, { useState } from 'react';
 import {
@@ -195,7 +195,7 @@ export default function VaultUploadScreen({ navigation }) {
         </View>
         <Text style={styles.scopeHelp}>
           {scope === 'household'
-            ? 'Household files can be opened by adults in your household.'
+            ? 'Household files can be opened by everyone in your household.'
             : 'Personal files can only be opened by you, on this phone.'}
         </Text>
 

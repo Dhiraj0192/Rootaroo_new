@@ -48,14 +48,17 @@ export function createPrivateSpaceStore({ api, kdf = defaultKdf, getUserId, getS
       pendingMove = null;
     };
 
-    /** Encrypts the account key under a new password / recovery code and replaces the server backup. */
-    async function saveBackup(accountKey, { backup, secret }) {
+    /**
+     * Encrypts the account key under a new password / recovery code and replaces the server backup.
+     * keepSecret re-protects an existing backup with the secret the user just typed (no new recovery code).
+     */
+    async function saveBackup(accountKey, { backup, secret, keepSecret = false }) {
       if (backup === 'none') {
         await api.deleteBackup();
         set({ hasBackup: false, backup: null });
         return {};
       }
-      const recoveryCode = backup === 'recovery_code' ? generateRecoveryCode() : undefined;
+      const recoveryCode = backup === 'recovery_code' && !keepSecret ? generateRecoveryCode() : undefined;
       const made = await createBackup({
         secret: recoveryCode ?? secret, kind: backup, accountKey, kdf,
       });
@@ -144,10 +147,10 @@ export function createPrivateSpaceStore({ api, kdf = defaultKdf, getUserId, getS
       },
 
       /** Needs the key on this phone (biometric prompt); replaces or removes the backup. */
-      changeBackup: async ({ backup, secret }) => {
+      changeBackup: async ({ backup, secret, keepSecret }) => {
         const accountKey = await loadAccountPrivateKey(userId());
         if (!accountKey) throw new Error('Your private space is not on this phone');
-        return saveBackup(accountKey, { backup, secret });
+        return saveBackup(accountKey, { backup, secret, keepSecret });
       },
 
       // ── Restore from backup ──
@@ -184,7 +187,7 @@ export function createPrivateSpaceStore({ api, kdf = defaultKdf, getUserId, getS
         const { kind } = ctx;
         const keys = await deriveBackupKeys(normalizeSecret(secret, kind), ctx.salt, ctx.kdf, kdf);
         try {
-          const { blob } = await api.restore({ restoreToken: ctx.restoreToken, authKey: keys.authKey });
+          const { blob, rewrap } = await api.restore({ restoreToken: ctx.restoreToken, authKey: keys.authKey });
           const plain = await aesDecrypt(await aesKeyFromBytes(base64ToBytes(keys.encKey)), base64ToBytes(blob));
           const accountKey = JSON.parse(fromUtf8(plain));
           plain.fill(0);
@@ -195,6 +198,14 @@ export function createPrivateSpaceStore({ api, kdf = defaultKdf, getUserId, getS
           await saveAccountKey(userId(), accountKey);
           restoreCtx = null;
           set({ status: 'here', restore: { step: 'done', kind, attemptsLeft: null, error: null } });
+          // The server opened this backup with an older key service: save it again, protected by the current one.
+          if (rewrap) {
+            try {
+              await get().changeBackup({ backup: kind, secret, keepSecret: true });
+            } catch {
+              /* the backup still works; the next restore asks again */
+            }
+          }
         } catch (e) {
           const code = errorCode(e);
           if (code === 'BACKUP_ERASED') {

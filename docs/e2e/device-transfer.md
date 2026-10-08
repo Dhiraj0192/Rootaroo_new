@@ -67,9 +67,21 @@ A new service category in the W4 adapter layer (`server/src/services`):
 | Provider | Use | Env |
 |---|---|---|
 | `aws-kms` | Production. HMAC key (`GenerateMac`/`VerifyMac`) for verifiers, symmetric key (`Encrypt`/`Decrypt`, encryption context = user id) for blobs. Both keys are non-exportable and HSM-backed. | `KEY_VAULT_PROVIDER=aws-kms`, `KEY_VAULT_REGION`, `KEY_VAULT_MAC_KEY_ID`, `KEY_VAULT_ENC_KEY_ID` |
-| `local` | Development and tests only: HMAC/AES with a key from `KEY_VAULT_LOCAL_SECRET`. Production refuses to start with it. | `KEY_VAULT_PROVIDER=local`, `KEY_VAULT_LOCAL_SECRET` |
+| `local` | Development and tests, and production while there is no paid key service: HMAC/AES with keys derived from `KEY_VAULT_LOCAL_SECRET`. | `KEY_VAULT_PROVIDER=local`, `KEY_VAULT_LOCAL_SECRET` |
 
 Test and live use separate KMS keys, following the billing key separation rule.
+
+### Free now, KMS later
+
+Production may run `KEY_VAULT_PROVIDER=local` (no cost) when `KEY_VAULT_LOCAL_SECRET` is at least 64 characters and is a different value from `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET` and `CALENDAR_TOKEN_KEK`; the server refuses to start otherwise, and logs a warning that backups are protected by a server secret. This is weaker than KMS: whoever gets both the database and that secret can guess backup passwords offline (a recovery code is immune). Keep the secret out of the repository and out of database backups.
+
+Every backup row records the provider that protected it (`key_backups.vault_provider`, default `local`, migration `20261017`). Restore opens a row with the provider recorded on it, so switching providers loses nothing:
+
+1. Set `KEY_VAULT_PROVIDER=aws-kms` and the KMS variables. Keep `KEY_VAULT_LOCAL_SECRET` set: while it is, `local` stays available as a legacy provider.
+2. A backup made before the switch still restores. The restore response carries `rewrap: true`, and the phone silently saves the backup again with the password or recovery code the user just typed, so the row is now protected by KMS.
+3. When every active backup has been re-protected, `KEY_VAULT_LOCAL_SECRET` can be removed. A row that needs a provider that is not configured answers 503 `KEY_VAULT_UNAVAILABLE` ("Backups are temporarily unavailable") and costs no attempt.
+
+Email restore codes and restore tokens are short-lived MACs made with the current provider: codes issued before a switch simply become invalid and the user asks for a new one.
 
 ## Server data
 
@@ -107,7 +119,7 @@ All under `/api/v1`, authenticated, not behind the paywall (a lapsed household m
 ## Tests
 
 - Mobile unit: seal/open round trip and tamper rejection; transfer derivation on two simulated phones (same code, same key; wrong `qr_secret` fails; substituted server key aborts); backup derive/encrypt/decrypt; wrong password; Argon2id parameters recorded.
-- Server unit and MySQL integration: session lifecycle and authorisation (other user, wrong device, expired, reused), single key holder, revoke of the old device, backup attempts counting down to deletion, email code limits, local key vault refused in production, `aws-kms` provider against a mocked KMS client.
+- Server unit and MySQL integration: session lifecycle and authorisation (other user, wrong device, expired, reused), single key holder, revoke of the old device, backup attempts counting down to deletion, email code limits, production accepts the local key vault only with a strong, distinct secret, the provider recorded on each backup row and used on restore (legacy provider missing is a 503 that spends no try, rewrap flag), `aws-kms` provider against a mocked KMS client.
 - Device checklist: transfer iOS→Android and back, restore after reinstall, 10 wrong guesses, old phone wiped after transfer.
 
 ## Review

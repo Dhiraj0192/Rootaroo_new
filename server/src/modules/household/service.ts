@@ -439,14 +439,9 @@ export async function changeMemberRole(
   if (!target) throw new NotFoundError('Member');
   if (!target.user) throw new AppError(500, 'Member record references a deleted user');
 
-  const wasChild = target.role === 'child';
   await sequelize.transaction(async (transaction) => {
     await target.update({ role: body.role }, { transaction });
     await User.update({ role: body.role }, { where: { id: targetUserId }, transaction });
-    // Children never hold keys to the household's shared files.
-    if (body.role === 'child') await onMemberLostVaultAccess(targetUserId, householdId, transaction);
-    // A promoted child starts with no keys: access only comes from a fresh grant.
-    else if (wasChild) await onMemberGainedVaultAccess(targetUserId, householdId, transaction);
   });
   void syncBillingEmail(householdId).catch(() => undefined);
 

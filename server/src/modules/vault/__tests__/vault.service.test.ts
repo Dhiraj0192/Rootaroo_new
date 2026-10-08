@@ -87,13 +87,13 @@ describe('Vault Service', () => {
       Promise.resolve(roles[where.userId] ? { householdId, userId: where.userId, role: roles[where.userId] } : null),
     );
     (HouseholdMember.findAll as jest.Mock).mockResolvedValue(
-      [userId, otherUserId, adminUserId].map((id) => ({ userId: id, role: roles[id] })),
+      [userId, otherUserId, adminUserId, childId].map((id) => ({ userId: id, role: roles[id] })),
     );
     (AccountKey.findAll as jest.Mock).mockResolvedValue(
-      [userId, otherUserId, adminUserId].map((id) => ({ userId: id, publicKey: `pk-${id}` })),
+      [userId, otherUserId, adminUserId, childId].map((id) => ({ userId: id, publicKey: `pk-${id}` })),
     );
     (User.findAll as jest.Mock).mockResolvedValue(
-      [userId, otherUserId, adminUserId].map((id) => ({ id, displayName: `name-${id}` })),
+      [userId, otherUserId, adminUserId, childId].map((id) => ({ id, displayName: `name-${id}` })),
     );
     (VaultDocument.sum as jest.Mock).mockResolvedValue(0);
     (uploadBuffer as jest.Mock).mockResolvedValue({ key: `vault/${userId}/abc` });
@@ -144,11 +144,9 @@ describe('Vault Service', () => {
         .resolves.toBeDefined();
     });
 
-    it('refuses a key for a child, an outsider or someone without an account key', async () => {
-      for (const target of [childId, outsiderId]) {
-        await expect(uploadDocument(userId, body({ keys: [{ userId, sealedKey: sealed }, { userId: target, sealedKey: sealed }] }), ciphertext))
-          .rejects.toThrow(ValidationError);
-      }
+    it('refuses a key for an outsider or someone without an account key', async () => {
+      await expect(uploadDocument(userId, body({ keys: [{ userId, sealedKey: sealed }, { userId: outsiderId, sealedKey: sealed }] }), ciphertext))
+        .rejects.toThrow(ValidationError);
       (AccountKey.findAll as jest.Mock).mockResolvedValue([{ userId, publicKey: 'pk' }]);
       await expect(uploadDocument(userId, body(), ciphertext)).rejects.toThrow(ValidationError);
       expect(uploadBuffer).not.toHaveBeenCalled();
@@ -159,9 +157,11 @@ describe('Vault Service', () => {
         .rejects.toThrow(ValidationError);
     });
 
-    it('a child can only upload personal files', async () => {
-      await expect(uploadDocument(childId, body({ keys: [{ userId: childId, sealedKey: sealed }] }), ciphertext))
-        .rejects.toThrow(ForbiddenError);
+    it('a child can upload household files, and a household file can be sealed to a child', async () => {
+      await expect(uploadDocument(childId, body({ keys: [{ userId: childId, sealedKey: sealed }, { userId, sealedKey: sealed }] }), ciphertext))
+        .resolves.toBeDefined();
+      await expect(uploadDocument(userId, body({ keys: [{ userId, sealedKey: sealed }, { userId: childId, sealedKey: sealed }] }), ciphertext))
+        .resolves.toBeDefined();
     });
 
     it('rejects files over 20MB and uploads over the quota', async () => {
@@ -235,10 +235,13 @@ describe('Vault Service', () => {
       expect(result.hasMore).toBe(false);
     });
 
-    it('never asks for household files when the caller is a child', async () => {
+    it('asks for household files when the caller is a child too', async () => {
       (VaultDocument.findAll as jest.Mock).mockResolvedValue([]);
       await listDocuments(childId, {});
-      expect(orOf((VaultDocument.findAll as jest.Mock).mock.calls[0][0].where)).toEqual([{ scope: 'personal', uploadedBy: childId }]);
+      expect(orOf((VaultDocument.findAll as jest.Mock).mock.calls[0][0].where)).toEqual([
+        { scope: 'personal', uploadedBy: childId },
+        { scope: 'household', householdId },
+      ]);
     });
 
     it('paginates with a cursor', async () => {
@@ -261,15 +264,16 @@ describe('Vault Service', () => {
 
     it('404s when it is not visible to the caller', async () => {
       (VaultDocument.findOne as jest.Mock).mockResolvedValue(null);
-      await expect(getDocumentById(documentId, childId)).rejects.toThrow(NotFoundError);
+      await expect(getDocumentById(documentId, outsiderId)).rejects.toThrow(NotFoundError);
     });
   });
 
   describe('listVaultMembers', () => {
-    it('lists adults with their public keys', async () => {
+    it('lists every household member with their public key, children included', async () => {
       const result = await listVaultMembers(userId);
       expect(result).toEqual(expect.arrayContaining([{ userId, displayName: `name-${userId}`, publicKey: `pk-${userId}` }]));
-      expect(result).toHaveLength(3);
+      expect(result).toEqual(expect.arrayContaining([{ userId: childId, displayName: `name-${childId}`, publicKey: `pk-${childId}` }]));
+      expect(result).toHaveLength(4);
     });
 
     it('leaves out adults with no account key yet', async () => {
@@ -291,19 +295,36 @@ describe('Vault Service', () => {
       const result = await listPendingGrants(userId);
 
       expect(result).toEqual([
-        { documentId, mySealedKey: 'mine', missing: [{ userId: adminUserId, publicKey: `pk-${adminUserId}` }] },
+        {
+          documentId,
+          mySealedKey: 'mine',
+          missing: [
+            { userId: adminUserId, publicKey: `pk-${adminUserId}` },
+            { userId: childId, publicKey: `pk-${childId}` },
+          ],
+        },
       ]);
     });
 
     it('omits documents where everyone already has a key', async () => {
-      const all = [userId, otherUserId, adminUserId].map((id) => ({ documentId, userId: id, wrappedKey: 'k' }));
+      const all = [userId, otherUserId, adminUserId, childId].map((id) => ({ documentId, userId: id, wrappedKey: 'k' }));
       (VaultDocumentKey.findAll as jest.Mock).mockResolvedValueOnce([all[0]]).mockResolvedValueOnce(all);
       (VaultDocument.findAll as jest.Mock).mockResolvedValue([mockDoc()]);
       expect(await listPendingGrants(userId)).toEqual([]);
     });
 
-    it('is empty for a child', async () => {
-      expect(await listPendingGrants(childId)).toEqual([]);
+    it('is empty for someone outside any household', async () => {
+      expect(await listPendingGrants(outsiderId)).toEqual([]);
+    });
+
+    it('a child who can open a file is asked to grant it too', async () => {
+      (VaultDocumentKey.findAll as jest.Mock)
+        .mockResolvedValueOnce([{ documentId, userId: childId, wrappedKey: 'kid' }])
+        .mockResolvedValueOnce([{ documentId, userId: childId, wrappedKey: 'kid' }]);
+      (VaultDocument.findAll as jest.Mock).mockResolvedValue([mockDoc()]);
+      const result = await listPendingGrants(childId);
+      expect(result).toHaveLength(1);
+      expect(result[0].missing.map((m) => m.userId)).toEqual(expect.arrayContaining([userId, otherUserId, adminUserId]));
     });
   });
 
@@ -374,11 +395,14 @@ describe('Vault Service', () => {
       await expect(grantKeys(documentId, userId, [{ userId: otherUserId, sealedKey: sealed }])).rejects.toThrow(ConflictError);
     });
 
-    it('400s for a child or an outsider', async () => {
-      for (const target of [childId, outsiderId]) {
-        await expect(grantKeys(documentId, userId, [{ userId: target, sealedKey: sealed }])).rejects.toThrow(ValidationError);
-      }
+    it('400s for an outsider', async () => {
+      await expect(grantKeys(documentId, userId, [{ userId: outsiderId, sealedKey: sealed }])).rejects.toThrow(ValidationError);
       expect(VaultDocumentKey.bulkCreate).not.toHaveBeenCalled();
+    });
+
+    it('can grant to a child', async () => {
+      await grantKeys(documentId, userId, [{ userId: childId, sealedKey: sealed }]);
+      expect(VaultDocumentKey.bulkCreate).toHaveBeenCalledWith([expect.objectContaining({ userId: childId })], expect.anything());
     });
   });
 
@@ -448,9 +472,9 @@ describe('Vault Service', () => {
       expect(VaultDocumentKey.destroy).not.toHaveBeenCalled();
     });
 
-    it('refuses to share with a child', async () => {
+    it('refuses to share with an outsider', async () => {
       (VaultDocument.findOne as jest.Mock).mockResolvedValue(mockDoc({ scope: 'personal' }));
-      await expect(changeScope(documentId, userId, { scope: 'household', keys: [{ userId: childId, sealedKey: sealed }] }))
+      await expect(changeScope(documentId, userId, { scope: 'household', keys: [{ userId: outsiderId, sealedKey: sealed }] }))
         .rejects.toThrow(ValidationError);
     });
   });

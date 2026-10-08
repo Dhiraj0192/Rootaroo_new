@@ -8,8 +8,8 @@ async function deleteHouseholdFileKeys(userId: string, householdId: string, tran
 }
 
 /**
- * Called when someone stops being an adult member of a household (removed, left,
- * made a child, or the household is deleted): they lose their sealed key for every
+ * Called when someone stops being a member of a household (removed, left, or the
+ * household is deleted). Changing role (including becoming a child) keeps access. They lose their sealed key for every
  * shared file of that household. Their personal files are not touched. A copy they
  * already opened on their phone cannot be taken back (docs/e2e/vault.md).
  * Pass the transaction of the membership change so no grant can slip in between.
@@ -19,9 +19,8 @@ export async function onMemberLostVaultAccess(userId: string, householdId: strin
 }
 
 /**
- * Called when someone becomes an adult member (joins, or a child is promoted): any key
- * row left over from an earlier membership is deleted, so access only ever comes from a
- * fresh grant by a current adult.
+ * Called when someone joins a household: any key row left over from an earlier
+ * membership is deleted, so access only ever comes from a fresh grant by a current member.
  */
 export async function onMemberGainedVaultAccess(userId: string, householdId: string, transaction?: Transaction): Promise<void> {
   await deleteHouseholdFileKeys(userId, householdId, transaction);

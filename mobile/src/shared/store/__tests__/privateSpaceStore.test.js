@@ -135,6 +135,63 @@ describe('restoring from backup', () => {
     expect(store.getState().publicKey).toBe(account.publicKey);
   });
 
+  it('rewrap: true re-protects the backup with the password just typed, silently', async () => {
+    const { api } = await serverWithBackup('Biscuit');
+    const plain = api.restore;
+    api.restore = jest.fn(async (args) => ({ ...(await plain(args)), rewrap: true }));
+    const store = make(api);
+    await store.getState().refresh();
+    await store.getState().startRestore();
+    await store.getState().submitEmailCode('123456');
+    const changeBackup = jest.fn(async () => ({}));
+    store.setState({ changeBackup });
+    await store.getState().submitSecret('Biscuit');
+    expect(changeBackup).toHaveBeenCalledTimes(1);
+    expect(changeBackup).toHaveBeenCalledWith(expect.objectContaining({ backup: 'password', secret: 'Biscuit' }));
+    expect(store.getState().restore).toEqual(expect.objectContaining({ step: 'done' }));
+  });
+
+  it('rewrap uploads a new backup that the same password opens', async () => {
+    const { account, api } = await serverWithBackup('Biscuit');
+    const plain = api.restore;
+    api.restore = jest.fn(async (args) => ({ ...(await plain(args)), rewrap: true }));
+    const store = make(api);
+    await store.getState().refresh();
+    await store.getState().startRestore();
+    await store.getState().submitEmailCode('123456');
+    await store.getState().submitSecret('Biscuit');
+    expect(api.putBackup).toHaveBeenCalledTimes(1);
+    const put = api.putBackup.mock.calls[0][0];
+    expect(put.kind).toBe('password');
+    const { openBackup } = require('../../crypto/keyBackup');
+    expect(await openBackup({ secret: 'Biscuit', kind: 'password', salt: put.salt, kdf: put.kdf, blob: put.blob, kdfFn: fakeKdf }))
+      .toEqual(expect.objectContaining({ publicKey: account.publicKey }));
+  });
+
+  it('a failed rewrap does not fail the restore', async () => {
+    const { api } = await serverWithBackup('Biscuit');
+    const plain = api.restore;
+    api.restore = jest.fn(async (args) => ({ ...(await plain(args)), rewrap: true }));
+    api.putBackup.mockRejectedValue(new Error('offline'));
+    const store = make(api);
+    await store.getState().refresh();
+    await store.getState().startRestore();
+    await store.getState().submitEmailCode('123456');
+    await store.getState().submitSecret('Biscuit');
+    expect(store.getState().status).toBe('here');
+    expect(store.getState().restore).toEqual(expect.objectContaining({ step: 'done' }));
+  });
+
+  it('without rewrap the backup is left alone', async () => {
+    const { api } = await serverWithBackup('Biscuit');
+    const store = make(api);
+    await store.getState().refresh();
+    await store.getState().startRestore();
+    await store.getState().submitEmailCode('123456');
+    await store.getState().submitSecret('Biscuit');
+    expect(api.putBackup).not.toHaveBeenCalled();
+  });
+
   it('a wrong password shows the tries left and keeps the restore open', async () => {
     const { api } = await serverWithBackup('Biscuit');
     const store = make(api);

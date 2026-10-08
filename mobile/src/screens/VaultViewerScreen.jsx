@@ -439,7 +439,7 @@ export default function VaultViewerScreen({ navigation, route }) {
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.sheetOption} onPress={switchScope}>
                   <Text style={styles.sheetOptionText}>
-                    {doc.scope === 'household' ? 'Make Personal (only me)' : 'Make Household (adults)'}
+                    {doc.scope === 'household' ? 'Make Personal (only me)' : 'Make Household (everyone)'}
                   </Text>
                 </TouchableOpacity>
               </>

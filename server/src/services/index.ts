@@ -24,6 +24,9 @@ export function initServices(config: ServicesConfig): void {
     keyVault: config.keyVault === 'aws-kms'
       ? awsKmsKeyVaultFromEnv(process.env)
       : createLocalKeyVault(process.env.KEY_VAULT_LOCAL_SECRET || DEV_KEY_VAULT_SECRET),
+    legacyKeyVault: config.keyVault === 'aws-kms' && process.env.KEY_VAULT_LOCAL_SECRET
+      ? createLocalKeyVault(process.env.KEY_VAULT_LOCAL_SECRET)
+      : null,
   };
 }
 
@@ -40,6 +43,13 @@ export const getPush = (): PushProvider => resolve('push');
 export const getStorage = (): StorageProvider => resolve('storage');
 export const getWeather = (): WeatherProvider => resolve('weather');
 export const getKeyVault = (): KeyVaultProvider => resolve('keyVault');
+/** The vault that protected a stored value: the current one, or the local vault kept for older backups. Null when that provider is not configured. */
+export function getKeyVaultFor(name: string): KeyVaultProvider | null {
+  const current = getKeyVault();
+  if (current.name === name) return current;
+  if (name === 'local') return ('legacyKeyVault' in overrides ? overrides.legacyKeyVault : services?.legacyKeyVault) ?? null;
+  return null;
+}
 export const getErrorReporter = (): ErrorReporter => resolve('errors');
 
 /** Test seam: override individual providers. */

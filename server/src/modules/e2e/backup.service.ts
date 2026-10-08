@@ -4,7 +4,7 @@ import redis from '../../config/redis';
 import { KeyBackup, KeyRestoreCode, User, sequelize } from '../../database/models';
 import { AppError, NotFoundError, ValidationError } from '../../shared/utils/errors';
 import logger from '../../shared/utils/logger';
-import { getEmail, getKeyVault } from '../../services';
+import { getEmail, getKeyVault, getKeyVaultFor } from '../../services';
 import { assertKeyHolder, assertNotKeyHolder, moveKeyTo, revokePreviousHolders } from './holder';
 import type { BackupStatusResponse, PutBackupBody, RestoreParamsResponse } from './types';
 
@@ -45,6 +45,7 @@ export async function putBackup(userId: string, deviceId: string | null, body: P
   // Neither what the phone proved with nor the encrypted blob is stored as received: only the vault's output.
   const verifier = await getKeyVault().mac(body.authKey, vaultCtx(userId));
   const storedBlob = await getKeyVault().encrypt(body.blob, vaultCtx(userId));
+  const vaultProvider = getKeyVault().name;
   await sequelize.transaction(async (transaction) => {
     await KeyBackup.upsert(
       {
@@ -52,6 +53,7 @@ export async function putBackup(userId: string, deviceId: string | null, body: P
         kind: body.kind,
         salt: body.salt,
         kdf: body.kdf,
+        vaultProvider,
         verifier,
         storedBlob,
         attemptsLeft: BACKUP_ATTEMPTS,
@@ -139,7 +141,7 @@ export async function restore(
   deviceId: string | null,
   restoreToken: string,
   authKey: string,
-): Promise<{ blob: string }> {
+): Promise<{ blob: string; rewrap?: true }> {
   if (!deviceId) throw new ValidationError('A registered device is required');
   await assertNotKeyHolder(userId, deviceId);
 
@@ -150,6 +152,8 @@ export async function restore(
     where: { userId, deviceId, restoreTokenHash: { [Op.ne]: null }, restoreTokenExpiresAt: { [Op.gt]: new Date() } },
   });
   if (!session || !(await macMatches(restoreToken, session.restoreTokenHash, userId))) throw invalidSession();
+  // The backup is opened with the vault that made it. If that one is not configured, nothing is spent.
+  if (!getKeyVaultFor(backup.vaultProvider)) throw vaultUnavailable();
 
   // Spend the guess first and under a row lock, so parallel requests cannot all see "10 left".
   // The row that is checked below is the one read under that lock, never one loaded before it.
@@ -158,7 +162,7 @@ export async function restore(
     if (!locked || locked.attemptsLeft <= 0) return null;
     locked.attemptsLeft -= 1;
     await locked.save({ transaction });
-    return { left: locked.attemptsLeft, verifier: locked.verifier, storedBlob: locked.storedBlob };
+    return { left: locked.attemptsLeft, verifier: locked.verifier, storedBlob: locked.storedBlob, vaultProvider: locked.vaultProvider };
   });
   if (spent === null) {
     await erase(userId);
@@ -169,9 +173,12 @@ export async function restore(
 
   let valid: boolean;
   let blob = '';
+  const backupVault = getKeyVaultFor(spent.vaultProvider);
   try {
-    valid = await getKeyVault().verifyMac(authKey, spent.verifier, vaultCtx(userId));
-    if (valid) blob = await getKeyVault().decrypt(spent.storedBlob, vaultCtx(userId));
+    // The backup was replaced by one from a vault that is not configured, between the check above and the lock.
+    if (!backupVault) throw vaultUnavailable();
+    valid = await backupVault.verifyMac(authKey, spent.verifier, vaultCtx(userId));
+    if (valid) blob = await backupVault.decrypt(spent.storedBlob, vaultCtx(userId));
   } catch (err) {
     // The vault being unavailable is not a wrong guess: give the try back and fail closed.
     await KeyBackup.update({ attemptsLeft: literal('attempts_left + 1') as unknown as number }, { where: { userId } });
@@ -196,7 +203,12 @@ export async function restore(
     return moveKeyTo(userId, deviceId, transaction);
   });
   await revokePreviousHolders(userId, previous);
-  return { blob };
+  // Opened with an older vault: the phone re-uploads the backup with the password it just typed, so it is protected by the current one.
+  return backupVault.name === getKeyVault().name ? { blob } : { blob, rewrap: true };
+}
+
+function vaultUnavailable(): AppError {
+  return new AppError(503, 'Backups are temporarily unavailable', 'KEY_VAULT_UNAVAILABLE');
 }
 
 function erasedError(): AppError {

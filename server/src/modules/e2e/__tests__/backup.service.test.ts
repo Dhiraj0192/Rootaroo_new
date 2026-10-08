@@ -53,7 +53,7 @@ const holderIs = (deviceId: string) =>
 
 function backupRow(overrides: Record<string, unknown> = {}) {
   const row = {
-    userId: 'u1', kind: 'password', salt: 'salt', kdf: { algorithm: 'argon2id' }, verifier: 'mac(44)', storedBlob: 'enc(56)',
+    userId: 'u1', kind: 'password', vaultProvider: 'fake', salt: 'salt', kdf: { algorithm: 'argon2id' }, verifier: 'mac(44)', storedBlob: 'enc(56)',
     attemptsLeft: 10, createdAt: new Date('2026-10-01T00:00:00Z'), save: jest.fn(), ...overrides,
   };
   return row;
@@ -88,7 +88,7 @@ describe('putBackup / deleteBackup', () => {
     expect(vault.mac).toHaveBeenCalledWith(AUTH_KEY, { userId: 'u1' });
     expect(vault.encrypt).toHaveBeenCalledWith(BLOB, { userId: 'u1' });
     const row = m.bUpsert.mock.calls[0][0];
-    expect(row).toEqual(expect.objectContaining({ userId: 'u1', verifier: `mac(${AUTH_KEY.length})`, storedBlob: `enc(${BLOB.length})`, attemptsLeft: 10 }));
+    expect(row).toEqual(expect.objectContaining({ userId: 'u1', verifier: `mac(${AUTH_KEY.length})`, storedBlob: `enc(${BLOB.length})`, attemptsLeft: 10, vaultProvider: 'fake' }));
     expect(JSON.stringify(row)).not.toContain(AUTH_KEY);
     expect(JSON.stringify(row)).not.toContain(BLOB);
   });
@@ -217,7 +217,7 @@ describe('restore (password proof)', () => {
 
   beforeEach(() => {
     locked = backupRow();
-    m.bFind.mockImplementation(async (_id: string, opts?: unknown) => (opts ? locked : backupRow({ attemptsLeft: locked.attemptsLeft })));
+    m.bFind.mockImplementation(async (_id: string, opts?: unknown) => (opts ? locked : backupRow({ attemptsLeft: locked.attemptsLeft, vaultProvider: locked.vaultProvider })));
     m.cFind.mockResolvedValue({ id: 'c1', restoreTokenHash: 'vault-mac(tok)' });
     vault.verifyMac.mockImplementation(async (data: string, mac: string) => (data === AUTH_KEY ? true : mac === `vault-mac(${data})`));
   });
@@ -299,6 +299,44 @@ describe('restore (password proof)', () => {
     expect(m.deviceUpdate).toHaveBeenCalledWith({ holdsAccountKey: true }, expect.anything());
     expect(m.cDestroy).toHaveBeenCalled();
     expect(revokeDevice).toHaveBeenCalledWith('u1', OLD, { keepRefreshTokens: true });
+  });
+
+  describe('per-backup provider', () => {
+    const legacy = {
+      name: 'local',
+      mac: jest.fn(), verifyMac: jest.fn(async () => true), encrypt: jest.fn(), decrypt: jest.fn(async () => BLOB),
+    };
+    beforeEach(() => {
+      legacy.verifyMac.mockClear();
+      legacy.decrypt.mockClear();
+      locked = backupRow({ vaultProvider: 'local' });
+    });
+
+    it('verifies and decrypts with the provider recorded on the row, and asks the phone to re-upload', async () => {
+      __setServicesForTests({ legacyKeyVault: legacy });
+      const out = await restore('u1', NEW, 'tok', AUTH_KEY);
+      expect(out).toEqual({ blob: BLOB, rewrap: true });
+      expect(legacy.verifyMac).toHaveBeenCalledWith(AUTH_KEY, 'mac(44)', { userId: 'u1' });
+      expect(legacy.decrypt).toHaveBeenCalledWith('enc(56)', { userId: 'u1' });
+      expect(vault.verifyMac).not.toHaveBeenCalledWith(AUTH_KEY, expect.anything(), expect.anything());
+    });
+
+    it('a backup made by the current provider does not ask for a re-upload', async () => {
+      __setServicesForTests({ legacyKeyVault: legacy });
+      locked = backupRow();
+      expect(await restore('u1', NEW, 'tok', AUTH_KEY)).toEqual({ blob: BLOB });
+      expect(legacy.verifyMac).not.toHaveBeenCalled();
+    });
+
+    it('a provider that is not configured is 503 and no try is spent', async () => {
+      __setServicesForTests({ legacyKeyVault: null });
+      await expect(restore('u1', NEW, 'tok', AUTH_KEY)).rejects.toMatchObject({
+        statusCode: 503, code: 'KEY_VAULT_UNAVAILABLE', message: 'Backups are temporarily unavailable',
+      });
+      expect(locked.save).not.toHaveBeenCalled();
+      expect(m.bUpdate).not.toHaveBeenCalled();
+      expect(m.deviceUpdate).not.toHaveBeenCalled();
+    });
   });
 
   it('a key vault error fails closed (raw error, so 500) and gives the try back', async () => {

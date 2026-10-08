@@ -36,7 +36,7 @@ export interface VaultDocumentCreated {
 }
 
 export interface VaultDocumentResponse extends VaultDocumentCreated {
-  /** The file key sealed to me, or null when no adult has granted it to me yet. */
+  /** The file key sealed to me, or null when no member has granted it to me yet. */
   mySealedKey: string | null;
   pending: boolean;
   /** Signed link to the encrypted file; only present when I hold a key. */

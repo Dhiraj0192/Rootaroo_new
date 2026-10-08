@@ -13,6 +13,7 @@ export interface KdfParams {
 class KeyBackup extends Model {
   declare userId: string;
   declare kind: 'password' | 'recovery_code';
+  declare vaultProvider: string;
   declare salt: string;
   declare kdf: KdfParams;
   declare verifier: string;
@@ -26,6 +27,7 @@ KeyBackup.init(
   {
     userId: { type: DataTypes.UUID, primaryKey: true, field: 'user_id' },
     kind: { type: DataTypes.ENUM('password', 'recovery_code'), allowNull: false },
+    vaultProvider: { type: DataTypes.STRING(16), allowNull: false, defaultValue: 'local', field: 'vault_provider' },
     salt: { type: DataTypes.STRING(64), allowNull: false },
     kdf: { type: DataTypes.JSON, allowNull: false },
     verifier: { type: DataTypes.STRING(255), allowNull: false },

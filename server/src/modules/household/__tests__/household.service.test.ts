@@ -471,7 +471,7 @@ describe('Household Service — Member Management', () => {
       expect(onMemberLostVaultAccess).not.toHaveBeenCalled();
     });
 
-    it('should remove vault keys when a member becomes a child', async () => {
+    it('keeps vault keys when a member becomes a child', async () => {
       (models.HouseholdMember.findOne as jest.Mock)
         .mockResolvedValueOnce({ role: 'admin' })
         .mockResolvedValueOnce({
@@ -481,10 +481,10 @@ describe('Household Service — Member Management', () => {
 
       await changeMemberRole(userId, householdId, otherUserId, { role: 'child' });
 
-      expect(onMemberLostVaultAccess).toHaveBeenCalledWith(otherUserId, householdId, expect.anything());
+      expect(onMemberLostVaultAccess).not.toHaveBeenCalled();
     });
 
-    it('changes the role and removes the vault keys in one transaction', async () => {
+    it('changes the role in one transaction without touching vault keys', async () => {
       const txn = { id: 'txn-role' };
       (models.sequelize.transaction as jest.Mock).mockImplementationOnce((cb: any) => cb(txn));
       const update = jest.fn();
@@ -498,10 +498,10 @@ describe('Household Service — Member Management', () => {
       await changeMemberRole(userId, householdId, otherUserId, { role: 'child' });
 
       expect(update).toHaveBeenCalledWith({ role: 'child' }, { transaction: txn });
-      expect(onMemberLostVaultAccess).toHaveBeenCalledWith(otherUserId, householdId, txn);
+      expect(onMemberLostVaultAccess).not.toHaveBeenCalled();
     });
 
-    it('clears any leftover vault keys when a child is promoted to an adult', async () => {
+    it('does not touch vault keys when a child is promoted to an adult', async () => {
       (models.HouseholdMember.findOne as jest.Mock)
         .mockResolvedValueOnce({ role: 'admin' })
         .mockResolvedValueOnce({
@@ -511,7 +511,7 @@ describe('Household Service — Member Management', () => {
 
       await changeMemberRole(userId, householdId, otherUserId, { role: 'member' });
 
-      expect(onMemberGainedVaultAccess).toHaveBeenCalledWith(otherUserId, householdId, expect.anything());
+      expect(onMemberGainedVaultAccess).not.toHaveBeenCalled();
     });
 
     it('should throw ForbiddenError if requester is not admin', async () => {

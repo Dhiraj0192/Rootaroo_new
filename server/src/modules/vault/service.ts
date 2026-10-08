@@ -25,7 +25,6 @@ import type {
 
 const MAX_STORAGE_BYTES = 2 * 1024 * 1024 * 1024; // 2GB
 const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
-const ADULT_ROLES = ['admin', 'member'];
 const PENDING_GRANTS_LIMIT = 100;
 // Download links stop working soon after access is lost, so they are short and never the cached CDN link.
 const DOWNLOAD_URL_OPTIONS = { ttlSeconds: 300, noCdn: true };
@@ -36,21 +35,20 @@ export async function getUserHousehold(userId: string): Promise<string> {
 
 interface Caller {
   householdId: string | null;
-  isAdult: boolean;
   isAdmin: boolean;
 }
 
-/** Household and adult status, re-read from the database (never from the JWT role claim, F-06). */
+/** Household and admin status, re-read from the database (never from the JWT role claim, F-06). */
 async function getCaller(userId: string): Promise<Caller> {
   const membership = await HouseholdMember.findOne({ where: { userId } });
-  if (!membership) return { householdId: null, isAdult: false, isAdmin: false };
-  return { householdId: membership.householdId, isAdult: ADULT_ROLES.includes(membership.role), isAdmin: membership.role === 'admin' };
+  if (!membership) return { householdId: null, isAdmin: false };
+  return { householdId: membership.householdId, isAdmin: membership.role === 'admin' };
 }
 
-/** Files the caller may see: their own personal files, plus the household's shared files if they are an adult. */
+/** Files the caller may see: their own personal files, plus the household's shared files if they are in a household (children included). */
 function visibleToCaller(userId: string, caller: Caller): Record<string | symbol, unknown> {
   const options: unknown[] = [{ scope: 'personal', uploadedBy: userId }];
-  if (caller.isAdult && caller.householdId) options.push({ scope: 'household', householdId: caller.householdId });
+  if (caller.householdId) options.push({ scope: 'household', householdId: caller.householdId });
   return { [Op.or]: options };
 }
 
@@ -111,23 +109,23 @@ async function checkStorageQuota(userId: string, additionalBytes: number, transa
 }
 
 /**
- * Every user must be a current adult member of the household with an account key; returns their public keys.
- * With a transaction the membership rows are locked (FOR UPDATE), so a removal or demotion running at the
+ * Every user must be a current member of the household (any role) with an account key; returns their public keys.
+ * With a transaction the membership rows are locked (FOR UPDATE), so a removal running at the
  * same time either finishes first (and this fails) or waits until the caller's insert is done.
  */
-async function adultsWithKeys(householdId: string, userIds: string[], transaction?: Transaction): Promise<Map<string, string>> {
+async function membersWithKeys(householdId: string, userIds: string[], transaction?: Transaction): Promise<Map<string, string>> {
   const [members, accountKeys] = await Promise.all([
     HouseholdMember.findAll({
-      where: { householdId, userId: userIds, role: { [Op.in]: ADULT_ROLES } },
+      where: { householdId, userId: userIds },
       ...(transaction ? { transaction, lock: true } : {}),
     }),
     AccountKey.findAll({ where: { userId: userIds }, transaction }),
   ]);
-  const adults = new Set(members.map((m) => m.userId));
+  const memberIds = new Set(members.map((m) => m.userId));
   const publicKeys = new Map(accountKeys.map((k) => [k.userId, k.publicKey]));
   for (const id of userIds) {
-    if (!adults.has(id) || !publicKeys.has(id)) {
-      throw new ValidationError('A file can only be shared with adult household members who have set up their private space');
+    if (!memberIds.has(id) || !publicKeys.has(id)) {
+      throw new ValidationError('A file can only be shared with household members who have set up their private space');
     }
   }
   return publicKeys;
@@ -178,8 +176,7 @@ export async function uploadDocument(
   if (body.scope === 'personal') {
     if (body.keys.length !== 1) throw new ValidationError('A personal file is sealed to you alone');
   } else {
-    if (!caller.isAdult) throw new ForbiddenError('Only adults can add to the household vault');
-    await adultsWithKeys(householdId, body.keys.map((k) => k.userId));
+    await membersWithKeys(householdId, body.keys.map((k) => k.userId));
   }
 
   // Cheap early check; the authoritative one runs under a lock below.
@@ -250,11 +247,11 @@ export async function getDocumentById(documentId: string, userId: string): Promi
   return (await toResponses([document], userId))[0];
 }
 
-// ─── Household members who can be sealed to ───
+// ─── Household members who can be sealed to (everyone, children included) ───
 
 export async function listVaultMembers(userId: string): Promise<VaultMemberResponse[]> {
   const householdId = await getUserHousehold(userId);
-  const members = await HouseholdMember.findAll({ where: { householdId, role: { [Op.in]: ADULT_ROLES } } });
+  const members = await HouseholdMember.findAll({ where: { householdId } });
   const ids = members.map((m) => m.userId);
   const [accountKeys, users] = await Promise.all([
     AccountKey.findAll({ where: { userId: ids } }),
@@ -266,11 +263,11 @@ export async function listVaultMembers(userId: string): Promise<VaultMemberRespo
     .map((k) => ({ userId: k.userId, displayName: names.get(k.userId) ?? '', publicKey: k.publicKey }));
 }
 
-// ─── Pending grants: files I can open that another adult cannot yet ───
+// ─── Pending grants: files I can open that another member cannot yet ───
 
 export async function listPendingGrants(userId: string): Promise<PendingGrantResponse[]> {
   const caller = await getCaller(userId);
-  if (!caller.householdId || !caller.isAdult) return [];
+  if (!caller.householdId) return [];
   const householdId = caller.householdId;
 
   const mine = await VaultDocumentKey.findAll({ where: { userId } });
@@ -285,9 +282,9 @@ export async function listPendingGrants(userId: string): Promise<PendingGrantRes
   });
   if (documents.length === 0) return [];
 
-  const members = await HouseholdMember.findAll({ where: { householdId, role: { [Op.in]: ADULT_ROLES } } });
+  const members = await HouseholdMember.findAll({ where: { householdId } });
   const accountKeys = await AccountKey.findAll({ where: { userId: members.map((m) => m.userId) } });
-  const adults = accountKeys.filter((k) => members.some((m) => m.userId === k.userId));
+  const holdersWithKeys = accountKeys.filter((k) => members.some((m) => m.userId === k.userId));
 
   const allKeys = await VaultDocumentKey.findAll({ where: { documentId: documents.map((d) => d.id) } });
   const holders = new Map<string, Set<string>>();
@@ -299,13 +296,13 @@ export async function listPendingGrants(userId: string): Promise<PendingGrantRes
   const result: PendingGrantResponse[] = [];
   for (const doc of documents) {
     const have = holders.get(doc.id) ?? new Set<string>();
-    const missing = adults.filter((a) => !have.has(a.userId)).map((a) => ({ userId: a.userId, publicKey: a.publicKey }));
+    const missing = holdersWithKeys.filter((a) => !have.has(a.userId)).map((a) => ({ userId: a.userId, publicKey: a.publicKey }));
     if (missing.length > 0) result.push({ documentId: doc.id, mySealedKey: myKeys.get(doc.id)!, missing });
   }
   return result;
 }
 
-// ─── Grant keys to adults who are still pending ───
+// ─── Grant keys to members who are still pending ───
 
 export async function grantKeys(documentId: string, userId: string, grants: SealedKeyInput[]): Promise<void> {
   assertNoDuplicates(grants);
@@ -321,7 +318,7 @@ export async function grantKeys(documentId: string, userId: string, grants: Seal
       if (!myKey) throw new ForbiddenError('You can only grant access to a file you can open');
       if (document.scope !== 'household') throw new ValidationError('Only household files can be shared');
 
-      await adultsWithKeys(document.householdId, grants.map((g) => g.userId), transaction);
+      await membersWithKeys(document.householdId, grants.map((g) => g.userId), transaction);
       await assertNoExistingKeys(documentId, grants, transaction);
       await VaultDocumentKey.bulkCreate(keyRows(documentId, grants), { transaction });
     });
@@ -364,8 +361,8 @@ export async function changeScope(documentId: string, userId: string, body: Chan
     });
   } else {
     const caller = await getCaller(userId);
-    if (!caller.isAdult || caller.householdId !== document.householdId) {
-      throw new ForbiddenError('Only adults can share a file with the household');
+    if (caller.householdId !== document.householdId) {
+      throw new ForbiddenError('Only members of the household can share a file with it');
     }
     // The uploader already holds a key; only other people need one added.
     const added = (body.keys ?? []).filter((k) => k.userId !== userId);
@@ -373,7 +370,7 @@ export async function changeScope(documentId: string, userId: string, body: Chan
     await sequelize.transaction(async (transaction) => {
       await document.reload({ transaction, lock: true });
       if (added.length > 0) {
-        await adultsWithKeys(document.householdId, added.map((k) => k.userId), transaction);
+        await membersWithKeys(document.householdId, added.map((k) => k.userId), transaction);
         await assertNoExistingKeys(documentId, added, transaction);
         await VaultDocumentKey.bulkCreate(keyRows(documentId, added), { transaction });
       }

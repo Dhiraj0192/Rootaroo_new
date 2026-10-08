@@ -136,6 +136,11 @@ describe('backup and restore', () => {
     expect(JSON.stringify(row!.toJSON())).not.toContain(blob);
   });
 
+  it('records which key vault protected the backup', async () => {
+    await withBackup();
+    expect((await KeyBackup.findOne())?.vaultProvider).toBe('local');
+  });
+
   it('only the phone holding the key can set the backup', async () => {
     await withBackup();
     const fresh = await signIn(NEW);

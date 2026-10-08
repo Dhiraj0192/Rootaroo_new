@@ -76,4 +76,6 @@ export interface Services {
   weather: WeatherProvider;
   errors: ErrorReporter;
   keyVault: KeyVaultProvider;
+  /** The local vault, kept only while the current provider is aws-kms and the local secret is still set: lets older backups be opened and re-protected. */
+  legacyKeyVault?: KeyVaultProvider | null;
 }

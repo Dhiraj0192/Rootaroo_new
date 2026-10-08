@@ -1,7 +1,8 @@
 /**
  * The vault as the screens see it: real names in, real names out. Everything
  * sent to the server is ciphertext (file, name, type) plus per-person sealed
- * keys. Household files are only ever sealed to adults whose key we trust.
+ * keys. Household files are sealed to everyone in the household (children
+ * included) whose key we trust.
  */
 
 import { bytesToBase64 } from '../crypto/bytes';
@@ -22,7 +23,7 @@ export class VaultKeyMissingError extends Error {
   }
 }
 
-/** Thrown before sharing when an adult's key is not the one we pinned. */
+/** Thrown before sharing when a member's key is not the one we pinned. */
 export class MemberKeyChangedError extends Error {
   constructor(members) {
     super(`${members.map((m) => m.displayName).join(', ')} has a new key. Compare safety numbers in person before sharing.`);
@@ -34,8 +35,6 @@ export class MemberKeyChangedError extends Error {
 
 export const isKeyMissing = (e) => e?.code === 'vault_key_missing';
 export const isMemberKeyChanged = (e) => e?.code === 'member_key_changed';
-
-const isAdult = (m) => !m.role || m.role !== 'child';
 
 /** fileKey and downloadUrl stay off the enumerable fields so route params and logs never carry them. */
 function hidden(doc, extras) {
@@ -85,10 +84,10 @@ export function createVaultRepo({
     }
   }
 
-  /** Adults we may seal to, with my own key added, or a MemberKeyChangedError. Never includes children. */
-  async function adultRecipients(keys) {
+  /** Household members we may seal to, with my own key added, or a MemberKeyChangedError. */
+  async function memberRecipients(keys) {
     const me = getUserId();
-    const others = (await api.members()).filter((m) => isAdult(m) && m.userId !== me);
+    const others = (await api.members()).filter((m) => m.userId !== me);
     const { trusted, changed } = await checkMemberKeys(others, pins);
     if (changed.length) throw new MemberKeyChangedError(others.filter((m) => changed.includes(m.userId)));
     return [
@@ -119,7 +118,7 @@ export function createVaultRepo({
     async upload({ uri, name, mimeType, scope }) {
       const keys = await getKeys();
       const recipients = scope === 'household'
-        ? await adultRecipients(keys)
+        ? await memberRecipients(keys)
         : [{ userId: getUserId(), publicKey: keys.publicKey }];
       const bytes = await readBytes(uri);
       const sealed = await encryptFile({ bytes, name, mimeType }, recipients);
@@ -167,7 +166,7 @@ export function createVaultRepo({
         return;
       }
       const keys = await getKeys();
-      const recipients = await adultRecipients(keys);
+      const recipients = await memberRecipients(keys);
       const fileKey = await fileKeyFor(doc, keys);
       await api.setScope(doc.id, { scope, keys: await sealFileKeyTo(recipients, fileKey) });
     },
@@ -180,17 +179,17 @@ export function createVaultRepo({
       await api.rename(doc.id, { sealedMeta: await encryptMeta({ name: newName, mimeType }, fileKey) });
     },
 
-    /** Gives newly joined adults access to files I can open. Skips changed keys; returns their ids. */
+    /** Gives newly joined members access to files I can open. Skips changed keys; returns their ids. */
     async grantPending() {
       const keys = await getKeys();
       const pending = await api.pendingGrants();
       if (!pending.length) return { granted: 0, changed: [] };
       const everyone = new Map();
-      for (const p of pending) for (const m of p.missing) if (isAdult(m)) everyone.set(m.userId, m);
+      for (const p of pending) for (const m of p.missing) everyone.set(m.userId, m);
       const { trusted, changed } = await checkMemberKeys([...everyone.values()], pins);
       let granted = 0;
       for (const p of pending) {
-        const missing = p.missing.filter((m) => isAdult(m) && trusted.includes(m.userId));
+        const missing = p.missing.filter((m) => trusted.includes(m.userId));
         if (!missing.length) continue;
         const grants = await grantAccess({ documentId: p.documentId, mySealedKey: p.mySealedKey, missing }, keys.privateKey);
         await api.grant(p.documentId, grants);
@@ -199,10 +198,10 @@ export function createVaultRepo({
       return { granted, changed };
     },
 
-    /** Adults whose key differs from the one we pinned, for the warning banner. */
+    /** Members whose key differs from the one we pinned, for the warning banner. */
     async memberKeyStatus() {
       const me = getUserId();
-      const others = (await api.members()).filter((m) => isAdult(m) && m.userId !== me);
+      const others = (await api.members()).filter((m) => m.userId !== me);
       const { changed } = await checkMemberKeys(others, pins);
       const out = [];
       for (const m of others.filter((x) => changed.includes(x.userId))) {

@@ -1,5 +1,6 @@
 import { loadServicesConfig } from '../config';
 import { createLocalKeyVault, createAwsKmsKeyVault } from '../providers/keyVault';
+import { initServices, getKeyVault, getKeyVaultFor, __resetServicesForTests } from '../index';
 
 const prodBase = {
   NODE_ENV: 'production',
@@ -14,10 +15,44 @@ describe('key vault config', () => {
     expect(warnings).toContain('KEY_VAULT_PROVIDER=local: backups are protected by a development key only');
   });
 
-  it('production refuses the local vault and requires KMS settings', () => {
-    expect(loadServicesConfig({ ...prodBase }).errors).toContain('KEY_VAULT_PROVIDER must be aws-kms in production');
-    expect(loadServicesConfig({ ...prodBase, KEY_VAULT_PROVIDER: 'local', KEY_VAULT_LOCAL_SECRET: 'x'.repeat(64) }).errors)
-      .toContain('KEY_VAULT_PROVIDER must be aws-kms in production');
+  describe('production with the free server-secret vault', () => {
+    const secrets = {
+      JWT_ACCESS_SECRET: 'a'.repeat(64), JWT_REFRESH_SECRET: 'b'.repeat(64), CALENDAR_TOKEN_KEK: 'c'.repeat(64),
+    };
+    const localProd = (extra: Record<string, string> = {}) => loadServicesConfig({
+      ...prodBase, ...secrets, KEY_VAULT_PROVIDER: 'local', KEY_VAULT_LOCAL_SECRET: 'k'.repeat(64), ...extra,
+    });
+
+    it('is accepted with a strong, distinct secret and logs the warning', () => {
+      const { config, errors, warnings } = localProd();
+      expect(errors).toEqual([]);
+      expect(config.keyVault).toBe('local');
+      expect(warnings).toContain(
+        'KEY_VAULT_PROVIDER=local in production: backups are protected by a server secret; switch to aws-kms for hardware protection',
+      );
+    });
+
+    it('needs the secret to be at least 64 characters', () => {
+      expect(localProd({ KEY_VAULT_LOCAL_SECRET: 'k'.repeat(63) }).errors)
+        .toContain('KEY_VAULT_LOCAL_SECRET must be at least 64 characters in production');
+      expect(localProd({ KEY_VAULT_LOCAL_SECRET: '' }).errors)
+        .toContain('KEY_VAULT_LOCAL_SECRET must be at least 64 characters in production');
+    });
+
+    it('needs the secret to differ from the JWT and calendar secrets', () => {
+      for (const name of ['JWT_ACCESS_SECRET', 'JWT_REFRESH_SECRET', 'CALENDAR_TOKEN_KEK']) {
+        expect(localProd({ KEY_VAULT_LOCAL_SECRET: 'z'.repeat(64), [name]: 'z'.repeat(64) }).errors)
+          .toContain(`KEY_VAULT_LOCAL_SECRET must differ from ${name}`);
+      }
+    });
+
+    it('leaving the setting empty is still refused in production', () => {
+      expect(loadServicesConfig({ ...prodBase, ...secrets, KEY_VAULT_LOCAL_SECRET: 'k'.repeat(64) }).errors)
+        .toContain('KEY_VAULT_PROVIDER must be set to local or aws-kms in production');
+    });
+  });
+
+  it('production accepts aws-kms with its KMS settings', () => {
     expect(loadServicesConfig({ ...prodBase, KEY_VAULT_PROVIDER: 'aws-kms' }).errors)
       .toContain('KEY_VAULT_PROVIDER=aws-kms needs KEY_VAULT_REGION, KEY_VAULT_MAC_KEY_ID, KEY_VAULT_ENC_KEY_ID');
     const ok = loadServicesConfig({
@@ -94,5 +129,33 @@ describe('AWS KMS key vault', () => {
     send.mockResolvedValue({ Plaintext: Buffer.from('blob') });
     expect(await vault.decrypt(Buffer.from('c').toString('base64'), { userId: 'u1' })).toBe('blob');
     expect(send.mock.calls[0][0].input).toEqual(expect.objectContaining({ KeyId: 'arn:enc', EncryptionContext: { userId: 'u1' } }));
+  });
+});
+
+describe('getKeyVaultFor', () => {
+  const saved = { ...process.env };
+  afterEach(() => { process.env = { ...saved }; __resetServicesForTests(); });
+  const base = { email: 'log', sms: 'log', push: 'log', storage: 's3', weather: 'open-meteo', monitoring: 'console' } as const;
+
+  it('local current: serves local, nothing else', () => {
+    process.env.KEY_VAULT_LOCAL_SECRET = 'k'.repeat(64);
+    initServices({ ...base, keyVault: 'local' });
+    expect(getKeyVaultFor('local')?.name).toBe('local');
+    expect(getKeyVaultFor('aws-kms')).toBeNull();
+  });
+
+  it('aws-kms current with the local secret still set: local is a legacy provider', () => {
+    Object.assign(process.env, { KEY_VAULT_LOCAL_SECRET: 'k'.repeat(64), KEY_VAULT_REGION: 'ap-south-1', KEY_VAULT_MAC_KEY_ID: 'm', KEY_VAULT_ENC_KEY_ID: 'e' });
+    initServices({ ...base, keyVault: 'aws-kms' });
+    expect(getKeyVault().name).toBe('aws-kms');
+    expect(getKeyVaultFor('aws-kms')?.name).toBe('aws-kms');
+    expect(getKeyVaultFor('local')?.name).toBe('local');
+  });
+
+  it('aws-kms current without the local secret: local is not available', () => {
+    Object.assign(process.env, { KEY_VAULT_REGION: 'ap-south-1', KEY_VAULT_MAC_KEY_ID: 'm', KEY_VAULT_ENC_KEY_ID: 'e' });
+    delete process.env.KEY_VAULT_LOCAL_SECRET;
+    initServices({ ...base, keyVault: 'aws-kms' });
+    expect(getKeyVaultFor('local')).toBeNull();
   });
 });

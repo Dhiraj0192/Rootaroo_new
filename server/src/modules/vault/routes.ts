@@ -37,7 +37,7 @@ router.use(requireEntitlement);
  *           properties:
  *             id: { type: string, format: uuid }
  *             displayName: { type: string }
- *         mySealedKey: { type: string, nullable: true, description: "The file key sealed to your account key (base64, at most 256 bytes). Null while an adult still has to grant it to you." }
+ *         mySealedKey: { type: string, nullable: true, description: "The file key sealed to your account key (base64, at most 256 bytes). Null while a member still has to grant it to you." }
  *         pending: { type: boolean, description: "True when mySealedKey is null" }
  *         downloadUrl: { type: string, nullable: true, description: "Signed link to the encrypted file; only when you hold a key" }
  *     VaultSealedKey:
@@ -59,8 +59,8 @@ router.use(requireEntitlement);
  *     description: |
  *       Multipart. `file` is ciphertext (application/octet-stream, at most 20 MB). `meta` is a JSON string
  *       { scope, sealedMeta, sizeBytes, keys: [{ userId, sealedKey }] }. Your own key is required. A personal file takes
- *       exactly your key. A household file may be sealed to any current adult member who has an account key; adults left
- *       out see the file as pending until another adult grants it. Children cannot be sealed to (400).
+ *       exactly your key. A household file may be sealed to any current household member (children included) who has an account key; members left
+ *       out see the file as pending until another member grants it.
  *     security: [{ bearerAuth: [] }]
  *     requestBody:
  *       required: true
@@ -74,8 +74,8 @@ router.use(requireEntitlement);
  *               meta: { type: string, description: JSON string }
  *     responses:
  *       201: { description: Created }
- *       400: { description: A key is missing, duplicated, or for someone who is not an adult member with an account key }
- *       403: { description: Quota exceeded, or a child tried to add to the household vault }
+ *       400: { description: A key is missing, duplicated, or for someone who is not a household member with an account key }
+ *       403: { description: Quota exceeded }
  */
 router.post('/', vaultUpload, validate(createVaultDocumentSchema), ctrl.uploadDocumentCtrl);
 
@@ -84,7 +84,7 @@ router.post('/', vaultUpload, validate(createVaultDocumentSchema), ctrl.uploadDo
  * /vault:
  *   get:
  *     tags: [Vault]
- *     summary: My personal files and, for adults, the household's shared files
+ *     summary: My personal files and the household's shared files (children included)
  *     security: [{ bearerAuth: [] }]
  *     parameters:
  *       - { in: query, name: cursor, schema: { type: string } }
@@ -112,7 +112,7 @@ router.get('/summary', ctrl.getStorageUsageCtrl);
  * /vault/members:
  *   get:
  *     tags: [Vault]
- *     summary: Adults of my household who have an account key (to seal files to)
+ *     summary: Members of my household (children included) who have an account key (to seal files to)
  *     security: [{ bearerAuth: [] }]
  *     responses:
  *       200: { description: "[{ userId, displayName, publicKey }], including me" }
@@ -124,7 +124,7 @@ router.get('/members', ctrl.listMembersCtrl);
  * /vault/pending-grants:
  *   get:
  *     tags: [Vault]
- *     summary: Household files I can open that some adult cannot yet
+ *     summary: Household files I can open that some member cannot yet
  *     description: My phone seals each file key to the listed public keys and sends them to POST /vault/{id}/keys.
  *     security: [{ bearerAuth: [] }]
  *     responses:
@@ -142,7 +142,7 @@ router.get('/pending-grants', ctrl.listPendingGrantsCtrl);
  *     parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
  *     responses:
  *       200: { description: VaultDocument }
- *       404: { description: Not visible to me (a child, another household, or someone else's personal file) }
+ *       404: { description: Not visible to me (another household, or someone else's personal file) }
  */
 router.get('/:id', validate(documentIdParamSchema), ctrl.getDocumentByIdCtrl);
 
@@ -200,8 +200,8 @@ router.patch('/:id/scope', validate(changeScopeSchema), ctrl.changeScopeCtrl);
  * /vault/{id}/keys:
  *   post:
  *     tags: [Vault]
- *     summary: Grant a household file to adults who do not have a key yet
- *     description: Caller must hold a key for the file (403 otherwise). Each target must be a current adult member with an account key (400) and no key yet (409).
+ *     summary: Grant a household file to members who do not have a key yet
+ *     description: Caller must hold a key for the file (403 otherwise). Each target must be a current household member with an account key (400) and no key yet (409).
  *     security: [{ bearerAuth: [] }]
  *     parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
  *     requestBody:

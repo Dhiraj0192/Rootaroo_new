@@ -97,13 +97,13 @@ describe('upload', () => {
     expect(await decryptMeta(meta.sealedMeta, fileKey)).toEqual({ name: 'diary.txt', mimeType: 'text/plain' });
   });
 
-  it('household files are sealed to the adults and me', async () => {
+  it('household files are sealed to everyone in the household and me', async () => {
     const { repo, api } = build();
     await repo.upload({ uri: 'u', name: 'a.pdf', mimeType: 'application/pdf', scope: 'household' });
     expect(api.upload.mock.calls[0][0].meta.keys.map((k) => k.userId).sort()).toEqual(['me', 'ravi']);
   });
 
-  it('never seals to a child, even if the server lists one with a role', async () => {
+  it('seals to children too: household files are for everyone', async () => {
     const { repo, api } = build();
     api.members.mockResolvedValue([
       { userId: 'me', displayName: 'Me', publicKey: me.publicKey, role: 'admin' },
@@ -111,7 +111,7 @@ describe('upload', () => {
       { userId: 'kid', displayName: 'Kid', publicKey: kid.publicKey, role: 'child' },
     ]);
     await repo.upload({ uri: 'u', name: 'a.pdf', mimeType: 'application/pdf', scope: 'household' });
-    expect(api.upload.mock.calls[0][0].meta.keys.map((k) => k.userId).sort()).toEqual(['me', 'ravi']);
+    expect(api.upload.mock.calls[0][0].meta.keys.map((k) => k.userId).sort()).toEqual(['kid', 'me', 'ravi']);
   });
 
   it('stops with the names of members whose key changed, and uploads nothing', async () => {
@@ -214,7 +214,7 @@ describe('open', () => {
 });
 
 describe('setScope', () => {
-  it('to household seals the key to the current adults', async () => {
+  it('to household seals the key to the current members', async () => {
     const d = await serverDoc('d', [{ userId: 'me', publicKey: me.publicKey }], { scope: 'personal' });
     const { repo, api } = build();
     api.get.mockResolvedValue(d.raw);
@@ -257,7 +257,7 @@ describe('rename', () => {
 });
 
 describe('grantPending', () => {
-  it('seals my key copy to the missing adults and posts the grants', async () => {
+  it('seals my key copy to the missing members and posts the grants', async () => {
     const d = await serverDoc('d', [{ userId: 'me', publicKey: me.publicKey }]);
     const { repo, api } = build();
     api.pendingGrants.mockResolvedValue([{ documentId: 'd', mySealedKey: d.raw.mySealedKey, missing: [{ userId: 'ravi', publicKey: ravi.publicKey }] }]);
@@ -267,6 +267,14 @@ describe('grantPending', () => {
     expect(id).toBe('d');
     const key = await openFileKey(grants[0].sealedKey, ravi.privateKey);
     expect(await decryptMeta(d.raw.sealedMeta, key)).toMatchObject({ name: 'will.pdf' });
+  });
+
+  it('grants to a child who is missing a key too', async () => {
+    const d = await serverDoc('d', [{ userId: 'me', publicKey: me.publicKey }]);
+    const { repo, api } = build();
+    api.pendingGrants.mockResolvedValue([{ documentId: 'd', mySealedKey: d.raw.mySealedKey, missing: [{ userId: 'kid', publicKey: kid.publicKey, role: 'child' }] }]);
+    expect(await repo.grantPending()).toMatchObject({ granted: 1, changed: [] });
+    expect(api.grant.mock.calls[0][1].map((g) => g.userId)).toEqual(['kid']);
   });
 
   it('skips members whose key changed and reports them', async () => {

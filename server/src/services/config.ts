@@ -73,12 +73,20 @@ export function loadServicesConfig(src: NodeJS.ProcessEnv): {
   if (config.keyVault === 'local' && src.KEY_VAULT_LOCAL_SECRET && src.KEY_VAULT_LOCAL_SECRET.length < 32) {
     errors.push('KEY_VAULT_LOCAL_SECRET must be at least 32 characters');
   }
-  if (config.keyVault === 'local') {
+  if (config.keyVault === 'local' && !isProd) {
     warnings.push('KEY_VAULT_PROVIDER=local: backups are protected by a development key only');
   }
 
   if (isProd) {
-    if (config.keyVault !== 'aws-kms') errors.push('KEY_VAULT_PROVIDER must be aws-kms in production');
+    if (!rawVault) errors.push('KEY_VAULT_PROVIDER must be set to local or aws-kms in production');
+    if (config.keyVault === 'local' && rawVault === 'local') {
+      const secret = src.KEY_VAULT_LOCAL_SECRET || '';
+      if (secret.length < 64) errors.push('KEY_VAULT_LOCAL_SECRET must be at least 64 characters in production');
+      for (const name of ['JWT_ACCESS_SECRET', 'JWT_REFRESH_SECRET', 'CALENDAR_TOKEN_KEK']) {
+        if (secret && secret === src[name]) errors.push(`KEY_VAULT_LOCAL_SECRET must differ from ${name}`);
+      }
+      warnings.push('KEY_VAULT_PROVIDER=local in production: backups are protected by a server secret; switch to aws-kms for hardware protection');
+    }
     if (config.email === 'log') errors.push('EMAIL_PROVIDER=log is not allowed in production');
     if (config.sms === 'log') errors.push('SMS_PROVIDER=log is not allowed in production');
     if (config.push === 'log') errors.push('PUSH_PROVIDER=log is not allowed in production');
