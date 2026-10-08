@@ -86,6 +86,30 @@ describe('notifyChatMessage', () => {
     expect((sendToUser as jest.Mock).mock.calls.map((c) => c[0])).toEqual([bob]);
   });
 
+  it('mutes only the device that has the chat open', async () => {
+    participants(sender, alice);
+    sockets[`user:${alice}`] = [
+      { data: { viewingConversationId: conversationId, deviceId: 'd1' } },
+      { data: { deviceId: 'd2' } },
+    ];
+    await notifyChatMessage(msg);
+    expect(sendToUser).toHaveBeenCalledWith(
+      alice, 'chat', 'Asha', 'dinner at 8?',
+      { type: 'chat', conversationId },
+      { skipHistory: true, excludeDeviceIds: ['d1'] },
+    );
+  });
+
+  it('sends nothing when every device is viewing it', async () => {
+    participants(sender, alice);
+    sockets[`user:${alice}`] = [
+      { data: { viewingConversationId: conversationId, deviceId: 'd1' } },
+      { data: { viewingConversationId: conversationId, deviceId: 'd2' } },
+    ];
+    await notifyChatMessage(msg);
+    expect(sendToUser).not.toHaveBeenCalled();
+  });
+
   it('sends at most one push per conversation and recipient per throttle window', async () => {
     expect(CHAT_PUSH_THROTTLE_SECONDS).toBe(30);
     participants(sender, alice);

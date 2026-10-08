@@ -72,12 +72,12 @@ export async function unregisterToken(
 }
 
 /** Get all FCM tokens for a user. */
-export async function getUserTokens(userId: string): Promise<string[]> {
+export async function getUserTokens(userId: string): Promise<Array<{ token: string; deviceId: string | null }>> {
   const tokens = await DeviceToken.findAll({
     where: { userId },
-    attributes: ['token'],
+    attributes: ['token', 'deviceId'],
   });
-  return tokens.map((t) => t.token);
+  return tokens.map((t) => ({ token: t.token, deviceId: t.deviceId ?? null }));
 }
 
 // ── Notification History ──
@@ -232,7 +232,12 @@ export async function sendToUser(
   title: string,
   body?: string,
   data?: Record<string, unknown>,
-  options?: { skipPush?: boolean; skipHistory?: boolean },
+  options?: {
+    skipPush?: boolean;
+    skipHistory?: boolean;
+    /** Devices to leave out (e.g. the one already looking at the chat); tokens with no device are kept. */
+    excludeDeviceIds?: string[];
+  },
 ): Promise<void> {
   if (!options?.skipHistory) {
     await NotificationHistory.create({
@@ -257,7 +262,10 @@ export async function sendToUser(
 
   // Deliver via push (skip for self-actions — history only)
   if (!options?.skipPush) {
-    const tokens = await getUserTokens(userId);
+    const exclude = new Set(options?.excludeDeviceIds ?? []);
+    const tokens = (await getUserTokens(userId))
+      .filter((t) => !t.deviceId || !exclude.has(t.deviceId))
+      .map((t) => t.token);
     if (tokens.length > 0) {
       // Badge mirrors the in-app unread count.
       const badge = await NotificationHistory.count({ where: { userId, isRead: false } });

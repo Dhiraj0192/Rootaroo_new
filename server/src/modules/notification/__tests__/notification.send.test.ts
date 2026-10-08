@@ -36,6 +36,30 @@ describe('sendToUser', () => {
     expect(sendExpoPush).toHaveBeenCalledTimes(1);
   });
 
+  describe('excludeDeviceIds', () => {
+    const tokens = [
+      { token: 'ExponentPushToken[a]', deviceId: 'd1' },
+      { token: 'ExponentPushToken[b]', deviceId: 'd2' },
+      { token: 'ExponentPushToken[c]', deviceId: null },
+    ];
+
+    it('pushes only to tokens of other devices, keeping tokens with no device', async () => {
+      (DeviceToken.findAll as jest.Mock).mockResolvedValue(tokens);
+      await sendToUser(userId, 'chat', 'Asha', 'hi', {}, { skipHistory: true, excludeDeviceIds: ['d1'] });
+      await flush();
+      expect(sendExpoPush).toHaveBeenCalledWith(
+        ['ExponentPushToken[b]', 'ExponentPushToken[c]'], 'Asha', 'hi', {}, { badge: 3 },
+      );
+    });
+
+    it('does not push when every token is excluded', async () => {
+      (DeviceToken.findAll as jest.Mock).mockResolvedValue(tokens.slice(0, 1));
+      await sendToUser(userId, 'chat', 'Asha', 'hi', {}, { skipHistory: true, excludeDeviceIds: ['d1'] });
+      await flush();
+      expect(sendExpoPush).not.toHaveBeenCalled();
+    });
+  });
+
   it.each([
     ['chat', 'chatMessage'],
     ['task_completed', 'taskCompleted'],

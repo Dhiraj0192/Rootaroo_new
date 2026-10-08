@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { Op } from 'sequelize';
 import { addDays } from 'date-fns';
 import { formatInTimeZone, fromZonedTime } from 'date-fns-tz';
@@ -5,6 +6,7 @@ import {
   sequelize, CampaignSend, CheckIn, Device, FeedPost, Household, HouseholdMember,
   NotificationPreference, Task, TaskAssignee, User,
 } from '../../database/models';
+import redis from '../../config/redis';
 import { isEntitledBatch } from '../billing/entitlement';
 import { sendToUser } from '../notification/service';
 import logger from '../../shared/utils/logger';
@@ -21,11 +23,26 @@ export interface CampaignDeps {
   enabledRules(): Promise<Set<CampaignRule>>;
   lastLine(userId: string, rule: CampaignRule): Promise<string | null>;
   send(userId: string, rule: CampaignRule, line: string): Promise<void>;
-  record(entry: { userId: string; rule: CampaignRule; line: string; sentAt: Date }): Promise<void>;
+  /** Claims the send (counts against the cap) and returns the claim's id. */
+  record(entry: { userId: string; rule: CampaignRule; line: string; sentAt: Date }): Promise<string>;
+  /** Gives a claim back after a failed send. */
+  unrecord(recordId: string): Promise<void>;
+  /** False means another run (or instance) is already going, or the lock could not be checked. */
+  acquireLock(): Promise<boolean>;
+  releaseLock?(): Promise<void>;
 }
 
-/** Returns how many pushes went out. A failed send is logged and skipped, so it isn't recorded against the cap. */
+/** Returns how many pushes went out. Each send is claimed before it is pushed and un-claimed if the push fails. */
 export async function runCampaigns(now: Date, deps: CampaignDeps): Promise<number> {
+  if (!(await deps.acquireLock())) return 0;
+  try {
+    return await runLocked(now, deps);
+  } finally {
+    await deps.releaseLock?.().catch((err) => logger.warn('[Campaigns] lock release failed:', err));
+  }
+}
+
+async function runLocked(now: Date, deps: CampaignDeps): Promise<number> {
   const on = await deps.enabledRules();
   if (on.size === 0) return 0;
 
@@ -37,20 +54,42 @@ export async function runCampaigns(now: Date, deps: CampaignDeps): Promise<numbe
 
   let sent = 0;
   for (const c of selectSends(candidates, recent, now, tipsOff)) {
+    let recordId: string | null = null;
     try {
       const line = pickLine(c.rule, c.vars, Math.random, await deps.lastLine(c.userId, c.rule));
+      // Claim first: a crash between send and record would otherwise let the next run send again.
+      recordId = await deps.record({ userId: c.userId, rule: c.rule, line, sentAt: now });
       await deps.send(c.userId, c.rule, line);
-      await deps.record({ userId: c.userId, rule: c.rule, line, sentAt: now });
       sent++;
     } catch (err) {
       logger.error(`[Campaigns] ${c.rule} to ${c.userId} failed:`, err);
+      if (recordId) await deps.unrecord(recordId).catch((e) => logger.error('[Campaigns] unrecord failed:', e));
     }
   }
   return sent;
 }
 
+const LOCK_KEY = 'campaigns:run-lock';
+const LOCK_TTL_SECONDS = 3000;
+const instanceId = randomUUID();
+
 export function defaultCampaignDeps(): CampaignDeps {
   return {
+    async acquireLock() {
+      try {
+        return (await redis.set(LOCK_KEY, instanceId, 'EX', LOCK_TTL_SECONDS, 'NX')) === 'OK';
+      } catch (err) {
+        logger.warn('[Campaigns] lock unavailable, skipping run:', err); // fail closed: a double send is worse than a late one
+        return false;
+      }
+    },
+    async releaseLock() {
+      // Only delete our own lock; if it expired and another instance took it, leave it.
+      await redis.eval(
+        "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
+        1, LOCK_KEY, instanceId,
+      );
+    },
     gatherCandidates,
     enabledRules,
     async recentSends(since) {
@@ -73,7 +112,11 @@ export function defaultCampaignDeps(): CampaignDeps {
       await sendToUser(userId, 'campaign', 'Rootaroo', line, { type: 'campaign', rule }, { skipHistory: true });
     },
     async record({ userId, rule, line, sentAt }) {
-      await CampaignSend.create({ userId, rule, line, sentAt });
+      const row = await CampaignSend.create({ userId, rule, line, sentAt });
+      return row.id;
+    },
+    async unrecord(recordId) {
+      await CampaignSend.destroy({ where: { id: recordId } });
     },
   };
 }

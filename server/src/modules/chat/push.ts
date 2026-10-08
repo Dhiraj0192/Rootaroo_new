@@ -37,12 +37,18 @@ export async function broadcastToParticipants(
   }
 }
 
-async function isViewing(userId: string, conversationId: string): Promise<boolean> {
+/**
+ * Which of the user's devices have this chat open. `all` means every connected
+ * socket is viewing it, so there is nobody left to notify.
+ */
+async function viewingState(userId: string, conversationId: string): Promise<{ all: boolean; viewingDeviceIds: string[] }> {
   try {
     const sockets = await getIO().in(`user:${userId}`).fetchSockets();
-    return sockets.some((s) => s.data?.viewingConversationId === conversationId);
+    const viewing = sockets.filter((s) => s.data?.viewingConversationId === conversationId);
+    const viewingDeviceIds = [...new Set(viewing.map((s) => s.data?.deviceId as string | undefined).filter((d): d is string => !!d))];
+    return { all: sockets.length > 0 && viewing.length === sockets.length, viewingDeviceIds };
   } catch {
-    return false;
+    return { all: false, viewingDeviceIds: [] };
   }
 }
 
@@ -70,9 +76,14 @@ export async function notifyChatMessage(args: {
     const recipients = (await participantIds(conversationId)).filter((id) => id !== senderId);
     const preview = messagePreview(type, content);
     await Promise.all(recipients.map(async (userId) => {
-      if (await isViewing(userId, conversationId)) return;
+      const { all, viewingDeviceIds } = await viewingState(userId, conversationId);
+      if (all) return;
       if (!(await claimPushSlot(conversationId, userId))) return;
-      await sendToUser(userId, 'chat', senderName, preview, { type: 'chat', conversationId }, { skipHistory: true })
+      // Other devices still get the push; only the one looking at the chat is muted.
+      const options = viewingDeviceIds.length > 0
+        ? { skipHistory: true, excludeDeviceIds: viewingDeviceIds }
+        : { skipHistory: true };
+      await sendToUser(userId, 'chat', senderName, preview, { type: 'chat', conversationId }, options)
         .catch((e: Error) => logger.warn('[Push] Chat notify failed:', e.message));
     }));
   } catch (e) {
