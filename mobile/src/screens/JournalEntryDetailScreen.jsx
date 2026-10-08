@@ -16,10 +16,29 @@ import { format, parseISO } from "date-fns";
 import { colors, fonts, goldButton, radius, spacing } from '../shared/theme';
 import { GoldFill } from '../shared/components/GoldButton';
 import { journalApi } from "../shared/api/journal";
+import { getJournalRepo } from "../shared/journal/journalRepo";
+import { countWords } from "../shared/journal/journalStats";
 import { moodById, moodIcon } from "../shared/constants/journalMoods";
 import ConfirmSheet from "../components/ConfirmSheet";
 import ErrorState from "../components/ErrorState";
 import { showAlert } from "../shared/services/themedAlert";
+
+/** A photo decrypted on the phone and shown from memory; nothing is cached on disk. */
+function EncryptedPhoto({ media, entryKey }) {
+  const [uri, setUri] = useState(null);
+  useEffect(() => {
+    let live = true;
+    getJournalRepo()
+      .loadPhoto(media, entryKey)
+      .then((u) => live && setUri(u))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [media, entryKey]);
+  if (!uri) return <View style={styles.mediaItem} />;
+  return <Image source={{ uri }} style={styles.mediaItem} cachePolicy="none" />;
+}
 
 export default function JournalEntryDetailScreen({ navigation, route }) {
   const insets = useSafeAreaInsets();
@@ -34,7 +53,7 @@ export default function JournalEntryDetailScreen({ navigation, route }) {
 
   const load = useCallback(async () => {
     try {
-      const result = await journalApi.getById(entryId);
+      const result = await getJournalRepo().loadEntry(entryId);
       setEntry(result);
       setFailed(false);
     } catch {
@@ -58,8 +77,8 @@ export default function JournalEntryDetailScreen({ navigation, route }) {
     : null;
   useEffect(() => {
     if (!entryDayKey) return;
-    journalApi
-      .onThisDay(entryDayKey)
+    getJournalRepo()
+      .onThisDayView(entryDayKey)
       .then(setOnThisDay)
       .catch(() => setOnThisDay([]));
   }, [entryDayKey]);
@@ -110,6 +129,7 @@ export default function JournalEntryDetailScreen({ navigation, route }) {
   const date = parseISO(entry.createdAt);
   const mood = moodById(entry.mood);
   const anniversary = onThisDay[0];
+  const words = countWords(entry.text);
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
@@ -128,10 +148,14 @@ export default function JournalEntryDetailScreen({ navigation, route }) {
         <TouchableOpacity
           onPress={() =>
             showAlert("Entry options", null, [
-              {
-                text: "Edit entry",
-                onPress: () => navigation.navigate("JournalEditor", { entry }),
-              },
+              ...(entry.unreadable
+                ? []
+                : [
+                    {
+                      text: "Edit entry",
+                      onPress: () => navigation.navigate("JournalEditor", { entry }),
+                    },
+                  ]),
               {
                 text: "Delete entry",
                 style: "destructive",
@@ -168,25 +192,20 @@ export default function JournalEntryDetailScreen({ navigation, route }) {
           <View style={styles.headlineText}>
             <Text style={styles.date}>{format(date, "EEEE, MMMM d")}</Text>
             <Text style={styles.meta}>
-              {format(date, "h:mmaaa")} · {entry.wordCount}{" "}
-              {entry.wordCount === 1 ? "word" : "words"}
+              {format(date, "h:mmaaa")}
+              {entry.unreadable
+                ? ""
+                : ` · ${words} ${words === 1 ? "word" : "words"}`}
             </Text>
           </View>
         </View>
 
-        {entry.content ? (
-          <Text style={styles.body}>{entry.content}</Text>
-        ) : null}
+        {entry.text ? <Text style={styles.body}>{entry.text}</Text> : null}
 
         {entry?.media?.length > 0 ? (
           <View style={styles.mediaGrid}>
             {entry.media.map((item) => (
-              <Image
-                key={item.id}
-                source={{ uri: item.thumbnailUrl || item.mediaUrl, cacheKey: item.id }}
-                style={styles.mediaItem}
-                cachePolicy="disk"
-              />
+              <EncryptedPhoto key={item.id} media={item} entryKey={entry.entryKey} />
             ))}
           </View>
         ) : null}
@@ -230,14 +249,16 @@ export default function JournalEntryDetailScreen({ navigation, route }) {
       <View
         style={[styles.actions, { paddingBottom: insets.bottom + spacing.lg }]}
       >
-        <TouchableOpacity
-          style={styles.editBtn}
-          onPress={() => navigation.navigate("JournalEditor", { entry })}
-          activeOpacity={0.85}
-        >
-          <GoldFill radius={radius.md} />
-          <Text style={styles.editBtnText}>Edit entry</Text>
-        </TouchableOpacity>
+        {entry.unreadable ? null : (
+          <TouchableOpacity
+            style={styles.editBtn}
+            onPress={() => navigation.navigate("JournalEditor", { entry })}
+            activeOpacity={0.85}
+          >
+            <GoldFill radius={radius.md} />
+            <Text style={styles.editBtnText}>Edit entry</Text>
+          </TouchableOpacity>
+        )}
         <TouchableOpacity
           style={styles.deleteBtn}
           onPress={() => setConfirmingDelete(true)}

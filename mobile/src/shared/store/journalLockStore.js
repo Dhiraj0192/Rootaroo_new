@@ -51,6 +51,8 @@ export const useJournalLockStore = create((set, get) => ({
   },
 
   onAppStateChange: (nextState, now = Date.now()) => {
+    // Decrypted journal keys are dropped on the same schedule as the lock.
+    require('../journal/journalRepo').peekJournalRepo()?.onAppStateChange(nextState, now);
     const { enabled, backgroundedAt } = get();
     if (nextState === 'background') {
       if (backgroundedAt === null) set({ backgroundedAt: now });

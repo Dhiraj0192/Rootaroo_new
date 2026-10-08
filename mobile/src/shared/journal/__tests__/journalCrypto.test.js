@@ -73,3 +73,15 @@ describe('photo encryption', () => {
     expect(Buffer.from(a.slice(0, 12)).equals(Buffer.from(b.slice(0, 12)))).toBe(false);
   });
 });
+
+describe('editing keeps the entry key', () => {
+  it('re-encrypting with the existing key still opens old attachments', async () => {
+    const k = await generateAccountKeyPair();
+    const first = await encryptEntry({ text: 'one', mood: null, tags: [] }, k.publicKey);
+    const photo = await encryptAttachment(bytes(20), first.entryKey);
+    const second = await encryptEntry({ text: 'two', mood: 'calm', tags: [] }, k.publicKey, first.entryKey);
+    expect(second.sealedKey).not.toBe(first.sealedKey);
+    const key = await openEntryKey(second.sealedKey, k.privateKey);
+    expect(Array.from(await decryptAttachment(photo, key))).toEqual(Array.from(bytes(20)));
+  });
+});

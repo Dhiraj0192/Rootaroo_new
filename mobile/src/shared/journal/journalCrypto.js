@@ -12,8 +12,9 @@ export const JOURNAL_FORMAT = 1;
 const ENTRY_AAD = utf8('rootaroo-journal-v1');
 const MEDIA_AAD = utf8('rootaroo-journal-media-v1');
 
-export async function encryptEntry({ text, mood, tags }, accountPublicKey) {
-  const entryKey = randomBytes(32);
+/** Pass `existingEntryKey` when editing so photos already stored under that key stay readable. */
+export async function encryptEntry({ text, mood, tags }, accountPublicKey, existingEntryKey) {
+  const entryKey = existingEntryKey || randomBytes(32);
   const key = await aesKeyFromBytes(entryKey);
   const plaintext = utf8(JSON.stringify({ v: JOURNAL_FORMAT, text, mood, tags }));
   const ciphertext = bytesToBase64(await aesEncrypt(key, plaintext, ENTRY_AAD));
