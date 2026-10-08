@@ -12,6 +12,7 @@ import {
   User,
 } from '../../database/models';
 import { NotFoundError, ForbiddenError, ValidationError } from '../../shared/utils/errors';
+import { assertOwnUploadKey } from '../../shared/utils/uploadKeys';
 import { getUserHousehold as getUserHouseholdCore } from '../../shared/utils/household';
 import { getSignedUrl } from '../../shared/utils/s3';
 import { getIO } from '../../shared/utils/socket';
@@ -384,6 +385,9 @@ export async function sendMessage(
   if (!body.content && (!body.mediaIds || body.mediaIds.length === 0) && !body.mediaUrl) {
     throw new ValidationError('Message must contain content or media');
   }
+
+  // Checked before anything is written: the key is later signed into a link.
+  if (body.mediaUrl) assertOwnUploadKey(body.mediaUrl, userId, ['chat/voice', 'chat/image']);
 
   let mediaUrl: string | null = null;
   let type: 'text' | 'image' | 'voice' = 'text';

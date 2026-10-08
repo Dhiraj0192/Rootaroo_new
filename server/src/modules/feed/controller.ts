@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { AuthenticatedRequest } from '../../shared/middleware/auth';
 import * as feedService from './service';
 import { uploadBuffer, getSignedUrl } from '../../shared/utils/s3';
+import { userUploadFolder } from '../../shared/utils/uploadKeys';
 import { resizeImageBuffer } from '../../shared/utils/image';
 import { extractVideoPosterFrame } from '../../shared/utils/videoThumbnail';
 import logger from '../../shared/utils/logger';
@@ -100,7 +101,7 @@ export async function uploadMedia(req: Request, res: Response, next: NextFunctio
         const isVideo = f.mimetype.startsWith('video/');
         const result = await uploadBuffer(
           f.buffer,
-          isVideo ? 'feed/videos' : 'feed/images',
+          userUploadFolder(isVideo ? 'feed/videos' : 'feed/images', getUserId(req)),
           f.mimetype,
           f.originalname.split('.').pop(),
         );
@@ -117,7 +118,7 @@ export async function uploadMedia(req: Request, res: Response, next: NextFunctio
         try {
           const sourceBuffer = isVideo ? await extractVideoPosterFrame(f.buffer) : f.buffer;
           const thumbBuffer = await resizeImageBuffer(sourceBuffer, { width: 480 });
-          const thumbResult = await uploadBuffer(thumbBuffer, 'feed/thumbnails', 'image/jpeg', 'jpg');
+          const thumbResult = await uploadBuffer(thumbBuffer, userUploadFolder('feed/thumbnails', getUserId(req)), 'image/jpeg', 'jpg');
           thumbnailFileName = thumbResult.key;
         } catch (error) {
           // A malformed/unusual video (or missing ffmpeg codec support) must

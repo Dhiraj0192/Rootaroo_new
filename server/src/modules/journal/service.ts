@@ -3,6 +3,7 @@ import { Op } from 'sequelize';
 import { formatInTimeZone, fromZonedTime } from 'date-fns-tz';
 import { JournalEntry, JournalMedia, Household } from '../../database/models';
 import { NotFoundError } from '../../shared/utils/errors';
+import { assertOwnUploadKey } from '../../shared/utils/uploadKeys';
 import { getUserHousehold as getUserHouseholdCore } from '../../shared/utils/household';
 import { getSignedUrl } from '../../shared/utils/s3';
 import { MOOD_VALUES } from './validation';
@@ -106,6 +107,15 @@ async function toEntryResponse(entry: JournalEntry): Promise<JournalEntryRespons
   };
 }
 
+// Keys come from the client and are later signed into download links, so they
+// must be ones this user uploaded — never another user's journal or vault file.
+function assertOwnMediaKeys(userId: string, media?: EntryMediaInput[]): void {
+  for (const m of media ?? []) {
+    assertOwnUploadKey(m.mediaUrl, userId, ['journal/images']);
+    if (m.thumbnailUrl) assertOwnUploadKey(m.thumbnailUrl, userId, ['journal/thumbnails']);
+  }
+}
+
 /**
  * Journal entries are private to the author — every query here filters by
  * BOTH householdId and userId, on reads as well as writes, with no
@@ -119,6 +129,7 @@ export async function createEntry(
   body: CreateEntryBody,
 ): Promise<JournalEntryResponse> {
   const householdId = await getUserHousehold(userId);
+  assertOwnMediaKeys(userId, body.media);
 
   const entry = await JournalEntry.create({
     id: uuidv4(),
@@ -212,6 +223,7 @@ export async function updateEntry(
     where: { id: entryId, householdId, userId },
   });
   if (!entry) throw new NotFoundError('Journal entry');
+  assertOwnMediaKeys(userId, body.media?.filter((m): m is EntryMediaInput => !('id' in m)));
 
   // PATCH semantics: only the keys the client actually sent are touched, so
   // saving a mood from the detail sheet can't blank the entry's tags.

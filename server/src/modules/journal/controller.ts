@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { AuthenticatedRequest } from '../../shared/middleware/auth';
 import * as journalService from './service';
 import { uploadBuffer, getSignedUrl } from '../../shared/utils/s3';
+import { userUploadFolder } from '../../shared/utils/uploadKeys';
 import { resizeImageBuffer } from '../../shared/utils/image';
 
 function getUserId(req: Request): string {
@@ -90,7 +91,7 @@ export async function uploadMedia(req: Request, res: Response, next: NextFunctio
       files.map(async (f) => {
         const result = await uploadBuffer(
           f.buffer,
-          'journal/images',
+          userUploadFolder('journal/images', getUserId(req)),
           f.mimetype,
           f.originalname.split('.').pop(),
         );
@@ -98,7 +99,7 @@ export async function uploadMedia(req: Request, res: Response, next: NextFunctio
         // Compressed thumbnail so the entry list/media grid doesn't download
         // the full-resolution original for a small tile.
         const thumbBuffer = await resizeImageBuffer(f.buffer, { width: 480 });
-        const thumbResult = await uploadBuffer(thumbBuffer, 'journal/thumbnails', 'image/jpeg', 'jpg');
+        const thumbResult = await uploadBuffer(thumbBuffer, userUploadFolder('journal/thumbnails', getUserId(req)), 'image/jpeg', 'jpg');
 
         // `fileName`/`thumbnailFileName` are S3 keys — persist as
         // `mediaUrl`/`thumbnailUrl` when creating the entry. `url`/

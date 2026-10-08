@@ -124,6 +124,26 @@ describe('Auth Service — Update Profile', () => {
     expect(user.save).toHaveBeenCalled();
   });
 
+  it("refuses an avatar key that isn't the caller's own upload", async () => {
+    const user = fakeUser() as any;
+    (models.User.findByPk as jest.Mock).mockResolvedValue(user);
+
+    for (const avatarUrl of [`avatars/other-user/a.jpg`, 'vault/h1/secret', 'journal/images/other/x.jpg', 'http://169.254.169.254/x']) {
+      await expect(updateProfile(user.id, { avatarUrl })).rejects.toThrow("That file isn't yours");
+    }
+    expect(user.save).not.toHaveBeenCalled();
+  });
+
+  it("accepts the caller's own avatar upload and an outside https photo link", async () => {
+    const user = fakeUser() as any;
+    (models.User.findByPk as jest.Mock).mockResolvedValue(user);
+
+    await updateProfile(user.id, { avatarUrl: `avatars/${user.id}/a.jpg` });
+    expect(user.avatarUrl).toBe(`avatars/${user.id}/a.jpg`);
+    await updateProfile(user.id, { avatarUrl: 'https://lh3.googleusercontent.com/a/photo' });
+    expect(user.avatarUrl).toBe('https://lh3.googleusercontent.com/a/photo');
+  });
+
   it('should throw if the new phone number already belongs to another account', async () => {
     const user = fakeUser({ id: 'user-a', phone: null });
     const otherUser = fakeUser({ id: 'user-b', phone: '5550100192' });

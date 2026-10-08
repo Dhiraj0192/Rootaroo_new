@@ -13,6 +13,7 @@ import { onPurchaserDeleted, reportPurchaserDeletionFailure } from '../billing/d
 import { jwtVerify, createRemoteJWKSet } from 'jose';
 import { hashOtpCode, MAX_OTP_ATTEMPTS } from '../../shared/utils/otp';
 import { UnauthorizedError, ConflictError, NotFoundError, AppError } from '../../shared/utils/errors';
+import { assertOwnUploadKey } from '../../shared/utils/uploadKeys';
 import { getEmail, getSms } from '../../services';
 import { upsertDevice, touchDevice } from '../device/service';
 import type { DeviceInfo } from '../device/types';
@@ -195,6 +196,9 @@ export async function updateProfile(
 ): Promise<UserResponse> {
   const user = await User.findByPk(userId);
   if (!user) throw new NotFoundError('User');
+
+  // Own upload, or a Google/Apple photo link; never an arbitrary storage key.
+  if (body.avatarUrl) assertOwnUploadKey(body.avatarUrl, userId, ['avatars'], { allowExternalUrl: true });
 
   if (body.displayName !== undefined) user.displayName = body.displayName;
   if (body.avatarUrl !== undefined) user.avatarUrl = body.avatarUrl;
@@ -744,8 +748,12 @@ export async function registerPhone(body: RegisterPhoneBody, device?: DeviceInfo
     throw new ConflictError('An account with this phone number already exists. Please sign in.');
   }
   if (!user) {
+    const id = uuidv4();
+    // The account doesn't exist yet, so nothing can have been uploaded under
+    // it: only an outside photo link is acceptable here.
+    if (body.avatarUrl) assertOwnUploadKey(body.avatarUrl, id, ['avatars'], { allowExternalUrl: true });
     user = await User.create({
-      id: uuidv4(),
+      id,
       email,
       passwordHash: '',
       displayName: body.displayName,

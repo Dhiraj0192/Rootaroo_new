@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import * as chatService from './service';
 import { uploadBuffer } from '../../shared/utils/s3';
+import { userUploadFolder } from '../../shared/utils/uploadKeys';
 
 function getUserId(req: Request): string {
   return (req as any).user!.userId;
@@ -22,7 +23,7 @@ export async function uploadVoiceCtrl(
       return;
     }
     const durationSeconds = req.body.durationSeconds ? Number(req.body.durationSeconds) : null;
-    const result = await uploadBuffer(file.buffer, 'chat/voice', file.mimetype, file.originalname.split('.').pop());
+    const result = await uploadBuffer(file.buffer, userUploadFolder('chat/voice', getUserId(req)), file.mimetype, file.originalname.split('.').pop());
     // `url` here is the S3 key, not a real URL — the mobile client sends it
     // straight back as `mediaUrl` on the message body (no preview render in
     // between), and the message-list response resolves it to a signed URL
@@ -47,7 +48,7 @@ export async function uploadChatImageCtrl(
       res.status(400).json({ success: false, error: 'No file provided' });
       return;
     }
-    const result = await uploadBuffer(file.buffer, 'chat/image', file.mimetype, file.originalname.split('.').pop());
+    const result = await uploadBuffer(file.buffer, userUploadFolder('chat/image', getUserId(req)), file.mimetype, file.originalname.split('.').pop());
     // Same shape as uploadVoiceCtrl — `url` is the S3 key, resolved to a
     // signed URL on read via chat/service.ts.
     res.status(201).json({

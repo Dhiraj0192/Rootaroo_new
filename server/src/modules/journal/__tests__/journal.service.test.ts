@@ -80,17 +80,17 @@ describe('Journal Service', () => {
     });
 
     it('should create an entry with media', async () => {
-      const media = [{ id: 'm1', mediaUrl: 'https://cloudinary.com/photo.jpg', mediaType: 'photo', thumbnailUrl: null, fileSizeBytes: 1000 }];
+      const media = [{ id: 'm1', mediaUrl: `journal/images/${userId}/photo.jpg`, mediaType: 'photo', thumbnailUrl: null, fileSizeBytes: 1000 }];
       const entry = mockEntry({ content: null, media });
       modelsMock.JournalEntry.create.mockResolvedValue(entry);
       modelsMock.JournalEntry.findByPk.mockResolvedValue(entry);
 
       const result = await createEntry(userId, {
-        media: [{ mediaUrl: 'https://cloudinary.com/photo.jpg', mediaType: 'photo', fileSizeBytes: 1000 }],
+        media: [{ mediaUrl: `journal/images/${userId}/photo.jpg`, mediaType: 'photo', fileSizeBytes: 1000 }],
       });
 
       expect(modelsMock.JournalMedia.bulkCreate).toHaveBeenCalledWith([
-        expect.objectContaining({ entryId, mediaUrl: 'https://cloudinary.com/photo.jpg', mediaType: 'photo' }),
+        expect.objectContaining({ entryId, mediaUrl: `journal/images/${userId}/photo.jpg`, mediaType: 'photo' }),
       ]);
       expect(result.media).toHaveLength(1);
     });
@@ -99,6 +99,16 @@ describe('Journal Service', () => {
       modelsMock.HouseholdMember.findOne.mockResolvedValue(null);
 
       await expect(createEntry(userId, { content: 'Hi' })).rejects.toThrow(ForbiddenError);
+    });
+
+    it("refuses to attach someone else's upload, so it can't be turned into a download link", async () => {
+      for (const mediaUrl of [`journal/images/${otherUserId}/photo.jpg`, `vault/${householdId}/secret`, 'https://example.com/x.jpg']) {
+        await expect(createEntry(userId, { media: [{ mediaUrl, mediaType: 'photo' }] } as any)).rejects.toThrow(ForbiddenError);
+      }
+      await expect(createEntry(userId, {
+        media: [{ mediaUrl: `journal/images/${userId}/p.jpg`, thumbnailUrl: `journal/thumbnails/${otherUserId}/t.jpg`, mediaType: 'photo' }],
+      } as any)).rejects.toThrow(ForbiddenError);
+      expect(modelsMock.JournalEntry.create).not.toHaveBeenCalled();
     });
   });
 

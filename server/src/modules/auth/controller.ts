@@ -3,6 +3,7 @@ import { AuthenticatedRequest } from '../../shared/middleware/auth';
 import * as authService from './service';
 import { readDeviceInfo } from '../../shared/middleware/deviceContext';
 import { uploadBuffer } from '../../shared/utils/s3';
+import { userUploadFolder } from '../../shared/utils/uploadKeys';
 import { resizeImageBuffer } from '../../shared/utils/image';
 import type { AuthResponse, AuthTokens } from './types';
 
@@ -137,7 +138,7 @@ export async function uploadAvatarCtrl(req: Request, res: Response, next: NextFu
     // mobile clients don't download a full-resolution original for a tiny
     // thumbnail.
     const resized = await resizeImageBuffer(file.buffer, { width: 256 });
-    const result = await uploadBuffer(resized, 'avatars', 'image/jpeg', 'jpg');
+    const result = await uploadBuffer(resized, userUploadFolder('avatars', auth.user!.userId), 'image/jpeg', 'jpg');
     const user = await authService.updateProfile(auth.user!.userId, { avatarUrl: result.key });
     res.status(200).json({ success: true, data: { avatarUrl: user.avatarUrl, user } });
   } catch (e) { next(e); }

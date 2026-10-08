@@ -175,6 +175,37 @@ describe('Feed Service', () => {
       expect(modelsMock.FeedPost.create).toHaveBeenCalled();
     });
 
+    it("refuses someone else's upload as post media", async () => {
+      (modelsMock.HouseholdMember.findOne as jest.Mock).mockResolvedValue({ householdId });
+
+      for (const mediaUrl of [`feed/images/${otherUserId}/a.jpg`, `vault/${householdId}/secret`]) {
+        await expect(
+          createPost(mockUser.id, { media: [{ mediaUrl, mediaType: 'photo' }] } as any),
+        ).rejects.toThrow("isn't yours");
+      }
+      await expect(
+        createPost(mockUser.id, {
+          media: [{ mediaUrl: `feed/images/${mockUser.id}/a.jpg`, thumbnailUrl: `feed/thumbnails/${otherUserId}/t.jpg`, mediaType: 'photo' }],
+        } as any),
+      ).rejects.toThrow("isn't yours");
+      expect(modelsMock.FeedPost.create).not.toHaveBeenCalled();
+    });
+
+    it('accepts media the user uploaded themselves', async () => {
+      (modelsMock.HouseholdMember.findOne as jest.Mock).mockResolvedValue({ householdId });
+      (modelsMock.HouseholdMember.findAll as jest.Mock).mockResolvedValue([]);
+      (modelsMock.FeedPost.create as jest.Mock).mockResolvedValue(fakePost());
+      (modelsMock.FeedPost.findByPk as jest.Mock).mockResolvedValue(fakePost());
+      (modelsMock.FeedLike.findAll as jest.Mock).mockResolvedValue([]);
+      (modelsMock.FeedComment.findAll as jest.Mock).mockResolvedValue([]);
+
+      await createPost(mockUser.id, {
+        media: [{ mediaUrl: `feed/images/${mockUser.id}/a.jpg`, thumbnailUrl: `feed/thumbnails/${mockUser.id}/t.jpg`, mediaType: 'photo' }],
+      } as any);
+
+      expect(modelsMock.FeedMedia.bulkCreate).toHaveBeenCalled();
+    });
+
     it('throws ForbiddenError if user has no household', async () => {
       (modelsMock.HouseholdMember.findOne as jest.Mock).mockResolvedValue(null);
 
