@@ -8,7 +8,7 @@ function getUserId(req: Request): string {
 
 export async function registerToken(req: Request, res: Response, next: NextFunction) {
   try {
-    await notificationService.registerToken(getUserId(req), req.body);
+    await notificationService.registerToken(getUserId(req), req.body, (req as AuthenticatedRequest).user!.deviceId);
     res.status(201).json({ success: true, data: { message: 'Token registered' } });
   } catch (e) { next(e); }
 }

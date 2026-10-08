@@ -42,6 +42,7 @@ const TYPE_TO_PREFERENCE_FIELD: Partial<Record<string, keyof NotificationPrefere
 export async function registerToken(
   userId: string,
   body: DeviceTokenBody,
+  deviceId?: string,
 ): Promise<void> {
   // DeviceToken is paranoid (soft-delete) via the global Sequelize define
   // default — unregisterToken (called on logout) sets deleted_at rather
@@ -55,6 +56,7 @@ export async function registerToken(
     userId,
     token: body.token,
     platform: body.platform,
+    deviceId: deviceId ?? null,
     deletedAt: null,
   });
 }

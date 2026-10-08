@@ -16,6 +16,7 @@ import taskRouter from './modules/task/routes';
 import groceryRouter from './modules/grocery/routes';
 import todoRouter from './modules/todo/routes';
 import notificationRouter from './modules/notification/routes';
+import deviceRouter from './modules/device/routes';
 import dashboardRouter from './modules/dashboard/routes';
 import expenseRouter from './modules/expense/routes';
 import vaultRouter from './modules/vault/routes';
@@ -143,6 +144,7 @@ if (shouldServeUploads(env.nodeEnv)) {
 
 // ── API Routes ──
 app.use('/api/v1/auth', authRouter);
+app.use('/api/v1/devices', deviceRouter);
 app.use('/api/v1/households', householdRouter);
 app.use('/api/v1/feed', feedRouter);
 app.use('/api/v1/tasks', taskRouter);

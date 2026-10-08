@@ -6,6 +6,7 @@ class RefreshToken extends Model {
   declare id: CreationOptional<string>;
   declare userId: string;
   declare token: string;
+  declare deviceId: string | null;
   declare expiresAt: Date;
   declare revokedAt: Date | null;
   declare createdAt: CreationOptional<Date>;
@@ -27,6 +28,11 @@ RefreshToken.init(
     token: {
       type: DataTypes.STRING(500),
       allowNull: false,
+    },
+    deviceId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      field: 'device_id',
     },
     expiresAt: {
       type: DataTypes.DATE,

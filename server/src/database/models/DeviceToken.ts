@@ -5,6 +5,7 @@ class DeviceToken extends Model {
   declare id: CreationOptional<string>;
   declare userId: string;
   declare token: string;
+  declare deviceId: string | null;
   declare platform: 'ios' | 'android' | 'web';
   declare createdAt: CreationOptional<Date>;
   declare updatedAt: CreationOptional<Date>;
@@ -29,6 +30,11 @@ DeviceToken.init(
     token: {
       type: DataTypes.STRING(500),
       allowNull: false,
+    },
+    deviceId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      field: 'device_id',
     },
     platform: {
       type: DataTypes.ENUM('ios', 'android', 'web'),

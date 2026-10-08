@@ -4,6 +4,10 @@ import { __setServicesForTests } from '../../../services';
 
 jest.mock('../../../shared/utils/mailer', () => ({ sendEmail: jest.fn(), sendAdminAlertEmail: jest.fn() }));
 jest.mock('../../../shared/utils/sms', () => ({ sendSms: jest.fn() }));
+jest.mock('../../device/service', () => ({
+  upsertDevice: jest.fn(async () => ({ id: 'dev-1' })),
+  touchDevice: jest.fn(async () => true),
+}));
 jest.mock('jose', () => ({
   createRemoteJWKSet: jest.fn(() => ({})),
   jwtVerify: jest.fn(),

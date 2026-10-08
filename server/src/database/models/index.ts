@@ -35,6 +35,7 @@ import EventInvitee from './EventInvitee';
 import NotificationPreference from './NotificationPreference';
 import NotificationHistory from './NotificationHistory';
 import DeviceToken from './DeviceToken';
+import Device from './Device';
 import PhoneVerification from './PhoneVerification';
 import PostTag from './PostTag';
 import Conversation from './Conversation';
@@ -91,6 +92,7 @@ const models = {
   NotificationPreference,
   NotificationHistory,
   DeviceToken,
+  Device,
   JournalEntry,
   JournalMedia,
   BillingCustomer,
@@ -109,6 +111,8 @@ export function setupAssociations(): void {
   // ── User associations ──
   User.hasMany(RefreshToken, { foreignKey: 'user_id', as: 'refreshTokens' });
   RefreshToken.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
+  User.hasMany(Device, { foreignKey: 'user_id', as: 'devices' });
+  Device.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
 
   User.hasMany(EmailVerification, { foreignKey: 'user_id', as: 'emailVerifications' });
   EmailVerification.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
@@ -356,6 +360,7 @@ export {
   NotificationPreference,
   NotificationHistory,
   DeviceToken,
+  Device,
   JournalEntry,
   JournalMedia,
   BillingCustomer,
