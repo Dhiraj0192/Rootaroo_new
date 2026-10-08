@@ -1,8 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { AuthenticatedRequest } from '../../shared/middleware/auth';
 import * as journalService from './service';
-import { uploadBuffer } from '../../shared/utils/s3';
-import { userUploadFolder } from '../../shared/utils/uploadKeys';
 
 function getUserId(req: Request): string {
   return (req as AuthenticatedRequest).user!.userId;
@@ -82,16 +80,7 @@ export async function uploadMedia(req: Request, res: Response, next: NextFunctio
     // The phone has already encrypted the photo and its thumbnail, so these are
     // opaque bytes: stored as they came, never decoded, resized or inspected.
     // `fileName` is the S3 key; send it back as `blobKey` / `thumbnailKey` when saving the entry.
-    const results = await Promise.all(
-      files.map(async (f) => {
-        const { key } = await uploadBuffer(
-          f.buffer,
-          userUploadFolder('journal/blobs', getUserId(req)),
-          'application/octet-stream',
-        );
-        return { fileName: key, size: f.size };
-      }),
-    );
+    const results = await journalService.uploadBlobs(getUserId(req), files);
     res.status(201).json({ success: true, data: results });
   } catch (e) { next(e); }
 }

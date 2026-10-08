@@ -295,6 +295,8 @@ export function createPrivateSpaceStore({ api, kdf = defaultKdf, getUserId, getS
         let id = null;
         try { id = getUserId(); } catch { /* signed out already */ }
         set({ ...initial });
+        // The key is leaving this phone: nothing decrypted with it may stay in memory.
+        try { require('../journal/journalRepo').clearJournalSecrets(); } catch { /* not loaded yet */ }
         if (id) await deleteAccountKey(id).catch(() => {});
       },
     };

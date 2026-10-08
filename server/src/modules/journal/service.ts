@@ -1,11 +1,12 @@
 import { v4 as uuidv4 } from 'uuid';
 import { Op } from 'sequelize';
 import { formatInTimeZone, fromZonedTime } from 'date-fns-tz';
-import { JournalEntry, JournalMedia, Household } from '../../database/models';
-import { NotFoundError } from '../../shared/utils/errors';
-import { assertOwnUploadKey } from '../../shared/utils/uploadKeys';
+import { UniqueConstraintError } from 'sequelize';
+import { JournalEntry, JournalMedia, JournalUpload, Household } from '../../database/models';
+import { AppError, ConflictError, NotFoundError } from '../../shared/utils/errors';
+import { assertOwnUploadKey, userUploadFolder } from '../../shared/utils/uploadKeys';
 import { getUserHousehold as getUserHouseholdCore } from '../../shared/utils/household';
-import { getSignedUrl, deleteObject } from '../../shared/utils/s3';
+import { getSignedUrl, deleteObject, uploadBuffer } from '../../shared/utils/s3';
 import logger from '../../shared/utils/logger';
 import type {
   CreateEntryBody,
@@ -97,9 +98,57 @@ function assertOwnMediaKeys(userId: string, media?: EntryMediaInput[]): void {
   }
 }
 
+/** The encrypted photos and thumbnails one user may keep across all entries (same as the vault). */
+export const JOURNAL_QUOTA_BYTES = 2 * 1024 * 1024 * 1024;
+
+/**
+ * Stores encrypted blobs and records each key, so they count toward the user's
+ * quota right away and the daily cleanup can remove any that never get attached
+ * to an entry. The quota is checked before anything is written to storage.
+ */
+export async function uploadBlobs(
+  userId: string,
+  files: Array<{ buffer: Buffer; size: number }>,
+): Promise<Array<{ fileName: string; size: number }>> {
+  const incoming = files.reduce((sum, f) => sum + f.size, 0);
+  const used = Number(await JournalUpload.sum('sizeBytes', { where: { userId } })) || 0;
+  if (used + incoming > JOURNAL_QUOTA_BYTES) {
+    throw new AppError(
+      413,
+      `Journal photo storage limit reached (${JOURNAL_QUOTA_BYTES / (1024 * 1024 * 1024)} GB). Delete some photos to add more.`,
+      'JOURNAL_QUOTA_EXCEEDED',
+    );
+  }
+  const results: Array<{ fileName: string; size: number }> = [];
+  for (const f of files) {
+    const { key } = await uploadBuffer(f.buffer, userUploadFolder(BLOB_AREA, userId), 'application/octet-stream');
+    await JournalUpload.create({ key, userId, sizeBytes: f.size });
+    results.push({ fileName: key, size: f.size });
+  }
+  return results;
+}
+
+/** An entry now owns these uploads: the cleanup job must leave them alone. */
+async function markAttached(userId: string, media?: EntryMediaInput[]): Promise<void> {
+  const keys = (media ?? []).flatMap((m) => [m.blobKey, m.thumbnailKey]).filter((k): k is string => Boolean(k));
+  if (keys.length === 0) return;
+  await JournalUpload.update({ attachedAt: new Date() }, { where: { userId, key: keys } });
+}
+
 /** Best effort: a stray object in the bucket is not worth failing a delete or save over. */
-async function deleteBlobs(rows: Array<{ blobKey: string; thumbnailKey: string | null }>): Promise<void> {
+async function deleteBlobs(
+  rows: Array<{ blobKey: string; thumbnailKey: string | null }>,
+  userId?: string,
+): Promise<void> {
   const keys = rows.flatMap((r) => [r.blobKey, r.thumbnailKey]).filter((k): k is string => Boolean(k));
+  if (userId && keys.length > 0) {
+    // The blobs are gone (or about to be), so they stop counting toward the quota.
+    try {
+      await JournalUpload.destroy({ where: { userId, key: keys } });
+    } catch (error) {
+      logger.warn('[Journal] Could not clear upload records:', (error as Error).message);
+    }
+  }
   await Promise.all(keys.map(async (key) => {
     try {
       await deleteObject(key);
@@ -127,14 +176,27 @@ export async function createEntry(
   const householdId = await getUserHousehold(userId);
   assertOwnMediaKeys(userId, body.media);
 
-  const entry = await JournalEntry.create({
-    id: uuidv4(),
-    householdId,
-    userId,
-    ciphertext: body.ciphertext,
-    sealedKey: body.sealedKey,
-    format: body.format,
-  });
+  // The phone chose the id because the ciphertext is bound to it. A taken id
+  // (even a deleted entry's) is refused, so one entry's sealed bytes can never
+  // be replayed under an id that already meant something else.
+  const taken = await JournalEntry.findOne({ where: { id: body.id }, attributes: ['id'], paranoid: false });
+  if (taken) throw new ConflictError('An entry with this id already exists');
+
+  let entry: JournalEntry;
+  try {
+    entry = await JournalEntry.create({
+      id: body.id,
+      householdId,
+      userId,
+      ciphertext: body.ciphertext,
+      sealedKey: body.sealedKey,
+      format: body.format,
+    });
+  } catch (error) {
+    if (error instanceof UniqueConstraintError) throw new ConflictError('An entry with this id already exists');
+    throw error;
+  }
+  await markAttached(userId, body.media);
 
   if (body.media && body.media.length > 0) {
     await JournalMedia.bulkCreate(
@@ -240,7 +302,8 @@ export async function updateEntry(
 
     const dropped = await JournalMedia.findAll({ where: dropWhere });
     await JournalMedia.destroy({ where: dropWhere });
-    await deleteBlobs(dropped);
+    await deleteBlobs(dropped, userId);
+    await markAttached(userId, added);
     if (added.length > 0) {
       await JournalMedia.bulkCreate(
         added.map((m) => ({
@@ -270,10 +333,12 @@ export async function deleteEntry(userId: string, entryId: string): Promise<void
   });
   if (!entry) throw new NotFoundError('Journal entry');
 
+  // Hard delete: a soft-deleted row would keep the ciphertext and sealed key
+  // in the database after the user asked for the entry to be gone.
   const media = await JournalMedia.findAll({ where: { entryId: entry.id } });
-  await entry.destroy();
+  await entry.destroy({ force: true });
   await JournalMedia.destroy({ where: { entryId: entry.id } });
-  await deleteBlobs(media);
+  await deleteBlobs(media, userId);
 }
 
 // ── Stats: the streak card, the History calendar, "On this day" ──

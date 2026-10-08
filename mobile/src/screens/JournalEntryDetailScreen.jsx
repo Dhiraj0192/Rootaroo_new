@@ -29,7 +29,7 @@ function EncryptedPhoto({ media, entryKey }) {
   useEffect(() => {
     let live = true;
     getJournalRepo()
-      .loadPhoto(media, entryKey)
+      .loadPhoto(media, entry)
       .then((u) => live && setUri(u))
       .catch(() => {});
     return () => {
@@ -153,7 +153,7 @@ export default function JournalEntryDetailScreen({ navigation, route }) {
                 : [
                     {
                       text: "Edit entry",
-                      onPress: () => navigation.navigate("JournalEditor", { entry }),
+                      onPress: () => navigation.navigate("JournalEditor", { entryId }),
                     },
                   ]),
               {
@@ -252,7 +252,7 @@ export default function JournalEntryDetailScreen({ navigation, route }) {
         {entry.unreadable ? null : (
           <TouchableOpacity
             style={styles.editBtn}
-            onPress={() => navigation.navigate("JournalEditor", { entry })}
+            onPress={() => navigation.navigate("JournalEditor", { entryId })}
             activeOpacity={0.85}
           >
             <GoldFill radius={radius.md} />

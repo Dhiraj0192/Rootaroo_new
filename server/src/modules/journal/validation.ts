@@ -5,7 +5,7 @@ import type { ValidationSchemas } from '../../shared/middleware/validate';
 export const MAX_CIPHERTEXT_BYTES = 96 * 1024;
 export const MAX_SEALED_KEY_BYTES = 256;
 /** Largest encrypted photo or thumbnail (also the upload limit). */
-export const MAX_BLOB_BYTES = 15 * 1024 * 1024;
+export const MAX_BLOB_BYTES = 10 * 1024 * 1024;
 
 /** Standard base64 whose decoded size is at most `maxBytes`. */
 const base64Schema = (maxBytes: number) =>
@@ -38,6 +38,11 @@ const updateMediaSchema = z
   .array(z.union([z.object({ id: z.string().uuid() }).strict(), newMediaSchema]))
   .max(10, 'Maximum 10 media items per entry');
 
+/** The phone picks the entry id (the ciphertext is bound to it), so it must be a v4 uuid. */
+const uuidV4 = z
+  .string()
+  .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i, 'id must be a v4 uuid');
+
 const encryptedFields = {
   ciphertext: base64Schema(MAX_CIPHERTEXT_BYTES),
   sealedKey: base64Schema(MAX_SEALED_KEY_BYTES),
@@ -45,7 +50,7 @@ const encryptedFields = {
 };
 
 export const createEntrySchema: ValidationSchemas = {
-  body: z.object({ ...encryptedFields, media: mediaSchema.optional() }).strict(),
+  body: z.object({ id: uuidV4, ...encryptedFields, media: mediaSchema.optional() }).strict(),
 };
 
 export const updateEntrySchema: ValidationSchemas = {

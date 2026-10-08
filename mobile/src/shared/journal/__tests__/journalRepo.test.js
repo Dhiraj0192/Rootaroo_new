@@ -6,6 +6,8 @@ const { generateAccountKeyPair } = require('../../crypto/accountKey');
 const { openEntryKey, decryptAttachment, encryptEntry, encryptAttachment } = require('../journalCrypto');
 const { createJournalRepo, JournalKeyMissingError, UNREADABLE_TEXT } = require('../journalRepo');
 
+const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
 const enc = (s) => new TextEncoder().encode(s);
 const dec = (b) => new TextDecoder().decode(b);
 const b64 = (bytes) => Buffer.from(bytes).toString('base64');
@@ -26,7 +28,9 @@ function build(overrides = {}) {
   };
   const deps = {
     api,
+    getUserId: () => 'u1',
     loadKey: jest.fn(async () => pair),
+    deleteTempFiles: jest.fn(async () => {}),
     readBytes: jest.fn(async (uri) => enc(`photo:${uri}`)),
     resizeThumbnail: jest.fn(async (uri) => enc(`thumb:${uri}`)),
     uploadBlobs: jest.fn(async (blobs) => blobs.map((b, i) => ({ fileName: `blob-${i}`, size: b.length }))),
@@ -38,7 +42,7 @@ function build(overrides = {}) {
 }
 
 async function serverEntry(id, createdAt, content, extra = {}) {
-  const e = await encryptEntry(content, pair.publicKey);
+  const e = await encryptEntry(content, pair.publicKey, id);
   return {
     id, createdAt, updatedAt: createdAt, ciphertext: e.ciphertext, sealedKey: e.sealedKey, format: e.format, media: [], ...extra,
   };
@@ -51,8 +55,9 @@ describe('saveEntry', () => {
     const seen = JSON.stringify([api.create.mock.calls, deps.uploadBlobs.mock.calls.map((c) => c[0].map(b64))]);
     for (const leak of ['private words', 'rough', 'secret-tag', 'photo:file', 'thumb:file']) expect(seen).not.toContain(leak);
     const body = api.create.mock.calls[0][0];
-    expect(Object.keys(body).sort()).toEqual(['ciphertext', 'format', 'media', 'sealedKey']);
+    expect(Object.keys(body).sort()).toEqual(['ciphertext', 'format', 'id', 'media', 'sealedKey']);
     expect(body.format).toBe(1);
+    expect(body.id).toMatch(UUID_V4);
   });
 
   it('encrypts each photo and its thumbnail with the entry key and sends blob keys', async () => {
@@ -66,9 +71,9 @@ describe('saveEntry', () => {
     const blobs = deps.uploadBlobs.mock.calls[0][0];
     expect(blobs).toHaveLength(4);
     const entryKey = await openEntryKey(body.sealedKey, pair.privateKey);
-    expect(dec(await decryptAttachment(blobs[0], entryKey))).toBe('photo:a');
-    expect(dec(await decryptAttachment(blobs[1], entryKey))).toBe('thumb:a');
-    expect(dec(await decryptAttachment(blobs[3], entryKey))).toBe('thumb:b');
+    expect(dec(await decryptAttachment(blobs[0], entryKey, body.id))).toBe('photo:a');
+    expect(dec(await decryptAttachment(blobs[1], entryKey, body.id))).toBe('thumb:a');
+    expect(dec(await decryptAttachment(blobs[3], entryKey, body.id))).toBe('thumb:b');
     expect(deps.resizeThumbnail).toHaveBeenCalledWith('a');
   });
 
@@ -87,7 +92,7 @@ describe('saveEntry', () => {
   it('returns the entry decrypted', async () => {
     const { repo } = build();
     const saved = await repo.saveEntry({ text: 'hello', mood: 'calm', tags: ['t'], photos: [] });
-    expect(saved).toMatchObject({ id: 'e1', text: 'hello', mood: 'calm', tags: ['t'] });
+    expect(saved).toMatchObject({ id: expect.stringMatching(UUID_V4), text: 'hello', mood: 'calm', tags: ['t'] });
   });
 });
 
@@ -95,7 +100,7 @@ describe('updateEntry', () => {
   it('keeps the entry key, references old media by id and adds new photos', async () => {
     const { repo, api, deps } = build();
     const entryKey = new Uint8Array(32).fill(9);
-    const old = await encryptAttachment(enc('old photo'), entryKey);
+    const old = await encryptAttachment(enc('old photo'), entryKey, 'e9');
     await repo.updateEntry('e9', {
       text: 'brand new words', mood: 'happy', tags: [], keepMedia: ['m1'], photos: [{ uri: 'n' }], entryKey,
     });
@@ -104,7 +109,7 @@ describe('updateEntry', () => {
     expect(body.media).toEqual([{ id: 'm1' }, { blobKey: 'blob-0', thumbnailKey: 'blob-1', sizeBytes: expect.any(Number) }]);
     expect(JSON.stringify(api.update.mock.calls)).not.toContain('brand new words');
     const key = await openEntryKey(body.sealedKey, pair.privateKey);
-    expect(dec(await decryptAttachment(old, key))).toBe('old photo');
+    expect(dec(await decryptAttachment(old, key, 'e9'))).toBe('old photo');
     expect(deps.uploadBlobs).toHaveBeenCalledTimes(1);
   });
 });
@@ -183,26 +188,26 @@ describe('loadPhoto', () => {
   it('fetches the signed url, decrypts to a data uri and caches it in memory', async () => {
     const { repo, deps } = build();
     const entryKey = new Uint8Array(32).fill(5);
-    const sealed = await encryptAttachment(enc('JPEGDATA'), entryKey);
+    const sealed = await encryptAttachment(enc('JPEGDATA'), entryKey, 'e1');
     deps.fetchBytes.mockResolvedValue(sealed);
     const media = { id: 'm1', url: 'https://s3/full', thumbnailUrl: 'https://s3/thumb' };
-    const uri = await repo.loadPhoto(media, entryKey);
+    const uri = await repo.loadPhoto(media, { id: 'e1', entryKey });
     expect(uri).toBe(`data:image/jpeg;base64,${b64(enc('JPEGDATA'))}`);
     expect(deps.fetchBytes).toHaveBeenCalledWith('https://s3/thumb');
-    await repo.loadPhoto(media, entryKey);
+    await repo.loadPhoto(media, { id: 'e1', entryKey });
     expect(deps.fetchBytes).toHaveBeenCalledTimes(1);
-    await repo.loadPhoto(media, entryKey, { full: true });
+    await repo.loadPhoto(media, { id: 'e1', entryKey }, { full: true });
     expect(deps.fetchBytes).toHaveBeenLastCalledWith('https://s3/full');
   });
 
   it('forgets decrypted photos on clear()', async () => {
     const { repo, deps } = build();
     const entryKey = new Uint8Array(32).fill(5);
-    deps.fetchBytes.mockResolvedValue(await encryptAttachment(enc('J'), entryKey));
+    deps.fetchBytes.mockResolvedValue(await encryptAttachment(enc('J'), entryKey, 'e1'));
     const media = { id: 'm1', url: 'u' };
-    await repo.loadPhoto(media, entryKey);
+    await repo.loadPhoto(media, { id: 'e1', entryKey });
     repo.clear();
-    await repo.loadPhoto(media, entryKey);
+    await repo.loadPhoto(media, { id: 'e1', entryKey });
     expect(deps.fetchBytes).toHaveBeenCalledTimes(2);
   });
 });
@@ -252,5 +257,142 @@ describe('onThisDayView', () => {
     const list = await repo.onThisDayView('2026-10-05');
     expect(api.onThisDay).toHaveBeenCalledWith('2026-10-05');
     expect(list).toEqual([{ id: 'p', createdAt: '2025-10-05T10:00:00Z', yearsAgo: 1, snippet: 'a year ago today', mood: 'calm' }]);
+  });
+});
+
+describe('entry-bound ciphertext', () => {
+  it('uses a fresh uuid v4 per new entry and binds the body to it', async () => {
+    const { repo, api } = build();
+    await repo.saveEntry({ text: 'a', mood: null, tags: [], photos: [] });
+    await repo.saveEntry({ text: 'b', mood: null, tags: [], photos: [] });
+    const [a, b] = api.create.mock.calls.map((c) => c[0]);
+    expect(a.id).toMatch(UUID_V4);
+    expect(a.id).not.toBe(b.id);
+    const { decryptEntry } = require('../journalCrypto');
+    await expect(decryptEntry({ ...a, id: b.id }, pair.privateKey)).rejects.toThrow();
+    await expect(decryptEntry(a, pair.privateKey)).resolves.toMatchObject({ text: 'a' });
+  });
+
+  it('shows an entry whose ciphertext was swapped onto another id as unreadable', async () => {
+    const { repo, api } = build();
+    const real = await serverEntry('real', '2026-10-05T10:00:00Z', { text: 'secret', mood: null, tags: [] });
+    api.getById.mockResolvedValue({ ...real, id: 'forged' });
+    expect((await repo.loadEntry('forged')).unreadable).toBe(true);
+  });
+});
+
+describe('uploads are chunked to the server limit', () => {
+  it('sends at most 5 blobs per request and keeps keys in order', async () => {
+    const calls = [];
+    const uploadBlobs = jest.fn(async (blobs) => {
+      calls.push(blobs.length);
+      const n = calls.length;
+      return blobs.map((b, i) => ({ fileName: `k${n}-${i}`, size: b.length }));
+    });
+    const { repo, api } = build({ uploadBlobs });
+    await repo.saveEntry({ text: '', mood: null, tags: [], photos: [{ uri: 'a' }, { uri: 'b' }, { uri: 'c' }] });
+    expect(calls).toEqual([5, 1]);
+    const { media } = api.create.mock.calls[0][0];
+    expect(media.map((m) => m.blobKey)).toEqual(['k1-0', 'k1-2', 'k1-4']);
+    expect(media.map((m) => m.thumbnailKey)).toEqual(['k1-1', 'k1-3', 'k2-0']);
+  });
+});
+
+describe('picked photo temp files', () => {
+  it('are deleted after a successful save', async () => {
+    const { repo, deps } = build();
+    await repo.saveEntry({ text: 'x', mood: null, tags: [], photos: [{ uri: 'file:///cache/a.jpg' }] });
+    expect(deps.deleteTempFiles).toHaveBeenCalledWith(['file:///cache/a.jpg']);
+  });
+
+  it('are kept when the save fails so the user can retry', async () => {
+    const { repo, deps } = build({ uploadBlobs: jest.fn(async () => { throw new Error('offline'); }) });
+    await expect(repo.saveEntry({ text: 'x', mood: null, tags: [], photos: [{ uri: 'a' }] })).rejects.toThrow();
+    expect(deps.deleteTempFiles).not.toHaveBeenCalled();
+  });
+
+  it('are deleted after a successful update too', async () => {
+    const { repo, deps } = build();
+    await repo.updateEntry('e9', { text: 'x', mood: null, tags: [], photos: [{ uri: 'b' }], keepMedia: [], entryKey: new Uint8Array(32).fill(1) });
+    expect(deps.deleteTempFiles).toHaveBeenCalledWith(['b']);
+  });
+});
+
+describe('secrets are per user', () => {
+  it("never seals to the previous user's key after a user switch", async () => {
+    const other = await generateAccountKeyPair();
+    let user = 'u1';
+    const loadKey = jest.fn(async () => (user === 'u1' ? pair : other));
+    const { repo, api } = build({ getUserId: () => user, loadKey });
+    await repo.saveEntry({ text: 'one', mood: null, tags: [], photos: [] });
+    user = 'u2';
+    await repo.saveEntry({ text: 'two', mood: null, tags: [], photos: [] });
+    expect(loadKey).toHaveBeenCalledTimes(2);
+    const second = api.create.mock.calls[1][0];
+    await expect(openEntryKey(second.sealedKey, other.privateKey)).resolves.toBeInstanceOf(Uint8Array);
+    await expect(openEntryKey(second.sealedKey, pair.privateKey)).rejects.toThrow();
+  });
+
+  it('refuses a key that finished loading for a user who has since changed', async () => {
+    let user = 'u1';
+    let release;
+    const loadKey = jest.fn(() => new Promise((r) => { release = () => r(pair); }));
+    const { repo } = build({ getUserId: () => user, loadKey });
+    const pending = repo.loadPage({});
+    user = 'u2';
+    release();
+    await expect(pending).rejects.toBeInstanceOf(JournalKeyMissingError);
+  });
+
+  it("does not serve one user's decrypted photos to the next", async () => {
+    let user = 'u1';
+    const { repo, deps } = build({ getUserId: () => user });
+    const entryKey = new Uint8Array(32).fill(5);
+    deps.fetchBytes.mockResolvedValue(await encryptAttachment(enc('J'), entryKey, 'e1'));
+    await repo.loadPhoto({ id: 'm1', url: 'u' }, { id: 'e1', entryKey });
+    user = 'u2';
+    await repo.loadPhoto({ id: 'm1', url: 'u' }, { id: 'e1', entryKey });
+    expect(deps.fetchBytes).toHaveBeenCalledTimes(2);
+  });
+
+  it('clearSecrets() drops the key and the photos', async () => {
+    const { repo, deps } = build();
+    await repo.loadPage({});
+    repo.clearSecrets();
+    await repo.loadPage({});
+    expect(deps.loadKey).toHaveBeenCalledTimes(2);
+  });
+
+  it('clears the key by timer while still in the background', async () => {
+    jest.useFakeTimers();
+    try {
+      const { repo, deps } = build();
+      await repo.loadPage({});
+      repo.onAppStateChange('background');
+      jest.advanceTimersByTime(59000);
+      await repo.loadPage({});
+      expect(deps.loadKey).toHaveBeenCalledTimes(1);
+      jest.advanceTimersByTime(2000);
+      await repo.loadPage({});
+      expect(deps.loadKey).toHaveBeenCalledTimes(2);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('coming back before the timer cancels it', async () => {
+    jest.useFakeTimers();
+    try {
+      const { repo, deps } = build();
+      await repo.loadPage({});
+      repo.onAppStateChange('background');
+      jest.advanceTimersByTime(10000);
+      repo.onAppStateChange('active');
+      jest.advanceTimersByTime(120000);
+      await repo.loadPage({});
+      expect(deps.loadKey).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

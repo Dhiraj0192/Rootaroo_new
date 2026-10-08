@@ -65,7 +65,7 @@ const ciphertextFilter: multer.Options['fileFilter'] = (_req, file, cb) => {
 export const uploadJournalBlobs = multer({
   storage: memory,
   fileFilter: ciphertextFilter,
-  limits: { fileSize: 15 * 1024 * 1024, files: 10 }, // 15 MB each
+  limits: { fileSize: 10 * 1024 * 1024, files: 5 }, // 5 files x 10 MB per request
 });
 
 export const uploadChatVoice = multer({

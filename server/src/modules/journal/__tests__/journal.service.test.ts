@@ -4,13 +4,15 @@ import {
   getEntryById,
   updateEntry,
   deleteEntry,
+  uploadBlobs,
+  JOURNAL_QUOTA_BYTES,
   getStats,
   getHistory,
   getOnThisDay,
 } from '../service';
 import * as models from '../../../database/models';
 import * as s3 from '../../../shared/utils/s3';
-import { ForbiddenError, NotFoundError } from '../../../shared/utils/errors';
+import { AppError, ConflictError, ForbiddenError, NotFoundError } from '../../../shared/utils/errors';
 
 const userId = '550e8400-e29b-41d4-a716-446655440001';
 const otherUserId = '660e8400-e29b-41d4-a716-446655440002';
@@ -26,11 +28,14 @@ jest.mock('../../../database/models', () => {
     cls.findByPk = jest.fn();
     cls.bulkCreate = jest.fn();
     cls.destroy = jest.fn();
+    cls.update = jest.fn();
+    cls.sum = jest.fn();
     return cls;
   };
   return {
     JournalEntry: mockModel('JournalEntry'),
     JournalMedia: mockModel('JournalMedia'),
+    JournalUpload: mockModel('JournalUpload'),
     HouseholdMember: mockModel('HouseholdMember'),
     Household: mockModel('Household'),
   };
@@ -39,12 +44,15 @@ jest.mock('../../../database/models', () => {
 jest.mock('../../../shared/utils/s3', () => ({
   getSignedUrl: jest.fn(async (key: string | null) => (key ? `signed:${key}` : null)),
   deleteObject: jest.fn().mockResolvedValue(undefined),
+  uploadBuffer: jest.fn(async () => ({ key: `journal/blobs/${'550e8400-e29b-41d4-a716-446655440001'}/new-key` })),
 }));
 
 const modelsMock = models as any;
 const s3Mock = s3 as any;
 
-const body = { ciphertext: 'Y2lwaGVy', sealedKey: 'c2VhbGVk', format: 1 };
+const newEntryId = '11111111-1111-4111-8111-111111111111';
+const body = { id: newEntryId, ciphertext: 'Y2lwaGVy', sealedKey: 'c2VhbGVk', format: 1 };
+const updateBody = { ciphertext: 'Y2lwaGVy', sealedKey: 'c2VhbGVk', format: 1 };
 
 function mockEntry(overrides: any = {}) {
   const entry: any = {
@@ -73,6 +81,8 @@ describe('Journal Service', () => {
     jest.clearAllMocks();
     modelsMock.HouseholdMember.findOne.mockResolvedValue({ householdId, userId });
     modelsMock.Household.findByPk.mockResolvedValue({ id: householdId, timezone: 'UTC' });
+    modelsMock.JournalEntry.findOne.mockReset();
+    modelsMock.JournalUpload.sum.mockResolvedValue(0);
   });
 
   describe('createEntry', () => {
@@ -106,6 +116,34 @@ describe('Journal Service', () => {
       expect(result.media).toEqual([
         { id: 'm1', url: `signed:${blobKey}`, thumbnailUrl: `signed:${thumbnailKey}`, sizeBytes: 1000 },
       ]);
+    });
+
+    it('uses the id the phone chose, since the ciphertext is bound to it', async () => {
+      const entry = mockEntry({ id: newEntryId });
+      modelsMock.JournalEntry.create.mockResolvedValue(entry);
+      modelsMock.JournalEntry.findByPk.mockResolvedValue(entry);
+      await createEntry(userId, body);
+      expect(modelsMock.JournalEntry.create).toHaveBeenCalledWith(expect.objectContaining({ id: newEntryId }));
+    });
+
+    it('rejects an id that is already taken (also by a deleted entry) with 409', async () => {
+      modelsMock.JournalEntry.findOne.mockResolvedValue({ id: newEntryId });
+      await expect(createEntry(userId, body)).rejects.toThrow(ConflictError);
+      expect(modelsMock.JournalEntry.findOne).toHaveBeenCalledWith(expect.objectContaining({ paranoid: false }));
+      expect(modelsMock.JournalEntry.create).not.toHaveBeenCalled();
+    });
+
+    it('marks the attached uploads so the cleanup job leaves them alone', async () => {
+      const blobKey = `journal/blobs/${userId}/photo`;
+      const thumbnailKey = `journal/blobs/${userId}/thumb`;
+      const entry = mockEntry({ media: [] });
+      modelsMock.JournalEntry.create.mockResolvedValue(entry);
+      modelsMock.JournalEntry.findByPk.mockResolvedValue(entry);
+      await createEntry(userId, { ...body, media: [{ blobKey, thumbnailKey, sizeBytes: 10 }] });
+      expect(modelsMock.JournalUpload.update).toHaveBeenCalledWith(
+        { attachedAt: expect.any(Date) },
+        { where: { userId, key: [blobKey, thumbnailKey] } },
+      );
     });
 
     it('should throw ForbiddenError if user is not a household member', async () => {
@@ -181,7 +219,7 @@ describe('Journal Service', () => {
       modelsMock.JournalEntry.findOne.mockResolvedValue(entry);
       modelsMock.JournalEntry.findByPk.mockResolvedValue(mockEntry({ ciphertext: 'bmV4dA==' }));
 
-      const result = await updateEntry(userId, entryId, { ...body, ciphertext: 'bmV4dA==' });
+      const result = await updateEntry(userId, entryId, { ...updateBody, ciphertext: 'bmV4dA==' });
 
       expect(entry.update).toHaveBeenCalledWith({ ciphertext: 'bmV4dA==', sealedKey: 'c2VhbGVk', format: 1 });
       expect(result.ciphertext).toBe('bmV4dA==');
@@ -199,18 +237,33 @@ describe('Journal Service', () => {
       modelsMock.JournalEntry.findByPk.mockResolvedValue(entry);
 
       await expect(
-        updateEntry(userId, entryId, { ...body, media: [{ blobKey: `journal/blobs/${otherUserId}/x`, sizeBytes: 1 }] }),
+        updateEntry(userId, entryId, { ...updateBody, media: [{ blobKey: `journal/blobs/${otherUserId}/x`, sizeBytes: 1 }] }),
       ).rejects.toThrow(ForbiddenError);
 
       modelsMock.JournalMedia.findAll.mockResolvedValue([]);
       await updateEntry(userId, entryId, {
-        ...body,
+        ...updateBody,
         media: [{ id: 'keep-me' }, { blobKey: `journal/blobs/${userId}/new`, sizeBytes: 5 }],
       });
       expect(modelsMock.JournalMedia.destroy).toHaveBeenCalled();
       expect(modelsMock.JournalMedia.bulkCreate).toHaveBeenCalledWith([
         expect.objectContaining({ entryId, blobKey: `journal/blobs/${userId}/new`, sizeBytes: 5 }),
       ]);
+    });
+  });
+
+  describe('updateEntry attach marking', () => {
+    it('marks newly added uploads as attached', async () => {
+      const entry = mockEntry();
+      modelsMock.JournalEntry.findOne.mockResolvedValue(entry);
+      modelsMock.JournalEntry.findByPk.mockResolvedValue(entry);
+      modelsMock.JournalMedia.findAll.mockResolvedValue([]);
+      const blobKey = `journal/blobs/${userId}/new`;
+      await updateEntry(userId, entryId, { ...updateBody, media: [{ blobKey, sizeBytes: 5 }] });
+      expect(modelsMock.JournalUpload.update).toHaveBeenCalledWith(
+        { attachedAt: expect.any(Date) },
+        { where: { userId, key: [blobKey] } },
+      );
     });
   });
 
@@ -224,7 +277,11 @@ describe('Journal Service', () => {
 
       await deleteEntry(userId, entryId);
 
-      expect(entry.destroy).toHaveBeenCalled();
+      expect(entry.destroy).toHaveBeenCalledWith({ force: true });
+      expect(modelsMock.JournalMedia.destroy).toHaveBeenCalledWith({ where: { entryId } });
+      expect(modelsMock.JournalUpload.destroy).toHaveBeenCalledWith({
+        where: { userId, key: ['journal/blobs/u/a', 'journal/blobs/u/b'] },
+      });
       expect(s3Mock.deleteObject).toHaveBeenCalledWith('journal/blobs/u/a');
       expect(s3Mock.deleteObject).toHaveBeenCalledWith('journal/blobs/u/b');
     });
@@ -244,6 +301,50 @@ describe('Journal Service', () => {
 
       await expect(deleteEntry(otherUserId, entryId)).rejects.toThrow(NotFoundError);
     });
+  });
+});
+
+describe('Journal blob uploads', () => {
+  const file = (size: number) => ({ buffer: Buffer.alloc(1), size } as any);
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    modelsMock.JournalUpload.sum.mockResolvedValue(0);
+    modelsMock.JournalUpload.create.mockResolvedValue({});
+  });
+
+  it('allows 2 GB in total, like the vault', () => {
+    expect(JOURNAL_QUOTA_BYTES).toBe(2 * 1024 * 1024 * 1024);
+  });
+
+  it('stores the blobs and records each key with its size as not yet attached', async () => {
+    const out = await uploadBlobs(userId, [file(100), file(200)]);
+    expect(out).toHaveLength(2);
+    expect(modelsMock.JournalUpload.create).toHaveBeenCalledTimes(2);
+    expect(modelsMock.JournalUpload.create).toHaveBeenCalledWith(
+      expect.objectContaining({ key: out[0].fileName, userId, sizeBytes: 100 }),
+    );
+    expect(modelsMock.JournalUpload.create.mock.calls[0][0]).not.toHaveProperty('attachedAt');
+  });
+
+  it('rejects with 413 and a clear message when the quota would be exceeded, storing nothing', async () => {
+    modelsMock.JournalUpload.sum.mockResolvedValue(JOURNAL_QUOTA_BYTES - 50);
+    const err: AppError = await uploadBlobs(userId, [file(100)]).catch((e) => e);
+    expect(err).toBeInstanceOf(AppError);
+    expect(err.statusCode).toBe(413);
+    expect(err.message).toMatch(/journal photo storage limit/i);
+    expect(s3Mock.uploadBuffer).not.toHaveBeenCalled();
+    expect(modelsMock.JournalUpload.create).not.toHaveBeenCalled();
+  });
+
+  it('allows an upload that exactly fills the quota', async () => {
+    modelsMock.JournalUpload.sum.mockResolvedValue(JOURNAL_QUOTA_BYTES - 100);
+    await expect(uploadBlobs(userId, [file(100)])).resolves.toHaveLength(1);
+  });
+
+  it('sums by the caller only', async () => {
+    await uploadBlobs(userId, [file(1)]);
+    expect(modelsMock.JournalUpload.sum).toHaveBeenCalledWith('sizeBytes', { where: { userId } });
   });
 });
 
