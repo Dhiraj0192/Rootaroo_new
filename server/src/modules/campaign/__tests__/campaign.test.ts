@@ -84,7 +84,10 @@ describe('runCampaigns', () => {
       enabledRules: jest.fn(async () => new Set<CampaignRule>(RULES)),
       lastLine: jest.fn(async () => null),
       send: jest.fn(async () => {}),
-      record: jest.fn(async () => {}),
+      record: jest.fn(async () => 'r1'),
+      acquireLock: jest.fn(async () => true),
+      releaseLock: jest.fn(async () => {}),
+      unrecord: jest.fn(async () => {}),
     };
     const sent = await runCampaigns(NOW, deps);
     expect(sent).toBe(1);
@@ -103,10 +106,15 @@ describe('runCampaigns', () => {
       enabledRules: jest.fn(async () => new Set<CampaignRule>(RULES)),
       lastLine: jest.fn(async () => null),
       send: jest.fn().mockRejectedValueOnce(new Error('push down')).mockResolvedValue(undefined),
-      record: jest.fn(async () => {}),
+      record: jest.fn(async () => 'r1'),
+      acquireLock: jest.fn(async () => true),
+      releaseLock: jest.fn(async () => {}),
+      unrecord: jest.fn(async () => {}),
     };
     expect(await runCampaigns(NOW, deps)).toBe(1);
-    expect(deps.record).toHaveBeenCalledTimes(1);
+    // Claimed before sending, so the failed one is recorded then given back.
+    expect(deps.record).toHaveBeenCalledTimes(2);
+    expect(deps.unrecord).toHaveBeenCalledTimes(1);
   });
 
   it('sends nothing and runs no queries when every campaign is off', async () => {
@@ -117,7 +125,10 @@ describe('runCampaigns', () => {
       enabledRules: jest.fn(async () => new Set<CampaignRule>()),
       lastLine: jest.fn(async () => null),
       send: jest.fn(async () => {}),
-      record: jest.fn(async () => {}),
+      record: jest.fn(async () => 'r1'),
+      acquireLock: jest.fn(async () => true),
+      releaseLock: jest.fn(async () => {}),
+      unrecord: jest.fn(async () => {}),
     };
     expect(await runCampaigns(NOW, deps)).toBe(0);
     expect(deps.gatherCandidates).not.toHaveBeenCalled();
@@ -134,9 +145,66 @@ describe('runCampaigns', () => {
       enabledRules: jest.fn(async () => new Set<CampaignRule>(['inactive_3d'])),
       lastLine: jest.fn(async () => null),
       send: jest.fn(async () => {}),
-      record: jest.fn(async () => {}),
+      record: jest.fn(async () => 'r1'),
+      acquireLock: jest.fn(async () => true),
+      releaseLock: jest.fn(async () => {}),
+      unrecord: jest.fn(async () => {}),
     };
     expect(await runCampaigns(NOW, deps)).toBe(1);
     expect(deps.send).toHaveBeenCalledWith('u2', 'inactive_3d', expect.any(String));
+  });
+
+  const oneCandidate = () => ({
+    gatherCandidates: jest.fn(async () => [
+      { userId: 'u1', rule: 'inactive_3d' as const, timezone: 'Asia/Kathmandu', vars: {} },
+      { userId: 'u2', rule: 'inactive_3d' as const, timezone: 'Asia/Kathmandu', vars: {} },
+    ]),
+    recentSends: jest.fn(async () => []),
+    tipsOff: jest.fn(async () => new Set<string>()),
+    enabledRules: jest.fn(async () => new Set<CampaignRule>(RULES)),
+    lastLine: jest.fn(async () => null),
+  });
+
+  it('does nothing when another run holds the lock', async () => {
+    const deps = {
+      ...oneCandidate(),
+      send: jest.fn(async () => {}),
+      record: jest.fn(async () => 'r1'),
+      acquireLock: jest.fn(async () => false),
+      releaseLock: jest.fn(async () => {}),
+      unrecord: jest.fn(async () => {}),
+    };
+    expect(await runCampaigns(NOW, deps)).toBe(0);
+    expect(deps.gatherCandidates).not.toHaveBeenCalled();
+    expect(deps.send).not.toHaveBeenCalled();
+  });
+
+  it('claims each send before pushing it', async () => {
+    const order: string[] = [];
+    const deps = {
+      ...oneCandidate(),
+      send: jest.fn(async (u: string) => { order.push(`send:${u}`); }),
+      record: jest.fn(async (e: { userId: string }) => { order.push(`record:${e.userId}`); return 'r'; }),
+      acquireLock: jest.fn(async () => true),
+      releaseLock: jest.fn(async () => {}),
+      unrecord: jest.fn(async () => {}),
+    };
+    await runCampaigns(NOW, deps);
+    expect(order).toEqual(['record:u1', 'send:u1', 'record:u2', 'send:u2']);
+    expect(deps.releaseLock).toHaveBeenCalled();
+  });
+
+  it('gives the claim back when the push fails', async () => {
+    const deps = {
+      ...oneCandidate(),
+      send: jest.fn().mockRejectedValueOnce(new Error('push down')).mockResolvedValue(undefined),
+      record: jest.fn().mockResolvedValueOnce('rec-1').mockResolvedValueOnce('rec-2'),
+      acquireLock: jest.fn(async () => true),
+      releaseLock: jest.fn(async () => {}),
+      unrecord: jest.fn(async () => {}),
+    };
+    expect(await runCampaigns(NOW, deps)).toBe(1);
+    expect(deps.unrecord).toHaveBeenCalledTimes(1);
+    expect(deps.unrecord).toHaveBeenCalledWith('rec-1');
   });
 });
