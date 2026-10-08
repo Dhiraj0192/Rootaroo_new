@@ -8,7 +8,7 @@ import { sendEmail } from '../../shared/utils/mailer';
 import { sendSms } from '../../shared/utils/sms';
 import { getCurrentWeather } from '../../modules/weather/service';
 
-const base = { email: 'log', sms: 'log', push: 'log', storage: 's3', weather: 'open-meteo', monitoring: 'console' } as const;
+const base = { email: 'log', sms: 'log', push: 'log', storage: 's3', weather: 'open-meteo', monitoring: 'console', keyVault: 'local' } as const;
 
 beforeEach(() => {
   jest.clearAllMocks();

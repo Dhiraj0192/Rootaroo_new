@@ -23,6 +23,7 @@ export function loadServicesConfig(src: NodeJS.ProcessEnv): {
   const errors: string[] = [];
   const warnings: string[] = [];
   const isProd = src.NODE_ENV === 'production';
+  const rawVault = (src.KEY_VAULT_PROVIDER || '').trim().toLowerCase();
 
   const hasResend = !!src.RESEND_API_KEY;
   const hasTwilio = !!(src.TWILIO_ACCOUNT_SID && src.TWILIO_AUTH_TOKEN && src.TWILIO_PHONE_NUMBER);
@@ -54,6 +55,7 @@ export function loadServicesConfig(src: NodeJS.ProcessEnv): {
     storage: pick('STORAGE_PROVIDER'),
     weather: pick('WEATHER_PROVIDER'),
     monitoring: pick('MONITORING_PROVIDER'),
+    keyVault: (src.KEY_VAULT_PROVIDER || '').trim().toLowerCase() === 'aws-kms' ? 'aws-kms' : 'local',
   } as ServicesConfig;
 
   if (config.email === 'resend' && !hasResend) errors.push('EMAIL_PROVIDER=resend needs RESEND_API_KEY');
@@ -62,7 +64,21 @@ export function loadServicesConfig(src: NodeJS.ProcessEnv): {
   }
   if (config.monitoring === 'sentry' && !hasSentry) errors.push('MONITORING_PROVIDER=sentry needs SENTRY_DSN');
 
+  if (rawVault && rawVault !== 'local' && rawVault !== 'aws-kms') {
+    errors.push('KEY_VAULT_PROVIDER must be one of: local, aws-kms');
+  }
+  if (config.keyVault === 'aws-kms' && !(src.KEY_VAULT_REGION && src.KEY_VAULT_MAC_KEY_ID && src.KEY_VAULT_ENC_KEY_ID)) {
+    errors.push('KEY_VAULT_PROVIDER=aws-kms needs KEY_VAULT_REGION, KEY_VAULT_MAC_KEY_ID, KEY_VAULT_ENC_KEY_ID');
+  }
+  if (config.keyVault === 'local' && src.KEY_VAULT_LOCAL_SECRET && src.KEY_VAULT_LOCAL_SECRET.length < 32) {
+    errors.push('KEY_VAULT_LOCAL_SECRET must be at least 32 characters');
+  }
+  if (config.keyVault === 'local') {
+    warnings.push('KEY_VAULT_PROVIDER=local: backups are protected by a development key only');
+  }
+
   if (isProd) {
+    if (config.keyVault !== 'aws-kms') errors.push('KEY_VAULT_PROVIDER must be aws-kms in production');
     if (config.email === 'log') errors.push('EMAIL_PROVIDER=log is not allowed in production');
     if (config.sms === 'log') errors.push('SMS_PROVIDER=log is not allowed in production');
     if (config.push === 'log') errors.push('PUSH_PROVIDER=log is not allowed in production');

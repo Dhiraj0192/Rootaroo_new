@@ -7,6 +7,10 @@ const prod = (extra: Record<string, string> = {}) => ({
   TWILIO_ACCOUNT_SID: 'AC_secret',
   TWILIO_AUTH_TOKEN: 'tw_secret',
   TWILIO_PHONE_NUMBER: '+15550001111',
+  KEY_VAULT_PROVIDER: 'aws-kms',
+  KEY_VAULT_REGION: 'ap-south-1',
+  KEY_VAULT_MAC_KEY_ID: 'arn:mac',
+  KEY_VAULT_ENC_KEY_ID: 'arn:enc',
   ...extra,
 });
 
@@ -15,7 +19,7 @@ describe('loadServicesConfig', () => {
     const { config, errors } = loadServicesConfig(dev());
     expect(errors).toEqual([]);
     expect(config).toEqual({
-      email: 'log', sms: 'log', push: 'expo', storage: 's3', weather: 'open-meteo', monitoring: 'console',
+      email: 'log', sms: 'log', push: 'expo', storage: 's3', weather: 'open-meteo', monitoring: 'console', keyVault: 'local',
     });
   });
 

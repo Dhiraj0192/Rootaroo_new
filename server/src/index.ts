@@ -13,6 +13,7 @@ import { startOverduePointsReductionJob } from './jobs/overdue-points';
 import { startPurgeScheduledDeletionsJob } from './jobs/purge-scheduled-deletions';
 import { startPingExpiryJob } from './jobs/ping-expiry';
 import { startLocationShareExpiryJob } from './jobs/location-share-expiry';
+import { startE2eCleanupJob } from './jobs/e2e-cleanup';
 import { startBillingEventSweepJob } from './jobs/billing-event-sweep';
 import { startBillingCheckoutSweepJob } from './jobs/billing-checkout-sweep';
 import { startBillingReconcileJobs } from './jobs/billing-reconcile';
@@ -107,6 +108,7 @@ async function start(): Promise<void> {
     startPurgeScheduledDeletionsJob();
     startPingExpiryJob();
     startLocationShareExpiryJob();
+    startE2eCleanupJob();
     if (process.env.CAMPAIGNS_ENABLED !== 'false') startCampaignsJob();
     if (getBillingConfig().enabled) {
       startBillingEventSweepJob();

@@ -64,7 +64,11 @@ export async function listDevices(userId: string, currentDeviceId: string | null
 }
 
 /** Sign a device out everywhere: its sessions and its push token go with it. */
-export async function revokeDevice(userId: string, deviceId: string): Promise<void> {
+export async function revokeDevice(
+  userId: string,
+  deviceId: string,
+  opts: { keepRefreshTokens?: boolean } = {},
+): Promise<void> {
   // Scoped to userId so another account's device id looks the same as a missing one.
   const device = await Device.findOne({ where: { id: deviceId, userId, revokedAt: null } });
   if (!device) throw new NotFoundError('Device');
@@ -72,7 +76,8 @@ export async function revokeDevice(userId: string, deviceId: string): Promise<vo
   device.revokedAt = new Date();
   await device.save();
   await redis.set(revokedKey(deviceId), '1', 'EX', REVOKED_TTL_SECONDS);
-  await RefreshToken.destroy({ where: { deviceId } });
+  // Kept for a key move so the old phone's next refresh answers DEVICE_REVOKED (which then removes it), not a bare 401.
+  if (!opts.keepRefreshTokens) await RefreshToken.destroy({ where: { deviceId } });
   await DeviceToken.destroy({ where: { deviceId }, force: true });
 }
 

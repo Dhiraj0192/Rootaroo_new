@@ -11,6 +11,8 @@ class Device extends Model {
   declare appVersion: string | null;
   declare lastSeenAt: Date;
   declare revokedAt: Date | null;
+  /** At most one device per user is true: the phone holding the account private key. */
+  declare holdsAccountKey: CreationOptional<boolean>;
   declare createdAt: CreationOptional<Date>;
   declare updatedAt: CreationOptional<Date>;
 }
@@ -25,6 +27,7 @@ Device.init(
     appVersion: { type: DataTypes.STRING(32), allowNull: true, field: 'app_version' },
     lastSeenAt: { type: DataTypes.DATE, allowNull: false, field: 'last_seen_at' },
     revokedAt: { type: DataTypes.DATE, allowNull: true, field: 'revoked_at' },
+    holdsAccountKey: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false, field: 'holds_account_key' },
     createdAt: { type: DataTypes.DATE, field: 'created_at' },
     updatedAt: { type: DataTypes.DATE, field: 'updated_at' },
   },

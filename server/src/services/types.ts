@@ -45,6 +45,19 @@ export interface ErrorReporter {
   capture(err: unknown, context?: Record<string, unknown>): void;
 }
 
+export interface KeyVaultContext {
+  userId: string;
+}
+
+/** Keys that never leave the vault: lets the server check and store secrets it must not be able to read or guess offline. */
+export interface KeyVaultProvider {
+  name: string;
+  mac(data: string, ctx: KeyVaultContext): Promise<string>;
+  verifyMac(data: string, mac: string, ctx: KeyVaultContext): Promise<boolean>;
+  encrypt(plaintext: string, ctx: KeyVaultContext): Promise<string>;
+  decrypt(b64: string, ctx: KeyVaultContext): Promise<string>;
+}
+
 export interface ServicesConfig {
   email: 'resend' | 'log';
   sms: 'twilio' | 'log' | 'disabled';
@@ -52,6 +65,7 @@ export interface ServicesConfig {
   storage: 's3';
   weather: 'open-meteo';
   monitoring: 'sentry' | 'console';
+  keyVault: 'local' | 'aws-kms';
 }
 
 export interface Services {
@@ -61,4 +75,5 @@ export interface Services {
   storage: StorageProvider;
   weather: WeatherProvider;
   errors: ErrorReporter;
+  keyVault: KeyVaultProvider;
 }

@@ -37,6 +37,10 @@ import NotificationPreference from './NotificationPreference';
 import NotificationHistory from './NotificationHistory';
 import DeviceToken from './DeviceToken';
 import Device from './Device';
+import AccountKey from './AccountKey';
+import KeyTransferSession from './KeyTransferSession';
+import KeyBackup from './KeyBackup';
+import KeyRestoreCode from './KeyRestoreCode';
 import CampaignSend from './CampaignSend';
 import CampaignSetting from './CampaignSetting';
 import PhoneVerification from './PhoneVerification';
@@ -97,6 +101,10 @@ const models = {
   NotificationHistory,
   DeviceToken,
   Device,
+  AccountKey,
+  KeyTransferSession,
+  KeyBackup,
+  KeyRestoreCode,
   CampaignSend,
   CampaignSetting,
   JournalEntry,
@@ -371,6 +379,10 @@ export {
   NotificationHistory,
   DeviceToken,
   Device,
+  AccountKey,
+  KeyTransferSession,
+  KeyBackup,
+  KeyRestoreCode,
   CampaignSend,
   CampaignSetting,
   JournalEntry,

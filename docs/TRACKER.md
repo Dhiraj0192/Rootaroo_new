@@ -20,7 +20,6 @@ One place for work that is planned, waiting on someone, finished or dropped. Upd
 | T8 | Stripe PaymentSheet as an in-app alternative to hosted Checkout | mobile | dev | Optional. Hosted Checkout stays the default for store-policy reasons. |
 | T9 | MVP next pass, waves W1–W12: journal lock, push fixes and campaign, service adapters, location sharing, admin panel, device registry and transfer, journal E2E, shared vault | all | dev | [`docs/plans/mvp-next-pass.md`](plans/mvp-next-pass.md). One stacked PR per wave. |
 | T10 | Remove the shared `ADMIN_API_KEY` and `ADMIN_BILLING_API_KEY` routes | server | dev | After the admin panel covers their screens (W7). |
-| T11 | Remove the server-held passphrase backup of the account key | server, mobile | dev, owner | Kept for now as the fallback when no other device exists. Needs a replacement recovery path (e.g. a printed recovery key) decided first. |
 | T12 | Sign every API request with the device identity key | server, mobile | dev | Makes a stolen session token useless on another device. After W9. |
 | T13 | External cryptography review | security | owner | Before any public "end-to-end encrypted" claim. Covers W10–W12. |
 | T14 | Re-encrypt household vault files when a member leaves | server, mobile | dev | Optional hardening after W12. |
@@ -43,6 +42,7 @@ In order, after the checklist in [`docs/billing/runbooks.md`](billing/runbooks.m
 | G6 | Delete pre-launch test households, or move the ones testers keep to cohort `test` | dev |
 | G7 | Remove the `BILLING_ENABLED` switch from the code | dev |
 | G8 | Review the campaign copy and switch campaigns on (`PUT /api/v1/admin/campaigns/...`) | owner |
+| G9 | Create the AWS KMS keys (HMAC + symmetric, separate for test and live) and set `KEY_VAULT_*` in production | owner |
 
 ## Waiting on a decision
 
@@ -82,4 +82,5 @@ In order, after the checklist in [`docs/billing/runbooks.md`](billing/runbooks.m
 | Moving old `rootaru_*` login keys to `rootaroo_*` on first launch | No released build used them; internal testers sign in once after updating. | 2026-10-08 |
 | Keeping `rootaru://` invite links working | Only testers received them; they get new invites. | 2026-10-08 |
 | Grandfathering or a free period for existing households | All existing households are test data (D1). | 2026-10-08 |
+| T11: Remove the server-held passphrase backup of the account key | Superseded: the backup now uses the guess-capped design in `docs/e2e/device-transfer.md` (key vault MAC and encryption, 10 tries, email code), so removing it is no longer wanted. | 2026-10-08 |
 | Read-only access for lapsed households | Every screen would need a read-only state, and it weakens the paywall. Data export (T1) covers access to data. Revisit if many households lapse. | 2026-10-08 |

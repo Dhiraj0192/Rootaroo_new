@@ -1,11 +1,12 @@
 import type {
-  EmailProvider, ErrorReporter, PushProvider, Services, ServicesConfig, SmsProvider, StorageProvider, WeatherProvider,
+  EmailProvider, ErrorReporter, KeyVaultProvider, PushProvider, Services, ServicesConfig, SmsProvider, StorageProvider, WeatherProvider,
 } from './types';
 import { resendEmail, logEmail } from './providers/email';
 import { twilioSms, logSms, disabledSms } from './providers/sms';
 import { expoPush, logPush } from './providers/push';
 import { s3Storage } from './providers/storage';
 import { openMeteoWeather } from './providers/weather';
+import { createLocalKeyVault, awsKmsKeyVaultFromEnv, DEV_KEY_VAULT_SECRET } from './providers/keyVault';
 import { sentryReporter, consoleReporter } from './providers/monitoring';
 
 let services: Services | null = null;
@@ -20,6 +21,9 @@ export function initServices(config: ServicesConfig): void {
     storage: s3Storage,
     weather: openMeteoWeather,
     errors: config.monitoring === 'sentry' ? sentryReporter : consoleReporter,
+    keyVault: config.keyVault === 'aws-kms'
+      ? awsKmsKeyVaultFromEnv(process.env)
+      : createLocalKeyVault(process.env.KEY_VAULT_LOCAL_SECRET || DEV_KEY_VAULT_SECRET),
   };
 }
 
@@ -35,6 +39,7 @@ export const getSms = (): SmsProvider => resolve('sms');
 export const getPush = (): PushProvider => resolve('push');
 export const getStorage = (): StorageProvider => resolve('storage');
 export const getWeather = (): WeatherProvider => resolve('weather');
+export const getKeyVault = (): KeyVaultProvider => resolve('keyVault');
 export const getErrorReporter = (): ErrorReporter => resolve('errors');
 
 /** Test seam: override individual providers. */
