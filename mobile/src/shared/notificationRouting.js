@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import * as Notifications from 'expo-notifications';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // type -> [tab, screen, required id param (or null)]
 const ROUTES = {
@@ -20,6 +21,9 @@ const ROUTES = {
   household_deletion_scheduled: ['MoreStack', 'HouseholdSettings', null],
   household_deletion_cancelled: ['MoreStack', 'HouseholdSettings', null],
 };
+
+// Persisted so the OS's 'last response' isn't replayed on every cold start.
+export const LAST_NOTIFICATION_KEY = 'rootaroo_last_notification_id';
 
 const FALLBACK = { name: 'Notifications' };
 
@@ -58,14 +62,17 @@ export function routeForNotification(data) {
   return { name: 'MainTabs', params: { screen: tab, params: { screen, params } } };
 }
 
+// Returns a promise that settles once the id is stored (never rejects).
 export function handleNotificationResponse(navRef, response) {
   const request = response?.notification?.request;
   const id = request?.identifier;
   // Opening the app is the whole point of a signed-out nudge.
   if (request?.content?.data?.type === 'signed_out_nudge') return;
+  let stored = Promise.resolve();
   if (id) {
-    if (handledIds.has(id)) return;
+    if (handledIds.has(id)) return stored;
     handledIds.add(id);
+    stored = AsyncStorage.setItem(LAST_NOTIFICATION_KEY, id).catch(() => {});
   }
 
   const route = routeForNotification(request?.content?.data);
@@ -74,6 +81,20 @@ export function handleNotificationResponse(navRef, response) {
   } else {
     pendingRoute = route;
   }
+  return stored;
+}
+
+export async function handleColdStartResponse(navRef, response) {
+  if (!response) return;
+  const id = response.notification?.request?.identifier;
+  if (id) {
+    try {
+      if ((await AsyncStorage.getItem(LAST_NOTIFICATION_KEY)) === id) return;
+    } catch {
+      // Storage unreadable: handle it rather than drop a real tap.
+    }
+  }
+  await handleNotificationResponse(navRef, response);
 }
 
 export function flushPendingNotification(navRef) {
@@ -103,7 +124,7 @@ export function useNotificationRouting(navRef) {
   useEffect(() => {
     Notifications.getLastNotificationResponseAsync()
       .then((response) => {
-        if (response) handleNotificationResponse(navRef, response);
+        return handleColdStartResponse(navRef, response);
       })
       .catch(() => {});
 
