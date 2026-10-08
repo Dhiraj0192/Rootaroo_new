@@ -18,6 +18,7 @@ import GraceBanner from '../screens/billing/components/GraceBanner';
 import { connectSocket, disconnectSocket } from '../shared/socket';
 import { registerForPushNotificationsAsync } from '../shared/pushNotifications';
 import { syncBadge } from '../shared/notificationRouting';
+import { scheduleSignedOutNudges } from '../shared/signedOutNudges';
 import SplashScreen from '../screens/SplashScreen';
 import WelcomeScreen from '../screens/WelcomeScreen';
 import ChooseMethodScreen from '../screens/ChooseMethodScreen';
@@ -601,6 +602,11 @@ export default function RootNavigator() {
   useEffect(() => {
     if (isAuthenticated) registerForPushNotificationsAsync();
   }, [isAuthenticated]);
+
+  // Signed-out users get a few win-back nudges; rescheduling replaces the last set.
+  useEffect(() => {
+    if (!isLoading && !isAuthenticated) scheduleSignedOutNudges();
+  }, [isLoading, isAuthenticated]);
 
   // Badge follows the server's unread count whenever the app comes forward.
   useEffect(() => {

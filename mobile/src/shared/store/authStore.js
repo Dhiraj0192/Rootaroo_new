@@ -30,6 +30,15 @@ function accessTokenExpiresSoon(token) {
   }
 }
 
+// Lazy require: keeps notification native deps out of the auth store's import graph.
+function scheduleNudges() {
+  try { require('../signedOutNudges').scheduleSignedOutNudges(); } catch { /* not loaded yet */ }
+}
+
+function cancelNudges() {
+  try { require('../signedOutNudges').cancelSignedOutNudges(); } catch { /* not loaded yet */ }
+}
+
 export const useAuthStore = create((set, get) => ({
   user: null,
   accessToken: null,
@@ -47,6 +56,7 @@ export const useAuthStore = create((set, get) => ({
 
   setAuth: (user, accessToken, refreshToken) => {
     set({ user, accessToken, refreshToken, isAuthenticated: true, isLoading: false });
+    cancelNudges();
     warmScreenCache(user?.id);
     saveTokens(accessToken, refreshToken, user).catch(() => {});
   },
@@ -92,6 +102,7 @@ export const useAuthStore = create((set, get) => ({
     clearSignupProgress().catch(() => {});
     clearSharedRequests();
     clearScreenCache();
+    scheduleNudges();
     // Lazy require: billingStore → api → client → authStore would be a cycle at import time.
     try { require('./billingStore').useBillingStore.getState().reset(); } catch { /* not loaded yet */ }
     try { require('./journalLockStore').useJournalLockStore.getState().reset(); } catch { /* not loaded yet */ }
@@ -123,6 +134,7 @@ export const useAuthStore = create((set, get) => ({
   completeSetup: () => {
     const { accessToken, refreshToken, user } = get();
     set({ isAuthenticated: true, isLoading: false, signupProgress: null });
+    cancelNudges();
     warmScreenCache(user?.id);
     clearSignupProgress().catch(() => {});
     if (accessToken && refreshToken && user) {
@@ -187,6 +199,7 @@ export const useAuthStore = create((set, get) => ({
           householdId: householdId ?? null,
           signupProgress: null,
         });
+        cancelNudges();
         prefetchHome(householdId);
 
         apiClient

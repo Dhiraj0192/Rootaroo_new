@@ -50,6 +50,8 @@ export function routeForNotification(data) {
 export function handleNotificationResponse(navRef, response) {
   const request = response?.notification?.request;
   const id = request?.identifier;
+  // Opening the app is the whole point of a signed-out nudge.
+  if (request?.content?.data?.type === 'signed_out_nudge') return;
   if (id) {
     if (handledIds.has(id)) return;
     handledIds.add(id);
