@@ -52,6 +52,22 @@ export const uploadFeedMedia = multer({
   limits: { fileSize: 50 * 1024 * 1024 }, // 50 MB (covers max 2min 720p video)
 });
 
+// Journal photos arrive already encrypted by the phone, so they are opaque bytes:
+// no image type or extension check is possible (or wanted) here.
+const ciphertextFilter: multer.Options['fileFilter'] = (_req, file, cb) => {
+  if (file.mimetype === 'application/octet-stream') {
+    cb(null, true);
+  } else {
+    cb(new Error('Journal uploads must be encrypted (application/octet-stream).'));
+  }
+};
+
+export const uploadJournalBlobs = multer({
+  storage: memory,
+  fileFilter: ciphertextFilter,
+  limits: { fileSize: 15 * 1024 * 1024, files: 10 }, // 15 MB each
+});
+
 export const uploadChatVoice = multer({
   storage: memory,
   fileFilter: audioFilter,

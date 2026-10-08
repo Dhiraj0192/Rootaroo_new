@@ -9,6 +9,7 @@ import {
   getOnThisDay,
 } from '../service';
 import * as models from '../../../database/models';
+import * as s3 from '../../../shared/utils/s3';
 import { ForbiddenError, NotFoundError } from '../../../shared/utils/errors';
 
 const userId = '550e8400-e29b-41d4-a716-446655440001';
@@ -35,14 +36,24 @@ jest.mock('../../../database/models', () => {
   };
 });
 
+jest.mock('../../../shared/utils/s3', () => ({
+  getSignedUrl: jest.fn(async (key: string | null) => (key ? `signed:${key}` : null)),
+  deleteObject: jest.fn().mockResolvedValue(undefined),
+}));
+
 const modelsMock = models as any;
+const s3Mock = s3 as any;
+
+const body = { ciphertext: 'Y2lwaGVy', sealedKey: 'c2VhbGVk', format: 1 };
 
 function mockEntry(overrides: any = {}) {
   const entry: any = {
     id: entryId,
     householdId,
     userId,
-    content: 'Today was a good day',
+    ciphertext: 'Y2lwaGVy',
+    sealedKey: 'c2VhbGVk',
+    format: 1,
     createdAt: new Date('2026-07-10T10:00:00Z'),
     updatedAt: new Date('2026-07-10T10:00:00Z'),
     destroy: jest.fn().mockResolvedValue(undefined),
@@ -65,49 +76,57 @@ describe('Journal Service', () => {
   });
 
   describe('createEntry', () => {
-    it('should create a text-only entry', async () => {
+    it('stores only the ciphertext and the sealed key', async () => {
       const entry = mockEntry();
       modelsMock.JournalEntry.create.mockResolvedValue(entry);
       modelsMock.JournalEntry.findByPk.mockResolvedValue(entry);
 
-      const result = await createEntry(userId, { content: 'Today was a good day' });
+      const result = await createEntry(userId, body);
 
       expect(modelsMock.JournalEntry.create).toHaveBeenCalledWith(
-        expect.objectContaining({ householdId, userId, content: 'Today was a good day' }),
+        expect.objectContaining({ householdId, userId, ciphertext: 'Y2lwaGVy', sealedKey: 'c2VhbGVk', format: 1 }),
       );
       expect(modelsMock.JournalMedia.bulkCreate).not.toHaveBeenCalled();
-      expect(result.content).toBe('Today was a good day');
+      expect(result).toEqual(expect.objectContaining({ ciphertext: 'Y2lwaGVy', sealedKey: 'c2VhbGVk', format: 1 }));
+      for (const k of ['content', 'mood', 'tags', 'wordCount']) expect(result).not.toHaveProperty(k);
     });
 
-    it('should create an entry with media', async () => {
-      const media = [{ id: 'm1', mediaUrl: `journal/images/${userId}/photo.jpg`, mediaType: 'photo', thumbnailUrl: null, fileSizeBytes: 1000 }];
-      const entry = mockEntry({ content: null, media });
+    it('creates an entry with encrypted media and returns signed links', async () => {
+      const blobKey = `journal/blobs/${userId}/photo`;
+      const thumbnailKey = `journal/blobs/${userId}/thumb`;
+      const entry = mockEntry({ media: [{ id: 'm1', blobKey, thumbnailKey, sizeBytes: 1000 }] });
       modelsMock.JournalEntry.create.mockResolvedValue(entry);
       modelsMock.JournalEntry.findByPk.mockResolvedValue(entry);
 
-      const result = await createEntry(userId, {
-        media: [{ mediaUrl: `journal/images/${userId}/photo.jpg`, mediaType: 'photo', fileSizeBytes: 1000 }],
-      });
+      const result = await createEntry(userId, { ...body, media: [{ blobKey, thumbnailKey, sizeBytes: 1000 }] });
 
       expect(modelsMock.JournalMedia.bulkCreate).toHaveBeenCalledWith([
-        expect.objectContaining({ entryId, mediaUrl: `journal/images/${userId}/photo.jpg`, mediaType: 'photo' }),
+        expect.objectContaining({ entryId, blobKey, thumbnailKey, sizeBytes: 1000 }),
       ]);
-      expect(result.media).toHaveLength(1);
+      expect(result.media).toEqual([
+        { id: 'm1', url: `signed:${blobKey}`, thumbnailUrl: `signed:${thumbnailKey}`, sizeBytes: 1000 },
+      ]);
     });
 
     it('should throw ForbiddenError if user is not a household member', async () => {
       modelsMock.HouseholdMember.findOne.mockResolvedValue(null);
 
-      await expect(createEntry(userId, { content: 'Hi' })).rejects.toThrow(ForbiddenError);
+      await expect(createEntry(userId, body)).rejects.toThrow(ForbiddenError);
     });
 
     it("refuses to attach someone else's upload, so it can't be turned into a download link", async () => {
-      for (const mediaUrl of [`journal/images/${otherUserId}/photo.jpg`, `vault/${householdId}/secret`, 'https://example.com/x.jpg']) {
-        await expect(createEntry(userId, { media: [{ mediaUrl, mediaType: 'photo' }] } as any)).rejects.toThrow(ForbiddenError);
+      for (const blobKey of [
+        `journal/blobs/${otherUserId}/photo`,
+        `journal/images/${userId}/photo`,
+        `vault/${householdId}/secret`,
+        'https://example.com/x.jpg',
+      ]) {
+        await expect(createEntry(userId, { ...body, media: [{ blobKey, sizeBytes: 1 }] })).rejects.toThrow(ForbiddenError);
       }
       await expect(createEntry(userId, {
-        media: [{ mediaUrl: `journal/images/${userId}/p.jpg`, thumbnailUrl: `journal/thumbnails/${otherUserId}/t.jpg`, mediaType: 'photo' }],
-      } as any)).rejects.toThrow(ForbiddenError);
+        ...body,
+        media: [{ blobKey: `journal/blobs/${userId}/p`, thumbnailKey: `journal/blobs/${otherUserId}/t`, sizeBytes: 1 }],
+      })).rejects.toThrow(ForbiddenError);
       expect(modelsMock.JournalEntry.create).not.toHaveBeenCalled();
     });
   });
@@ -157,31 +176,66 @@ describe('Journal Service', () => {
   });
 
   describe('updateEntry', () => {
-    it('should update the content of the caller\'s own entry', async () => {
+    it('replaces the ciphertext of the caller\'s own entry', async () => {
       const entry = mockEntry();
       modelsMock.JournalEntry.findOne.mockResolvedValue(entry);
-      modelsMock.JournalEntry.findByPk.mockResolvedValue(mockEntry({ content: 'Updated' }));
+      modelsMock.JournalEntry.findByPk.mockResolvedValue(mockEntry({ ciphertext: 'bmV4dA==' }));
 
-      const result = await updateEntry(userId, entryId, { content: 'Updated' });
+      const result = await updateEntry(userId, entryId, { ...body, ciphertext: 'bmV4dA==' });
 
-      expect(entry.update).toHaveBeenCalledWith({ content: 'Updated' });
-      expect(result.content).toBe('Updated');
+      expect(entry.update).toHaveBeenCalledWith({ ciphertext: 'bmV4dA==', sealedKey: 'c2VhbGVk', format: 1 });
+      expect(result.ciphertext).toBe('bmV4dA==');
     });
 
     it('should throw NotFoundError for an entry that is not the caller\'s own', async () => {
       modelsMock.JournalEntry.findOne.mockResolvedValue(null);
 
-      await expect(updateEntry(otherUserId, entryId, { content: 'Nope' })).rejects.toThrow(NotFoundError);
+      await expect(updateEntry(otherUserId, entryId, body)).rejects.toThrow(NotFoundError);
+    });
+
+    it('checks new attachments are the caller\'s own, keeps listed ones and drops the rest', async () => {
+      const entry = mockEntry();
+      modelsMock.JournalEntry.findOne.mockResolvedValue(entry);
+      modelsMock.JournalEntry.findByPk.mockResolvedValue(entry);
+
+      await expect(
+        updateEntry(userId, entryId, { ...body, media: [{ blobKey: `journal/blobs/${otherUserId}/x`, sizeBytes: 1 }] }),
+      ).rejects.toThrow(ForbiddenError);
+
+      modelsMock.JournalMedia.findAll.mockResolvedValue([]);
+      await updateEntry(userId, entryId, {
+        ...body,
+        media: [{ id: 'keep-me' }, { blobKey: `journal/blobs/${userId}/new`, sizeBytes: 5 }],
+      });
+      expect(modelsMock.JournalMedia.destroy).toHaveBeenCalled();
+      expect(modelsMock.JournalMedia.bulkCreate).toHaveBeenCalledWith([
+        expect.objectContaining({ entryId, blobKey: `journal/blobs/${userId}/new`, sizeBytes: 5 }),
+      ]);
     });
   });
 
   describe('deleteEntry', () => {
-    it('should delete the caller\'s own entry', async () => {
+    it('should delete the caller\'s own entry and its stored blobs', async () => {
       const entry = mockEntry();
       modelsMock.JournalEntry.findOne.mockResolvedValue(entry);
+      modelsMock.JournalMedia.findAll.mockResolvedValue([
+        { blobKey: 'journal/blobs/u/a', thumbnailKey: 'journal/blobs/u/b' },
+      ]);
 
       await deleteEntry(userId, entryId);
 
+      expect(entry.destroy).toHaveBeenCalled();
+      expect(s3Mock.deleteObject).toHaveBeenCalledWith('journal/blobs/u/a');
+      expect(s3Mock.deleteObject).toHaveBeenCalledWith('journal/blobs/u/b');
+    });
+
+    it('still deletes the entry when removing a blob fails', async () => {
+      const entry = mockEntry();
+      modelsMock.JournalEntry.findOne.mockResolvedValue(entry);
+      modelsMock.JournalMedia.findAll.mockResolvedValue([{ blobKey: 'journal/blobs/u/a', thumbnailKey: null }]);
+      s3Mock.deleteObject.mockRejectedValueOnce(new Error('s3 down'));
+
+      await expect(deleteEntry(userId, entryId)).resolves.toBeUndefined();
       expect(entry.destroy).toHaveBeenCalled();
     });
 
@@ -213,9 +267,9 @@ describe('Journal Stats', () => {
     jest.useRealTimers();
   });
 
-  /** A bare entry row as `getStats`/`getHistory` read it (no media, no `get`). */
-  function row(dateIso: string, extra: any = {}) {
-    return { createdAt: new Date(dateIso), content: 'a few words here', mood: null, tags: null, ...extra };
+  /** A bare entry row as `getStats`/`getHistory` read it: just the date. */
+  function row(dateIso: string) {
+    return { createdAt: new Date(dateIso) };
   }
 
   describe('getStats', () => {
@@ -282,7 +336,7 @@ describe('Journal Stats', () => {
       const stats = await getStats(userId, 'America/New_York');
 
       expect(stats.wroteToday).toBe(false);
-      expect(stats.last7Days[5]).toMatchObject({ date: '2026-07-16', written: true });
+      expect(stats.last7Days[5]).toEqual({ date: '2026-07-16', wrote: true });
     });
 
     it('returns seven days ending today, and today’s prompt', async () => {
@@ -299,65 +353,35 @@ describe('Journal Stats', () => {
       expect((await getStats(userId, 'UTC')).prompt).toBe(stats.prompt);
     });
 
-    it('sums words only for the current month', async () => {
+    it('counts only this month, and reports no words or moods', async () => {
       modelsMock.JournalEntry.findAll.mockResolvedValue([
-        row('2026-06-30T08:00:00Z', { content: 'one two three four five' }),
-        row('2026-07-02T08:00:00Z', { content: 'one two three' }),
+        row('2026-06-30T08:00:00Z'),
+        row('2026-07-02T08:00:00Z'),
       ]);
 
       const stats = await getStats(userId, 'UTC');
 
       expect(stats.entriesThisMonth).toBe(1);
-      expect(stats.wordsThisMonth).toBe(3);
+      for (const k of ['wordsThisMonth', 'moodSummary', 'topTags']) expect(stats).not.toHaveProperty(k);
+      expect(stats.last7Days[0]).toEqual({ date: '2026-07-11', wrote: false });
     });
   });
 
   describe('getHistory', () => {
-    it('takes the last mood of a day and reports the modal mood', async () => {
+    it('lists the days of the month that have entries, dates only', async () => {
       modelsMock.JournalEntry.findAll.mockResolvedValue([
-        row('2026-07-01T08:00:00Z', { mood: 'calm', tags: ['gratitude'] }),
-        row('2026-07-02T08:00:00Z', { mood: 'low' }),
-        // Same day, written later — the day ended calm.
-        row('2026-07-02T22:00:00Z', { mood: 'calm', tags: ['gratitude', 'family'] }),
-        row('2026-07-03T08:00:00Z', { mood: 'happy' }),
+        row('2026-06-30T23:00:00Z'),
+        row('2026-07-01T08:00:00Z'),
+        row('2026-07-02T08:00:00Z'),
+        row('2026-07-02T22:00:00Z'),
       ]);
 
       const history = await getHistory(userId, '2026-07', 'UTC');
 
-      expect(history.moodDays).toEqual([
-        { date: '2026-07-01', mood: 'calm', score: 4 },
-        { date: '2026-07-02', mood: 'calm', score: 4 },
-        { date: '2026-07-03', mood: 'happy', score: 5 },
-      ]);
-      expect(history.moodSummary).toBe('Mostly calm');
-      expect(history.goodDays).toBe(3);
-      expect(history.topTags).toEqual([
-        { tag: 'gratitude', count: 2 },
-        { tag: 'family', count: 1 },
-      ]);
-    });
-
-    it('compares against the previous month per day, not per entry', async () => {
-      modelsMock.JournalEntry.findAll.mockResolvedValue([
-        // June: one rough day, written about three times over.
-        row('2026-06-10T08:00:00Z', { mood: 'rough' }),
-        row('2026-06-10T12:00:00Z', { mood: 'rough' }),
-        row('2026-06-10T18:00:00Z', { mood: 'rough' }),
-        // July: one calm day. 4 vs 1 → +300%, regardless of June's entry count.
-        row('2026-07-05T08:00:00Z', { mood: 'calm' }),
-      ]);
-
-      const history = await getHistory(userId, '2026-07', 'UTC');
-
-      expect(history.moodDeltaPercent).toBe(300);
-    });
-
-    it('reports no delta when the previous month recorded no mood', async () => {
-      modelsMock.JournalEntry.findAll.mockResolvedValue([
-        row('2026-07-05T08:00:00Z', { mood: 'calm' }),
-      ]);
-
-      expect((await getHistory(userId, '2026-07', 'UTC')).moodDeltaPercent).toBeNull();
+      expect(history.entryDates).toEqual(['2026-07-01', '2026-07-02']);
+      for (const k of ['moodDays', 'topTags', 'moodSummary', 'goodDays', 'moodDeltaPercent']) {
+        expect(history).not.toHaveProperty(k);
+      }
     });
 
     it('describes the grid: 31 days starting on a Wednesday', async () => {
@@ -368,7 +392,6 @@ describe('Journal Stats', () => {
       expect(history.daysInMonth).toBe(31);
       // 2026-07-01 is a Wednesday; the grid starts Monday, so index 2.
       expect(history.firstWeekday).toBe(2);
-      expect(history.moodSummary).toBeNull();
     });
 
     it('defaults to the current month', async () => {
@@ -379,28 +402,28 @@ describe('Journal Stats', () => {
   });
 
   describe('getOnThisDay', () => {
-    it('returns one entry per past year, most recent first', async () => {
-      modelsMock.JournalEntry.findOne
-        .mockResolvedValueOnce({ id: 'a', createdAt: new Date('2025-07-17T08:00:00Z'), content: 'Yellowstone trip' })
-        .mockResolvedValueOnce(null)
-        .mockResolvedValueOnce({ id: 'c', createdAt: new Date('2023-07-17T08:00:00Z'), content: 'Moving day' })
-        .mockResolvedValue(null);
+    it('returns the encrypted entries from earlier years, most recent first', async () => {
+      const at = (iso: string, id: string) => mockEntry({ id, createdAt: new Date(iso), updatedAt: new Date(iso) });
+      modelsMock.JournalEntry.findAll
+        .mockResolvedValueOnce([at('2025-07-17T08:00:00Z', 'a')])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([at('2023-07-17T08:00:00Z', 'c')])
+        .mockResolvedValue([]);
 
-      const results = await getOnThisDay(userId, '2026-07-17', 'UTC');
+      const result = await getOnThisDay(userId, '2026-07-17', 'UTC');
 
-      expect(results).toEqual([
-        { id: 'a', date: '2025-07-17', yearsAgo: 1, snippet: 'Yellowstone trip' },
-        { id: 'c', date: '2023-07-17', yearsAgo: 3, snippet: 'Moving day' },
-      ]);
+      expect(result.entries.map((e) => e.id)).toEqual(['a', 'c']);
+      expect(result.entries[0]).toEqual(expect.objectContaining({ ciphertext: 'Y2lwaGVy', sealedKey: 'c2VhbGVk' }));
+      expect(result.entries[0]).not.toHaveProperty('content');
     });
 
     it('skips Feb 29 in years that do not have one', async () => {
-      modelsMock.JournalEntry.findOne.mockResolvedValue(null);
+      modelsMock.JournalEntry.findAll.mockResolvedValue([]);
 
       await getOnThisDay(userId, '2028-02-29', 'UTC');
 
       // 2027, 2026, 2025 and 2023 are common years; only 2024 is queried.
-      expect(modelsMock.JournalEntry.findOne).toHaveBeenCalledTimes(1);
+      expect(modelsMock.JournalEntry.findAll).toHaveBeenCalledTimes(1);
     });
   });
 });

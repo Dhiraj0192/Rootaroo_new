@@ -4,10 +4,11 @@ import sequelize from '../../config/database';
 class JournalMedia extends Model {
   declare id: CreationOptional<string>;
   declare entryId: string;
-  declare mediaUrl: string;
-  declare mediaType: 'photo' | 'video';
-  declare thumbnailUrl: string | null;
-  declare fileSizeBytes: number | null;
+  /** S3 key of the encrypted photo. */
+  declare blobKey: string;
+  /** S3 key of the encrypted thumbnail. */
+  declare thumbnailKey: string | null;
+  declare sizeBytes: number | null;
   declare createdAt: CreationOptional<Date>;
 }
 
@@ -23,22 +24,17 @@ JournalMedia.init(
       allowNull: false,
       field: 'entry_id',
     },
-    mediaUrl: {
+    blobKey: {
       type: DataTypes.STRING(500),
       allowNull: false,
-      field: 'media_url',
+      field: 'blob_key',
     },
-    mediaType: {
-      type: DataTypes.ENUM('photo', 'video'),
-      allowNull: false,
-      field: 'media_type',
-    },
-    thumbnailUrl: {
+    thumbnailKey: {
       type: DataTypes.STRING(500),
       allowNull: true,
-      field: 'thumbnail_url',
+      field: 'thumbnail_key',
     },
-    fileSizeBytes: {
+    sizeBytes: {
       type: DataTypes.INTEGER,
       allowNull: true,
       field: 'file_size_bytes',
