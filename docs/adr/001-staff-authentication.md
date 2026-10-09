@@ -1,6 +1,6 @@
 # ADR-001-staff-authentication: Cloudflare Access, then a passkey, then server-side sessions
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-10-09
 **Feature:** 001-admin-panel
 

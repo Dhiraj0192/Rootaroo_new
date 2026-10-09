@@ -1,6 +1,6 @@
 # ADR-001-admin-frontend-stack: React + Vite + TanStack + Tailwind, served as static files behind strict headers
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-10-09
 **Feature:** 001-admin-panel
 

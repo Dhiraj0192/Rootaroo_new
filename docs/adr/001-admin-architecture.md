@@ -1,6 +1,6 @@
 # ADR-001-admin-architecture: Own admin app plus a separate staff API in the existing server
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-10-09
 **Feature:** 001-admin-panel
 

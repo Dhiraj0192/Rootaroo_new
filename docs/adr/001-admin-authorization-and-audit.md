@@ -1,6 +1,6 @@
 # ADR-001-admin-authorization-and-audit: Permission names behind fixed roles, and an add-only audit log
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-10-09
 **Feature:** 001-admin-panel
 
