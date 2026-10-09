@@ -1,8 +1,13 @@
 import { register, updateProfile, googleAuth, appleAuth, sendVerification, verifyEmail, forgotPassword, resetPassword, checkResetCode, scheduleDeletion, cancelDeletion, confirmDeletion, registerPhone, sendPhoneOtp, verifyPhoneOtp } from '../service';
 import { env } from '../../../config/env';
+import { __setServicesForTests } from '../../../services';
 
 jest.mock('../../../shared/utils/mailer', () => ({ sendEmail: jest.fn(), sendAdminAlertEmail: jest.fn() }));
 jest.mock('../../../shared/utils/sms', () => ({ sendSms: jest.fn() }));
+jest.mock('../../device/service', () => ({
+  upsertDevice: jest.fn(async () => ({ id: 'dev-1' })),
+  touchDevice: jest.fn(async () => true),
+}));
 jest.mock('jose', () => ({
   createRemoteJWKSet: jest.fn(() => ({})),
   jwtVerify: jest.fn(),
@@ -117,6 +122,26 @@ describe('Auth Service — Update Profile', () => {
     expect(user.homeAddress).toBe('482 Maple Street, Austin, TX 78701');
     expect(user.phone).toBe('5550100192');
     expect(user.save).toHaveBeenCalled();
+  });
+
+  it("refuses an avatar key that isn't the caller's own upload", async () => {
+    const user = fakeUser() as any;
+    (models.User.findByPk as jest.Mock).mockResolvedValue(user);
+
+    for (const avatarUrl of [`avatars/other-user/a.jpg`, 'vault/h1/secret', 'journal/images/other/x.jpg', 'http://169.254.169.254/x']) {
+      await expect(updateProfile(user.id, { avatarUrl })).rejects.toThrow("That file isn't yours");
+    }
+    expect(user.save).not.toHaveBeenCalled();
+  });
+
+  it("accepts the caller's own avatar upload and an outside https photo link", async () => {
+    const user = fakeUser() as any;
+    (models.User.findByPk as jest.Mock).mockResolvedValue(user);
+
+    await updateProfile(user.id, { avatarUrl: `avatars/${user.id}/a.jpg` });
+    expect(user.avatarUrl).toBe(`avatars/${user.id}/a.jpg`);
+    await updateProfile(user.id, { avatarUrl: 'https://lh3.googleusercontent.com/a/photo' });
+    expect(user.avatarUrl).toBe('https://lh3.googleusercontent.com/a/photo');
   });
 
   it('should throw if the new phone number already belongs to another account', async () => {
@@ -307,7 +332,7 @@ describe('Auth Service — Email Verification', () => {
     });
 
     it('should send via Resend when configured', async () => {
-      env.resend.apiKey = 'test-key';
+      __setServicesForTests({ email: { name: 'resend', send: jest.fn() } });
       const user = fakeUser({ isVerified: false });
       (models.User.findByPk as jest.Mock).mockResolvedValue(user);
 
@@ -371,7 +396,7 @@ describe('Auth Service — Password Reset', () => {
     });
 
     it('should send via Resend when configured', async () => {
-      env.resend.apiKey = 'test-key';
+      __setServicesForTests({ email: { name: 'resend', send: jest.fn() } });
       (models.User.findOne as jest.Mock).mockResolvedValue({ id: 'u1', email: 'test@user.com' });
 
       await forgotPassword({ email: 'test@user.com' });
@@ -639,6 +664,7 @@ describe('Auth Service — Phone OTP (app-owned code, delivered via Twilio)', ()
 
   describe('sendPhoneOtp', () => {
     it('should send an OTP for an existing user', async () => {
+      __setServicesForTests({ sms: { name: 'twilio', send: jest.fn() } });
       (models.User.findByPk as jest.Mock).mockResolvedValue(fakePhoneUser());
 
       await sendPhoneOtp({ phone: '+15551234567' }, 'u1');

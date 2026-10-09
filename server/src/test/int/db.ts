@@ -14,8 +14,11 @@ export async function resetDb(): Promise<void> {
     await sequelize.query('SET FOREIGN_KEY_CHECKS = 1');
   }
   if (redis.status === 'ready') {
-    const keys = await redis.keys('billing:*');
-    if (keys.length) await redis.del(...keys);
+    // Rate-limit and restore counters too: suites sign in many times a minute.
+    for (const pattern of ['billing:*', 'rl:*', 'e2e:*', 'device:revoked:*', 'campaigns:*']) {
+      const keys = await redis.keys(pattern);
+      if (keys.length) await redis.del(...keys);
+    }
   }
 }
 

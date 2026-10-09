@@ -12,7 +12,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { format, parse } from 'date-fns';
 import { colors, fonts, radius, spacing, withAlpha } from '../shared/theme';
-import { journalApi } from '../shared/api/journal';
+import { getJournalRepo } from '../shared/journal/journalRepo';
 import { MAX_SCORE, moodById } from '../shared/constants/journalMoods';
 import GlassCard from '../shared/components/GlassCard';
 import { useTabBarDockHeight } from '../shared/hooks/useTabBarDockHeight';
@@ -70,7 +70,7 @@ function MoodChart({ moodDays }) {
  */
 function EntryCalendar({ history, todayKey }) {
   const cells = useMemo(() => {
-    const moodByDate = new Map(history.moodDays.map((d) => [d.date, d.mood]));
+    const moodByDate = new Map(Object.entries(history.moodDays));
     const written = new Set(history.entryDates);
     const list = [];
     for (let i = 0; i < history.firstWeekday; i += 1) list.push({ key: `blank-${i}`, blank: true });
@@ -132,7 +132,7 @@ export default function JournalHistoryScreen({ navigation }) {
   const load = useCallback(async (target) => {
     setLoading(true);
     try {
-      setHistory(await journalApi.history(target));
+      setHistory(await getJournalRepo().monthView(target));
     } catch {
       setHistory(null);
     } finally {
@@ -145,7 +145,16 @@ export default function JournalHistoryScreen({ navigation }) {
   }, [load, month]);
 
   const monthLabel = format(parse(`${month}-01`, 'yyyy-MM-dd', new Date()), 'MMMM yyyy');
-  const delta = history?.moodDeltaPercent ?? null;
+  const moodBars = useMemo(
+    () =>
+      history
+        ? Object.entries(history.moodDays)
+            .sort(([a], [b]) => (a < b ? -1 : 1))
+            .map(([date, mood]) => ({ date, score: moodById(mood)?.score ?? 0 }))
+            .filter((d) => d.score > 0)
+        : [],
+    [history],
+  );
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
@@ -202,25 +211,12 @@ export default function JournalHistoryScreen({ navigation }) {
         >
           <GlassCard style={styles.card} radius={radius.lg} tone="blue">
             <Text style={styles.cardLabel}>MOOD THIS MONTH</Text>
-            <MoodChart moodDays={history.moodDays} />
+            <MoodChart moodDays={moodBars} />
             <View style={styles.chartFooter}>
               <Text style={styles.chartSummary}>
                 {history.moodSummary || 'No mood yet'} · {history.goodDays}{' '}
                 {history.goodDays === 1 ? 'good day' : 'good days'}
               </Text>
-              {delta !== null ? (
-                <View style={styles.deltaWrap}>
-                  <Ionicons
-                    name={delta >= 0 ? 'caret-up' : 'caret-down'}
-                    size={10}
-                    color={delta >= 0 ? colors.gold : colors.danger}
-                  />
-                  <Text style={[styles.delta, delta < 0 && styles.deltaDown]}>
-                    {delta >= 0 ? '+' : ''}
-                    {delta}%
-                  </Text>
-                </View>
-              ) : null}
             </View>
           </GlassCard>
 
@@ -302,9 +298,6 @@ const styles = StyleSheet.create({
     marginTop: spacing.lg,
   },
   chartSummary: { flex: 1, fontFamily: fonts.body, fontSize: 11.5, color: colors.textSecondary },
-  deltaWrap: { flexDirection: 'row', alignItems: 'center', gap: 3 },
-  delta: { fontFamily: fonts.bodySemiBold, fontSize: 11.5, color: colors.gold },
-  deltaDown: { color: colors.danger },
 
   calendar: { marginTop: spacing.lg },
   weekdayRow: { flexDirection: 'row', marginBottom: spacing.sm },

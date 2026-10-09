@@ -5,8 +5,9 @@
  * cards and a gold progress bar ("Uploading {name}…"). Presented as a
  * transparentModal so the vault list shows dimmed behind the sheet.
  *
- * Security: unchanged — AES-256-GCM per file, IV via crypto.getRandomValues,
- * AES key wrapped with TOFU-verified own RSA public key, ciphertext → Cloudinary.
+ * Security: the vault repo encrypts the file, its name and its type on this
+ * phone (AES-256-GCM, fresh key per file) and seals the file key to this
+ * phone's account key, plus every member's key for Household files.
  */
 import React, { useState } from 'react';
 import {
@@ -14,8 +15,6 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  Alert,
-  ActivityIndicator,
   StatusBar,
   Modal,
   TextInput,
@@ -23,22 +22,12 @@ import {
 import { showAlert } from '../shared/services/themedAlert';
 import Svg, { Path, Rect, Circle } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { File, Paths } from 'expo-file-system';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { ensureCamera } from '../shared/permissions';
-import { vaultApi } from '../shared/api/vault';
 import { useVaultStore } from '../shared/store/vaultStore';
-import { useAuthStore } from '../shared/store/authStore';
-import {
-  importPublicKey,
-  generateAesKey,
-  encryptBuffer,
-  wrapKey,
-} from '../shared/crypto/vaultCrypto';
-import { getPrivateKey } from '../shared/crypto/secureKeyStore';
-import { verifyPublicKey } from '../shared/crypto/keyPinStore';
-import { setupVaultKeys } from '../shared/crypto/vaultSetup';
+import { getVaultRepo, isMemberKeyChanged } from '../shared/vault/vaultRepo';
+import { usePrivateSpaceStore } from '../shared/store/privateSpaceStore';
 import { colors, fonts, goldButton, radius, withAlpha } from '../shared/theme';
 import { GoldFill } from '../shared/components/GoldButton';
 import { KeyboardAvoider } from '../shared/components/KeyboardAware';
@@ -62,79 +51,13 @@ export default function VaultUploadScreen({ navigation }) {
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [fileName, setFileName] = useState('');
-  const [keyState, setKeyState] = useState('checking');
-  const [showBackupChoice, setShowBackupChoice] = useState(false);
+  const [scope, setScope] = useState('personal');
   const [namePrompt, setNamePrompt] = useState({
     visible: false,
     value: '',
     defaultName: '',
     resolve: null,
   });
-  React.useEffect(() => {
-    (async () => {
-      try {
-        const myKey = await vaultApi.getMyKey();
-        setKeyState(myKey ? 'ready' : 'needs_key');
-      } catch {
-        setKeyState('needs_key');
-      }
-    })();
-  }, []);
-
-  /** Prompt user for a passphrase using a modal-style Alert. */
-  const promptPassphrase = () =>
-    new Promise((resolve, reject) => {
-      Alert.prompt(
-        'Set Vault Passphrase',
-        'Choose a strong passphrase. This encrypts your private key backup on the server. A weak passphrase = weak backup.',
-        [
-          {
-            text: 'Cancel',
-            style: 'cancel',
-            onPress: () => reject(new Error('Cancelled')),
-          },
-          {
-            text: 'Set Passphrase',
-            onPress: (pwd) => resolve(pwd || ''),
-          },
-        ],
-        'secure-text',
-      );
-    });
-  const ensureKeys = async (userId) => {
-    const existingPriv = await getPrivateKey(userId);
-    if (existingPriv) {
-      const myKey = await vaultApi.getMyKey();
-      if (myKey?.publicKey) return myKey.publicKey;
-    }
-    return new Promise((resolve, reject) => {
-      setShowBackupChoice(true);
-      globalThis.__vaultKeySetupResolve = resolve;
-      globalThis.__vaultKeySetupReject = reject;
-      globalThis.__vaultKeySetupUserId = userId;
-    });
-  };
-  const handleBackupChoice = async (choice) => {
-    setShowBackupChoice(false);
-    const resolve = globalThis.__vaultKeySetupResolve;
-    const reject = globalThis.__vaultKeySetupReject;
-    const userId = globalThis.__vaultKeySetupUserId;
-    if (!resolve || !userId) return;
-    try {
-      let publicKeySpki;
-      if (choice === 'passphrase') {
-        const passphrase = await promptPassphrase();
-        publicKeySpki = await setupVaultKeys(userId, 'passphrase', passphrase);
-      } else {
-        publicKeySpki = await setupVaultKeys(userId, 'none');
-      }
-      setKeyState('ready');
-      resolve(publicKeySpki);
-    } catch (e) {
-      reject(e);
-    }
-  };
-
   /**
    * Prompt for a document name, pre-filled with the picked file's name.
    * Alert.prompt is iOS-only in React Native (silently no-ops on Android),
@@ -153,10 +76,6 @@ export default function VaultUploadScreen({ navigation }) {
   /** Shared encryption + upload pipeline for any picked asset. */
   const processAndUpload = async (asset) => {
     try {
-      if (keyState === 'checking') {
-        showAlert('Please wait', 'Checking vault key status...');
-        return;
-      }
       setUploading(true);
       setProgress(0);
       setFileName(asset.name);
@@ -166,91 +85,24 @@ export default function VaultUploadScreen({ navigation }) {
         return;
       }
       setProgress(15);
-      const user = useAuthStore.getState().user;
-      if (!user?.id) {
-        showAlert('Error', 'User authentication required.');
+      const { status, publicKey } = usePrivateSpaceStore.getState();
+      if (status !== 'here' || !publicKey) {
         setUploading(false);
+        showAlert('Set up your private space first', 'Your documents are locked with a key that lives on this phone.', [
+          { text: 'Not now', style: 'cancel' },
+          { text: 'Set up', onPress: () => navigation.replace('PrivateSpaceSetup') },
+        ]);
         return;
       }
-      const userId = user.id;
+      setProgress(40);
 
-      // Step: ensure RSA key pair exists (may show backup choice UI)
-      setUploading(false); // pause indicator during key setup if needed
-      const publicKeySpki =
-        keyState === 'needs_key'
-          ? await ensureKeys(userId)
-          : (await vaultApi.getMyKey())?.publicKey;
-      if (!publicKeySpki) {
-        showAlert('Error', 'No vault key found. Please set up your vault key first.');
-        return;
-      }
-      setUploading(true);
-      setProgress(25);
-
-      // TOFU verification of own public key before wrapping
-      const pinResult = await verifyPublicKey(userId, publicKeySpki);
-      if (pinResult === 'changed') {
-        showAlert(
-          '⚠️ Vault Key Mismatch',
-          'Your vault public key on the server does not match the key stored on this device. ' +
-            'This may indicate a server compromise. Vault upload has been blocked. ' +
-            'Do not proceed — contact your administrator.',
-          [
-            {
-              text: 'OK',
-            },
-          ],
-        );
-        setUploading(false);
-        return;
-      }
-      setProgress(35);
-
-      // Read file bytes
-      const file = new File(asset.uri);
-      const fileBytes = await file.arrayBuffer();
-      setProgress(45);
-
-      // AES-256-GCM key + encrypt — IV is crypto.getRandomValues
-      const aesKey = await generateAesKey();
-      const { iv, encryptedBytes } = await encryptBuffer(aesKey, fileBytes);
-      setProgress(60);
-
-      // Wrap AES key with TOFU-verified own RSA public key
-      const publicKey = await importPublicKey(publicKeySpki);
-      const wrappedKey = await wrapKey(aesKey, publicKey);
-      setProgress(75);
-
-      // Write encrypted bytes to temp cache
-      const tempFile = new File(
-        Paths.cache,
-        `vault_enc_${Date.now()}_${Math.random().toString(36).substring(7)}`,
-      );
-      await tempFile.write(new Uint8Array(encryptedBytes));
-      setProgress(85);
-
-      // Upload
-      const document = await vaultApi.uploadDocument(
-        {
-          name: asset.name || 'Document',
-          mimeType: asset.mimeType,
-          sizeBytes: asset.size || 0,
-          encryptedKey: wrappedKey,
-          iv,
-        },
-        {
-          uri: tempFile.uri,
-          name: asset.name || 'encrypted_file',
-          type: 'application/octet-stream',
-        },
-      );
-
-      // Cleanup
-      try {
-        await tempFile.delete();
-      } catch {
-        /* ignore */
-      }
+      const document = await getVaultRepo().upload({
+        uri: asset.uri,
+        name: asset.name || 'Document',
+        mimeType: asset.mimeType,
+        scope,
+      });
+      setProgress(90);
       if (document) {
         useVaultStore.getState().prependDocument(document);
         setProgress(100);
@@ -262,6 +114,14 @@ export default function VaultUploadScreen({ navigation }) {
         ]);
       }
     } catch (error) {
+      if (isMemberKeyChanged(error)) {
+        showAlert(
+          'Check a safety number first',
+          `${error.members.map((m) => m.displayName).join(', ')} has a new key. Open the vault and compare safety numbers with them in person before sharing.`,
+          [{ text: 'OK', onPress: () => navigation.goBack() }],
+        );
+        return;
+      }
       showAlert(
         'Upload Failed',
         error?.response?.data?.message || error?.message || 'Could not upload file',
@@ -299,69 +159,6 @@ export default function VaultUploadScreen({ navigation }) {
     }
   };
 
-  // ── Backup Choice (key setup) — dark full screen ─────────────────────────────
-  if (showBackupChoice) {
-    return (
-      <View style={[styles.root, styles.backupScreen]}>
-        <StatusBar barStyle="light-content" backgroundColor={colors.shadow} />
-        <View style={styles.backupContent}>
-          <Text style={styles.backupTitle}>Vault Key Backup</Text>
-          <Text style={styles.backupSubtitle}>
-            Your vault key pair needs to be created. Choose a backup mode:
-          </Text>
-
-          <TouchableOpacity
-            style={styles.backupOption}
-            onPress={() => handleBackupChoice('passphrase')}
-            activeOpacity={0.85}
-          >
-            <Text style={styles.backupOptionTitle}>🔑 Passphrase Backup (Opt-in)</Text>
-            <Text style={styles.backupOptionDesc}>
-              Your private key is encrypted with a passphrase you set and stored on the server. You
-              can recover vault access on a new device if you remember the passphrase.{'\n\n'}
-              ⚠️ A weak passphrase = a weak backup. The server cannot decrypt this, but an attacker
-              with server access could attempt offline brute-force.
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.backupOption, styles.backupOptionDefault]}
-            onPress={() => handleBackupChoice('none')}
-            activeOpacity={0.85}
-          >
-            <Text style={styles.backupOptionTitle}>🔒 Zero-Knowledge (Recommended)</Text>
-            <Text style={styles.backupOptionDesc}>
-              No server backup. Your private key exists only on this device's hardware keychain,
-              protected by biometrics.{'\n\n'}
-              ⚠️ If this device is lost, vault access is permanently gone. There is no recovery path
-              — this is by design.
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.backupCancel}
-            onPress={() => {
-              setShowBackupChoice(false);
-              globalThis.__vaultKeySetupReject?.(new Error('Backup choice cancelled'));
-            }}
-          >
-            <Text style={styles.backupCancelText}>Cancel</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    );
-  }
-
-  // ── Checking key status — dark full screen ───────────────────────────────────
-  if (keyState === 'checking') {
-    return (
-      <View style={[styles.root, styles.checkingScreen]}>
-        <StatusBar barStyle="light-content" backgroundColor={colors.shadow} />
-        <ActivityIndicator size="large" color={colors.gold} />
-      </View>
-    );
-  }
-
   // ── Bottom sheet (SCREEN 29) ─────────────────────────────────────────────────
   return (
     <View style={styles.root}>
@@ -382,6 +179,25 @@ export default function VaultUploadScreen({ navigation }) {
       >
         <View style={styles.handle} />
         <Text style={styles.sheetTitle}>Add a document</Text>
+
+        <View style={styles.scopeRow}>
+          {[['personal', 'Personal'], ['household', 'Household']].map(([value, label]) => (
+            <TouchableOpacity
+              key={value}
+              style={[styles.scopeBtn, scope === value && styles.scopeBtnOn]}
+              onPress={() => setScope(value)}
+              disabled={uploading}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.scopeText, scope === value && styles.scopeTextOn]}>{label}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        <Text style={styles.scopeHelp}>
+          {scope === 'household'
+            ? 'Household files can be opened by everyone in your household.'
+            : 'Personal files can only be opened by you, on this phone.'}
+        </Text>
 
         <View style={styles.optionsRow}>
           <TouchableOpacity
@@ -587,70 +403,43 @@ const styles = StyleSheet.create({
     backgroundColor: colors.gold,
     borderRadius: 3,
   },
+  scopeRow: {
+    flexDirection: 'row',
+    backgroundColor: colors.canvasElevated,
+    borderRadius: 12,
+    padding: 3,
+    marginBottom: 10,
+  },
+  scopeBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  scopeBtnOn: {
+    backgroundColor: colors.surface,
+  },
+  scopeText: {
+    fontSize: 14,
+    fontFamily: fonts.bodyMedium,
+    color: colors.textSecondary,
+  },
+  scopeTextOn: {
+    color: colors.ink,
+    fontFamily: fonts.bodySemiBold,
+  },
+  scopeHelp: {
+    fontSize: 12,
+    lineHeight: 17,
+    fontFamily: fonts.body,
+    color: colors.textMuted,
+    textAlign: 'center',
+    marginBottom: 20,
+  },
   progressText: {
     fontSize: 12,
     fontFamily: fonts.body,
     color: colors.textSecondary,
-  },
-  // ── Backup choice (dark) ──
-  backupScreen: {
-    backgroundColor: colors.surfaceRaised,
-  },
-  backupContent: {
-    flex: 1,
-    paddingHorizontal: 24,
-    paddingTop: 72,
-  },
-  backupTitle: {
-    fontSize: 22,
-    fontFamily: fonts.displayBold,
-    color: colors.onAccent,
-    marginBottom: 8,
-  },
-  backupSubtitle: {
-    fontSize: 14,
-    fontFamily: fonts.body,
-    color: colors.textFaint,
-    lineHeight: 20,
-    marginBottom: 22,
-  },
-  backupOption: {
-    backgroundColor: colors.surfaceRaised,
-    borderWidth: 1,
-    borderColor: 'transparent',
-    borderRadius: radius.cardLg,
-    padding: 16,
-    marginBottom: 14,
-  },
-  backupOptionDefault: {
-    borderColor: colors.gold,
-  },
-  backupOptionTitle: {
-    fontSize: 15,
-    fontFamily: fonts.displayBold,
-    color: colors.onAccent,
-    marginBottom: 8,
-  },
-  backupOptionDesc: {
-    fontSize: 13,
-    fontFamily: fonts.body,
-    color: colors.textMutedDark,
-    lineHeight: 19,
-  },
-  backupCancel: {
-    paddingVertical: 12,
-    alignItems: 'center',
-  },
-  backupCancelText: {
-    color: colors.gold,
-    fontSize: 15,
-    fontFamily: fonts.bodyMedium,
-  },
-  // ── Checking (dark) ──
-  checkingScreen: {
-    backgroundColor: colors.surfaceRaised,
-    justifyContent: 'center',
-    alignItems: 'center',
   },
   // ── Name this document ──
   namePromptOverlay: {

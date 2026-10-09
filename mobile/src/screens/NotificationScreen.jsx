@@ -14,6 +14,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Swipeable } from 'react-native-gesture-handler';
 import { notificationApi } from '../shared/api/notification';
+import { syncBadge } from '../shared/notificationRouting';
 import { colors, fonts, goldButton, withAlpha } from '../shared/theme';
 import { GoldFill } from '../shared/components/GoldButton';
 import GlassCard from '../shared/components/GlassCard';
@@ -153,6 +154,7 @@ export default function NotificationScreen({ navigation }) {
             : n,
         ),
       );
+      syncBadge();
     } catch {
       /* silent */
     }
@@ -161,6 +163,7 @@ export default function NotificationScreen({ navigation }) {
     try {
       await notificationApi.markAllAsRead();
       setAll((prev) => prev.map((n) => ({ ...n, isRead: true })));
+      syncBadge();
     } catch {
       showAlert('Error', 'Could not mark all as read');
     }

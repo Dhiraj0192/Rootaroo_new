@@ -6,7 +6,7 @@ import {
   DeviceToken,
 } from '../../database/models';
 import { NotFoundError } from '../../shared/utils/errors';
-import { sendExpoPush } from '../../shared/utils/expoPush';
+import { getPush } from '../../services';
 import logger from '../../shared/utils/logger';
 import type {
   DeviceTokenBody,
@@ -30,8 +30,12 @@ const TYPE_TO_PREFERENCE_FIELD: Partial<Record<string, keyof NotificationPrefere
   check_in: 'checkIn',
   ping_request: 'pingRequest',
   ping_response: 'pingRequest',
+  location_share_started: 'pingRequest',
   calendar: 'calendarEvent',
   chat: 'chatMessage',
+  task_completed: 'taskCompleted',
+  member_joined: 'memberJoined',
+  campaign: 'tips',
 };
 
 // ── Device Token Management ── (DB-backed)
@@ -40,6 +44,7 @@ const TYPE_TO_PREFERENCE_FIELD: Partial<Record<string, keyof NotificationPrefere
 export async function registerToken(
   userId: string,
   body: DeviceTokenBody,
+  deviceId?: string,
 ): Promise<void> {
   // DeviceToken is paranoid (soft-delete) via the global Sequelize define
   // default — unregisterToken (called on logout) sets deleted_at rather
@@ -53,6 +58,7 @@ export async function registerToken(
     userId,
     token: body.token,
     platform: body.platform,
+    deviceId: deviceId ?? null,
     deletedAt: null,
   });
 }
@@ -66,12 +72,12 @@ export async function unregisterToken(
 }
 
 /** Get all FCM tokens for a user. */
-export async function getUserTokens(userId: string): Promise<string[]> {
+export async function getUserTokens(userId: string): Promise<Array<{ token: string; deviceId: string | null }>> {
   const tokens = await DeviceToken.findAll({
     where: { userId },
-    attributes: ['token'],
+    attributes: ['token', 'deviceId'],
   });
-  return tokens.map((t) => t.token);
+  return tokens.map((t) => ({ token: t.token, deviceId: t.deviceId ?? null }));
 }
 
 // ── Notification History ──
@@ -153,6 +159,7 @@ export async function getPreferences(
       chatMessage: true,
       calendarEvent: true,
       memberJoined: true,
+      tips: true,
     });
   }
 
@@ -166,6 +173,7 @@ export async function getPreferences(
     chatMessage: prefs.chatMessage,
     calendarEvent: prefs.calendarEvent,
     memberJoined: prefs.memberJoined,
+    tips: prefs.tips,
   };
 }
 
@@ -192,6 +200,7 @@ export async function updatePreferences(
     if (body.chatMessage !== undefined) prefs.chatMessage = body.chatMessage;
     if (body.calendarEvent !== undefined) prefs.calendarEvent = body.calendarEvent;
     if (body.memberJoined !== undefined) prefs.memberJoined = body.memberJoined;
+    if (body.tips !== undefined) prefs.tips = body.tips;
     await prefs.save();
   }
 
@@ -205,6 +214,7 @@ export async function updatePreferences(
     chatMessage: prefs.chatMessage,
     calendarEvent: prefs.calendarEvent,
     memberJoined: prefs.memberJoined,
+    tips: prefs.tips,
   };
 }
 
@@ -212,8 +222,9 @@ export async function updatePreferences(
 
 /**
  * Send a push notification to a specific user.
- * Always creates a NotificationHistory record, and delivers via Expo's
- * push service unless `skipPush` is set or the user's preferences opt out.
+ * Creates a NotificationHistory record (unless `skipHistory`, used for chat
+ * so messages don't flood the list), and delivers via Expo's push service
+ * unless `skipPush` is set or the user's preferences opt out.
  */
 export async function sendToUser(
   userId: string,
@@ -221,18 +232,24 @@ export async function sendToUser(
   title: string,
   body?: string,
   data?: Record<string, unknown>,
-  options?: { skipPush?: boolean },
+  options?: {
+    skipPush?: boolean;
+    skipHistory?: boolean;
+    /** Devices to leave out (e.g. the one already looking at the chat); tokens with no device are kept. */
+    excludeDeviceIds?: string[];
+  },
 ): Promise<void> {
-  // Always persist to history
-  await NotificationHistory.create({
-    id: uuidv4(),
-    userId,
-    type,
-    title,
-    body: body || null,
-    data: data || null,
-    isRead: false,
-  });
+  if (!options?.skipHistory) {
+    await NotificationHistory.create({
+      id: uuidv4(),
+      userId,
+      type,
+      title,
+      body: body || null,
+      data: data || null,
+      isRead: false,
+    });
+  }
 
   // Respect the user's notification preferences before pushing — history
   // is always recorded above regardless, so the item still shows up in
@@ -245,9 +262,14 @@ export async function sendToUser(
 
   // Deliver via push (skip for self-actions — history only)
   if (!options?.skipPush) {
-    const tokens = await getUserTokens(userId);
+    const exclude = new Set(options?.excludeDeviceIds ?? []);
+    const tokens = (await getUserTokens(userId))
+      .filter((t) => !t.deviceId || !exclude.has(t.deviceId))
+      .map((t) => t.token);
     if (tokens.length > 0) {
-      sendExpoPush(tokens, title, body || '', (data || {}) as Record<string, string>)
+      // Badge mirrors the in-app unread count.
+      const badge = await NotificationHistory.count({ where: { userId, isRead: false } });
+      getPush().send(tokens, title, body || '', (data || {}) as Record<string, string>, { badge })
         .catch((e: Error) => logger.error('[ExpoPush] Delivery failed:', e.message));
     }
   }

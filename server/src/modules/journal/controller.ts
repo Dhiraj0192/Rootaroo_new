@@ -1,8 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { AuthenticatedRequest } from '../../shared/middleware/auth';
 import * as journalService from './service';
-import { uploadBuffer, getSignedUrl } from '../../shared/utils/s3';
-import { resizeImageBuffer } from '../../shared/utils/image';
 
 function getUserId(req: Request): string {
   return (req as AuthenticatedRequest).user!.userId;
@@ -79,41 +77,10 @@ export async function uploadMedia(req: Request, res: Response, next: NextFunctio
       res.status(400).json({ success: false, error: 'No files provided' });
       return;
     }
-    // Rejected here as well as in the entry schema: without this a video would
-    // be uploaded to S3 first and only refused at save time, leaving an orphan
-    // object nothing ever references.
-    if (files.some((f) => !f.mimetype.startsWith('image/'))) {
-      res.status(400).json({ success: false, error: 'Journal entries accept photos only' });
-      return;
-    }
-    const results = await Promise.all(
-      files.map(async (f) => {
-        const result = await uploadBuffer(
-          f.buffer,
-          'journal/images',
-          f.mimetype,
-          f.originalname.split('.').pop(),
-        );
-
-        // Compressed thumbnail so the entry list/media grid doesn't download
-        // the full-resolution original for a small tile.
-        const thumbBuffer = await resizeImageBuffer(f.buffer, { width: 480 });
-        const thumbResult = await uploadBuffer(thumbBuffer, 'journal/thumbnails', 'image/jpeg', 'jpg');
-
-        // `fileName`/`thumbnailFileName` are S3 keys — persist as
-        // `mediaUrl`/`thumbnailUrl` when creating the entry. `url`/
-        // `thumbnailUrl` here are signed URLs for immediate preview only;
-        // they expire and must never be stored.
-        return {
-          fileName: result.key,
-          url: await getSignedUrl(result.key),
-          thumbnailFileName: thumbResult.key,
-          thumbnailUrl: await getSignedUrl(thumbResult.key),
-          size: f.size,
-          mimetype: f.mimetype,
-        };
-      }),
-    );
+    // The phone has already encrypted the photo and its thumbnail, so these are
+    // opaque bytes: stored as they came, never decoded, resized or inspected.
+    // `fileName` is the S3 key; send it back as `blobKey` / `thumbnailKey` when saving the entry.
+    const results = await journalService.uploadBlobs(getUserId(req), files);
     res.status(201).json({ success: true, data: results });
   } catch (e) { next(e); }
 }

@@ -48,6 +48,11 @@ jest.mock('../../../database/models', () => {
   };
 });
 
+jest.mock('../push', () => ({
+  broadcastToParticipants: jest.fn().mockResolvedValue(undefined),
+  notifyChatMessage: jest.fn().mockResolvedValue(undefined),
+}));
+
 jest.mock('../../../shared/utils/socket', () => ({
   getIO: jest.fn(() => ({
     to: jest.fn(() => ({
@@ -182,7 +187,7 @@ describe('Chat Service', () => {
 
       const result = await sendMessage(userId, {
         conversationId,
-        mediaUrl: 'https://cloudinary.com/voice.m4a',
+        mediaUrl: `chat/voice/${userId}/voice.m4a`,
         type: 'voice',
         durationSeconds: 8,
       });
@@ -191,8 +196,15 @@ describe('Chat Service', () => {
       expect(result.type).toBe('voice');
       expect(result.durationSeconds).toBe(8);
       expect(ChatMessage.create).toHaveBeenCalledWith(
-        expect.objectContaining({ mediaUrl: 'https://cloudinary.com/voice.m4a', type: 'voice', durationSeconds: 8 }),
+        expect.objectContaining({ mediaUrl: `chat/voice/${userId}/voice.m4a`, type: 'voice', durationSeconds: 8 }),
       );
+    });
+
+    it("refuses someone else's upload as the message media", async () => {
+      for (const mediaUrl of [`chat/voice/${otherUserId}/v.m4a`, `vault/${householdId}/secret`, 'https://example.com/v.m4a']) {
+        await expect(sendMessage(userId, { conversationId, mediaUrl, type: 'voice' })).rejects.toThrow(ForbiddenError);
+      }
+      expect(ChatMessage.create).not.toHaveBeenCalled();
     });
   });
 

@@ -1,20 +1,22 @@
 import { Request, Response, NextFunction } from 'express';
 import { AuthenticatedRequest } from '../../shared/middleware/auth';
 import * as authService from './service';
+import { readDeviceInfo } from '../../shared/middleware/deviceContext';
 import { uploadBuffer } from '../../shared/utils/s3';
+import { userUploadFolder } from '../../shared/utils/uploadKeys';
 import { resizeImageBuffer } from '../../shared/utils/image';
 import type { AuthResponse, AuthTokens } from './types';
 
 export async function register(req: Request, res: Response, next: NextFunction) {
   try {
-    const result: AuthResponse = await authService.register(req.body);
+    const result: AuthResponse = await authService.register(req.body, readDeviceInfo(req));
     res.status(201).json({ success: true, data: result });
   } catch (e) { next(e); }
 }
 
 export async function login(req: Request, res: Response, next: NextFunction) {
   try {
-    const result: AuthResponse = await authService.login(req.body);
+    const result: AuthResponse = await authService.login(req.body, readDeviceInfo(req));
     res.status(200).json({ success: true, data: result });
   } catch (e) { next(e); }
 }
@@ -51,14 +53,14 @@ export async function updateProfile(req: Request, res: Response, next: NextFunct
 
 export async function googleAuth(req: Request, res: Response, next: NextFunction) {
   try {
-    const result = await authService.googleAuth(req.body);
+    const result = await authService.googleAuth(req.body, readDeviceInfo(req));
     res.status(200).json({ success: true, data: result });
   } catch (e) { next(e); }
 }
 
 export async function appleAuth(req: Request, res: Response, next: NextFunction) {
   try {
-    const result = await authService.appleAuth(req.body);
+    const result = await authService.appleAuth(req.body, readDeviceInfo(req));
     res.status(200).json({ success: true, data: result });
   } catch (e) { next(e); }
 }
@@ -136,7 +138,7 @@ export async function uploadAvatarCtrl(req: Request, res: Response, next: NextFu
     // mobile clients don't download a full-resolution original for a tiny
     // thumbnail.
     const resized = await resizeImageBuffer(file.buffer, { width: 256 });
-    const result = await uploadBuffer(resized, 'avatars', 'image/jpeg', 'jpg');
+    const result = await uploadBuffer(resized, userUploadFolder('avatars', auth.user!.userId), 'image/jpeg', 'jpg');
     const user = await authService.updateProfile(auth.user!.userId, { avatarUrl: result.key });
     res.status(200).json({ success: true, data: { avatarUrl: user.avatarUrl, user } });
   } catch (e) { next(e); }
@@ -152,7 +154,7 @@ export async function cancelPendingRegistration(req: Request, res: Response, nex
 
 export async function registerPhone(req: Request, res: Response, next: NextFunction) {
   try {
-    const result = await authService.registerPhone(req.body);
+    const result = await authService.registerPhone(req.body, readDeviceInfo(req));
     res.status(201).json({ success: true, data: result });
   } catch (e) { next(e); }
 }
@@ -168,7 +170,7 @@ export async function sendPhoneOtp(req: Request, res: Response, next: NextFuncti
 export async function verifyPhoneOtp(req: Request, res: Response, next: NextFunction) {
   try {
     const auth = req as AuthenticatedRequest;
-    const result = await authService.verifyPhoneOtp(req.body, auth.user?.userId);
+    const result = await authService.verifyPhoneOtp(req.body, auth.user?.userId, readDeviceInfo(req));
     res.status(200).json({ success: true, data: result });
   } catch (e) { next(e); }
 }

@@ -13,7 +13,6 @@ import {
   Animated,
   Dimensions,
   Linking,
-  AppState,
 } from 'react-native';
 import { PanGestureHandler, State } from 'react-native-gesture-handler';
 import { showAlert } from '../shared/services/themedAlert';
@@ -32,6 +31,10 @@ import { pingApi } from '../shared/api/ping';
 import { placeApi } from '../shared/api/place';
 import { householdApi } from '../shared/api/household';
 import { usePingStore } from '../shared/store/pingStore';
+import { useLocationShareStore } from '../shared/store/locationShareStore';
+import ShareLocationSheet from '../components/location/ShareLocationSheet';
+import ActiveShareBanner from '../components/location/ActiveShareBanner';
+import { formatUpdatedAgo } from '../shared/location/sharePresets';
 import { useAuthStore } from '../shared/store/authStore';
 import { colors, fonts, goldButton, radius, withAlpha } from '../shared/theme';
 import { GoldFill } from '../shared/components/GoldButton';
@@ -47,29 +50,12 @@ const PLACE_ICON_EMOJI = {
   custom: '★',
 };
 const PLACE_ICON_OPTIONS = ['home', 'office', 'school', 'custom'];
-// How long the responder shares their location before accepting — always
-// foreground-only (no background tracking), auto-stops on duration elapse
-// or the app being backgrounded.
-const SHARE_DURATION_OPTIONS = [
-  { minutes: 15, label: '15 min' },
-  { minutes: 30, label: '30 min' },
-  { minutes: 60, label: '1 hour' },
-  { minutes: 120, label: '2 hours' },
-];
-const SHARE_TICK_MS = 45_000; // how often a location update is pushed while sharing
 const SCREEN_HEIGHT = Dimensions.get('window').height;
 const TRAY_COLLAPSED_HEIGHT = 300;
 const TRAY_EXPANDED_HEIGHT = Math.round(SCREEN_HEIGHT * 0.9);
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
-function formatCountdown(msRemaining) {
-  const totalSeconds = Math.max(0, Math.floor(msRemaining / 1000));
-  const m = Math.floor(totalSeconds / 60);
-  const s = totalSeconds % 60;
-  return `${m}:${s.toString().padStart(2, '0')} left`;
-}
-
 /**
  * Free, no-API-key, no-billing map: MapLibre GL Native (a real native
  * MapView, not a WebView) styled with OpenFreeMap's "dark" vector tiles.
@@ -112,14 +98,17 @@ export default function CheckInScreen({ navigation }) {
   const [respondingPingId, setRespondingPingId] = useState(null);
   // Incoming request awaiting a duration choice before it's accepted.
   const [durationRequest, setDurationRequest] = useState(null);
-  // The live share this device is currently broadcasting (if any):
-  // { pingRequestId, requesterName, expiresAt }.
-  const [activeShare, setActiveShare] = useState(null);
-  const [shareNow, setShareNow] = useState(() => Date.now()); // ticks every second while activeShare is set, to drive the countdown
-  const shareIntervalRef = useRef(null);
-  const shareAppStateSubRef = useRef(null);
-  const shareCountdownRef = useRef(null);
-
+  // ── Timed location shares ──
+  const mine = useLocationShareStore((s) => s.mine);
+  const visibleShares = useLocationShareStore((s) => s.visible);
+  const shareMode = useLocationShareStore((s) => s.mode);
+  const refreshShares = useLocationShareStore((s) => s.refresh);
+  const startShare = useLocationShareStore((s) => s.start);
+  const attachShare = useLocationShareStore((s) => s.attach);
+  const stopShare = useLocationShareStore((s) => s.stop);
+  const [showShareSheet, setShowShareSheet] = useState(false);
+  const [startingShare, setStartingShare] = useState(false);
+  const [shareNow, setShareNow] = useState(() => Date.now()); // drives countdown and "updated ago" labels
   // ── Saved places ──
   const [places, setPlaces] = useState([]);
   const [showPlaceSheet, setShowPlaceSheet] = useState(false);
@@ -263,23 +252,6 @@ export default function CheckInScreen({ navigation }) {
     });
   }, [focusPin]);
 
-  // While viewing someone's shared location, follow their live position for
-  // as long as they're actively sharing (matched via the CheckIn id the
-  // accept flow created, since that's what both the Recent-list pin and the
-  // PingRequest.checkInId already share).
-  useEffect(() => {
-    if (!focusPin?.checkInId || outgoing.length === 0) return;
-    const live = outgoing.find(
-      (r) => r.checkInId === focusPin.checkInId && r.liveLatitude != null && r.liveLongitude != null,
-    );
-    if (!live) return;
-    setFocusPin((prev) =>
-      prev && prev.checkInId === focusPin.checkInId
-        ? { ...prev, latitude: live.liveLatitude, longitude: live.liveLongitude, label: `${prev.name} · Live` }
-        : prev,
-    );
-  }, [outgoing, focusPin?.checkInId]);
-
   // Reverse-geocode a coordinate into "City, Region, Country" (or a fallback).
   const geocode = useCallback(async (lat, lng) => {
     try {
@@ -348,6 +320,10 @@ export default function CheckInScreen({ navigation }) {
 
   // Members keyed by userId — the authoritative source for avatarUrl/avatarEmoji
   // (check-in payloads' nested `user` isn't guaranteed to include them).
+  const shareableMembers = React.useMemo(
+    () => members.filter((m) => m.userId !== currentUserId).map((m) => ({ id: m.userId, displayName: m.displayName })),
+    [members, currentUserId],
+  );
   const membersById = React.useMemo(() => {
     const map = new Map();
     for (const m of members) map.set(m.userId, m);
@@ -391,72 +367,37 @@ export default function CheckInScreen({ navigation }) {
       setRequestingPingId(null);
     }
   }, []);
-  // Ends the current live-share loop. `notifyServer` is false when the
-  // share already ended server-side (duration elapsed) — no need to tell it
-  // again — and true for the app-backgrounded / manual-stop / unmount cases.
-  const stopShareLoop = useCallback((notifyServer = true) => {
-    if (shareIntervalRef.current) {
-      clearInterval(shareIntervalRef.current);
-      shareIntervalRef.current = null;
-    }
-    if (shareCountdownRef.current) {
-      clearInterval(shareCountdownRef.current);
-      shareCountdownRef.current = null;
-    }
-    if (shareAppStateSubRef.current) {
-      shareAppStateSubRef.current.remove();
-      shareAppStateSubRef.current = null;
-    }
-    setActiveShare((prev) => {
-      if (prev && notifyServer) {
-        pingApi.stopShare(prev.pingRequestId).catch(() => {});
+  useEffect(() => {
+    refreshShares();
+  }, [refreshShares]);
+  useEffect(() => {
+    if (!mine && visibleShares.length === 0) return undefined;
+    const t = setInterval(() => setShareNow(Date.now()), 15_000);
+    return () => clearInterval(t);
+  }, [mine, visibleShares.length]);
+
+  const handleStartShare = useCallback(
+    async (opts) => {
+      setStartingShare(true);
+      try {
+        await startShare(opts);
+        setShowShareSheet(false);
+      } catch (e) {
+        const msg = e?.response?.data?.error || e?.message || 'Could not start sharing. Please try again.';
+        showAlert('Error', msg);
+      } finally {
+        setStartingShare(false);
       }
-      return null;
-    });
-  }, []);
-
-  // Foreground-only: pushes a location update every SHARE_TICK_MS until the
-  // duration elapses or the app is backgrounded (matches the app's existing
-  // "no background location tracking" policy — this loop simply doesn't run
-  // while backgrounded, it isn't paused-and-resumed).
-  const startShareLoop = useCallback(
-    (pingRequestId, expiresAt, requesterName) => {
-      setActiveShare({ pingRequestId, expiresAt, requesterName });
-      setShareNow(Date.now());
-
-      const pushTick = async () => {
-        if (Date.now() >= new Date(expiresAt).getTime()) {
-          stopShareLoop(false);
-          return;
-        }
-        try {
-          // Background tick — the sheet would surface while the user is
-          // somewhere else entirely.
-          if (!(await ensureLocation({ silent: true }))) return;
-          const pos = await Location.getCurrentPositionAsync({
-            accuracy: Location.Accuracy.Balanced,
-          });
-          await pingApi.updateLocation(pingRequestId, {
-            latitude: pos.coords.latitude,
-            longitude: pos.coords.longitude,
-          });
-        } catch {
-          // a single missed tick isn't fatal — the next one retries
-        }
-      };
-
-      shareIntervalRef.current = setInterval(pushTick, SHARE_TICK_MS);
-      shareCountdownRef.current = setInterval(() => setShareNow(Date.now()), 1000);
-      shareAppStateSubRef.current = AppState.addEventListener('change', (nextState) => {
-        if (nextState !== 'active') {
-          stopShareLoop(true);
-        }
-      });
     },
-    [stopShareLoop],
+    [startShare],
   );
-
-  useEffect(() => () => stopShareLoop(true), [stopShareLoop]);
+  const handleStopShare = useCallback(async () => {
+    try {
+      await stopShare();
+    } catch {
+      showAlert('Error', 'Could not stop sharing. Please try again.');
+    }
+  }, [stopShare]);
 
   const handleRespondPing = useCallback(
     async (request, action, durationMinutes) => {
@@ -490,8 +431,11 @@ export default function CheckInScreen({ navigation }) {
           durationMinutes,
         });
         removeIncoming(request.id);
-        if (response?.shareExpiresAt) {
-          startShareLoop(request.id, response.shareExpiresAt, request.requester?.displayName);
+        if (response?.locationShareId) {
+          await attachShare({
+            id: response.locationShareId,
+            expiresAt: new Date(Date.now() + durationMinutes * 60_000).toISOString(),
+          });
         }
         await load();
       } catch (e) {
@@ -501,7 +445,7 @@ export default function CheckInScreen({ navigation }) {
         setRespondingPingId(null);
       }
     },
-    [geocode, removeIncoming, load, startShareLoop],
+    [geocode, removeIncoming, load, attachShare],
   );
   const handlePingEveryone = useCallback(async () => {
     if (checkingIn) return;
@@ -815,6 +759,27 @@ export default function CheckInScreen({ navigation }) {
             </Marker>
           ))}
 
+          {visibleShares
+            .filter((share) => share.latitude != null && share.longitude != null)
+            .map((share) => (
+              <Marker key={share.id} lngLat={[share.longitude, share.latitude]} anchor="bottom">
+                <View style={styles.livePinWrap}>
+                  <View style={styles.livePinLabel}>
+                    <Text style={styles.livePinName} numberOfLines={1}>{share.sharer?.displayName || 'Someone'}</Text>
+                    <Text style={styles.livePinAgo} numberOfLines={1}>{formatUpdatedAgo(share.locationUpdatedAt, shareNow)}</Text>
+                  </View>
+                  <View style={styles.nativeMemberPin}>
+                    <Avatar
+                      url={share.sharer?.avatarUrl}
+                      name={share.sharer?.displayName}
+                      id={share.sharer?.id}
+                      size={19}
+                    />
+                  </View>
+                </View>
+              </Marker>
+            ))}
+
           {focusPin && myLocation && (
             <GeoJSONSource
               id="routeLine"
@@ -897,21 +862,14 @@ export default function CheckInScreen({ navigation }) {
           </View>
         )}
 
-        {/* Live share indicator — this device is currently broadcasting */}
-        {activeShare && (
-          <View style={styles.shareStatusCard} pointerEvents="box-none">
-            <Text style={styles.shareStatusText} numberOfLines={1}>
-              Sharing with {activeShare.requesterName || 'them'} ·{' '}
-              {formatCountdown(new Date(activeShare.expiresAt).getTime() - shareNow)}
-            </Text>
-            <TouchableOpacity
-              onPress={() => stopShareLoop(true)}
-              activeOpacity={0.8}
-              hitSlop={8}
-            >
-              <Text style={styles.shareStatusStop}>Stop</Text>
-            </TouchableOpacity>
-          </View>
+        {mine && (
+          <ActiveShareBanner
+            share={mine}
+            now={shareNow}
+            mode={shareMode}
+            onStop={handleStopShare}
+            style={styles.shareStatusCard}
+          />
         )}
 
         {/* Route to a shared location — distance readout + hand off to native Maps */}
@@ -1004,6 +962,19 @@ export default function CheckInScreen({ navigation }) {
             <Text style={styles.actionSubSecondary}>Ask a member to share theirs</Text>
           </TouchableOpacity>
         </View>
+
+        <TouchableOpacity
+          style={styles.shareLiveBtn}
+          onPress={() => setShowShareSheet(true)}
+          disabled={!!mine}
+          accessibilityLabel="Share my location"
+          activeOpacity={0.85}
+        >
+          <Text style={styles.shareLiveTitle}>{mine ? 'Sharing your location' : 'Share my location'}</Text>
+          <Text style={styles.shareLiveSub}>
+            {mine ? 'Stop it from the banner on the map' : 'From 15 minutes up to 8 hours, with everyone or chosen people'}
+          </Text>
+        </TouchableOpacity>
 
         <View>
           <Text style={styles.sectionLabel}>Saved places</Text>
@@ -1202,67 +1173,35 @@ export default function CheckInScreen({ navigation }) {
         </View>
       </Modal>
 
-      {/* Duration picker — how long to share location before accepting */}
-      <Modal
-        visible={!!durationRequest}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setDurationRequest(null)}
-      >
-        <TouchableOpacity
-          style={styles.sheetOverlay}
-          activeOpacity={1}
-          onPress={() => setDurationRequest(null)}
+      <Modal visible={showShareSheet} transparent animationType="slide" onRequestClose={() => setShowShareSheet(false)}>
+        <TouchableOpacity style={styles.sheetOverlay} activeOpacity={1} onPress={() => setShowShareSheet(false)} />
+        <ShareLocationSheet
+          members={shareableMembers}
+          loading={startingShare}
+          onStart={handleStartShare}
+          onCancel={() => setShowShareSheet(false)}
         />
-        <View
-          style={[
-            styles.sheetBox,
-            {
-              paddingBottom: insets.bottom + 12,
-            },
-          ]}
-        >
-          <View style={styles.pickHandleGrabArea}>
-            <View style={styles.handle} />
-          </View>
-          <View style={styles.pickHeader}>
-            <View style={styles.pickHeaderIcon}>
-              <Text style={styles.pickHeaderIconText}>⏱</Text>
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.sheetTitle}>Share for how long?</Text>
-              <Text style={styles.pickHeaderSub}>
-                {durationRequest?.requester?.displayName || 'They'} will see your location update
-                live until this time runs out.
-              </Text>
-            </View>
-            <TouchableOpacity
-              onPress={() => setDurationRequest(null)}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              style={styles.pickCloseBtn}
-            >
-              <Text style={styles.pickCloseIcon}>✕</Text>
-            </TouchableOpacity>
-          </View>
-          <View style={styles.durationOptionsRow}>
-            {SHARE_DURATION_OPTIONS.map((opt) => (
-              <TouchableOpacity
-                key={opt.minutes}
-                style={styles.durationOption}
-                activeOpacity={0.8}
-                disabled={respondingPingId === durationRequest?.id}
-                onPress={() => {
-                  const request = durationRequest;
-                  setDurationRequest(null);
-                  handleRespondPing(request, 'accept', opt.minutes);
-                }}
-              >
-                <GoldFill radius={14} disabled={respondingPingId === durationRequest?.id} />
-                <Text style={styles.durationOptionText}>{opt.label}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
+      </Modal>
+
+      {/* Answering a ping: pick how long; only the requester sees it */}
+      <Modal visible={!!durationRequest} transparent animationType="slide" onRequestClose={() => setDurationRequest(null)}>
+        <TouchableOpacity style={styles.sheetOverlay} activeOpacity={1} onPress={() => setDurationRequest(null)} />
+        {durationRequest && (
+          <ShareLocationSheet
+            members={shareableMembers}
+            initialViewerIds={[durationRequest.requester?.id].filter(Boolean)}
+            lockAudience
+            title={`Share with ${durationRequest.requester?.displayName || 'them'}`}
+            subtitle="They will see your location update live until the time runs out."
+            loading={respondingPingId === durationRequest.id}
+            onStart={({ durationMinutes }) => {
+              const request = durationRequest;
+              setDurationRequest(null);
+              handleRespondPing(request, 'accept', durationMinutes);
+            }}
+            onCancel={() => setDurationRequest(null)}
+          />
+        )}
       </Modal>
 
       {/* Saved places — add / edit / manage */}
@@ -1760,52 +1699,50 @@ const styles = StyleSheet.create({
     left: 12,
     right: 12,
     top: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: colors.canvasSoft,
+  },
+  shareLiveBtn: {
     borderRadius: radius.card,
-    borderWidth: 1.5,
+    borderWidth: 1,
     borderColor: colors.gold,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    backgroundColor: colors.goldTint,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    marginBottom: 16,
   },
-  shareStatusText: {
-    flex: 1,
-    fontFamily: fonts.bodySemiBold,
-    fontSize: 13,
-    color: colors.ink,
-    marginRight: 10,
-  },
-  shareStatusStop: {
-    fontFamily: fonts.bodySemiBold,
-    fontSize: 13,
-    color: colors.dangerOnDark,
-  },
-  // Duration picker — options row inside the sheet
-  durationOptionsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-    paddingHorizontal: 20,
-    paddingBottom: 20,
-  },
-  durationOption: {
-    flexGrow: 1,
-    minWidth: '45%',
-    height: 48,
-    borderRadius: 14,
-    backgroundColor: colors.gold,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowOpacity: 0,
-    shadowRadius: 0,
-    elevation: 0,
-  },
-  durationOptionText: {
+  shareLiveTitle: {
     fontFamily: fonts.bodySemiBold,
     fontSize: 14,
-    color: colors.onAccent,
+    color: colors.ink,
+  },
+  shareLiveSub: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
+  livePinWrap: {
+    alignItems: 'center',
+  },
+  livePinLabel: {
+    backgroundColor: colors.canvasSoft,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.gold,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginBottom: 4,
+    maxWidth: 160,
+    alignItems: 'center',
+  },
+  livePinName: {
+    fontFamily: fonts.bodySemiBold,
+    fontSize: 12,
+    color: colors.ink,
+  },
+  livePinAgo: {
+    fontFamily: fonts.body,
+    fontSize: 10.5,
+    color: colors.textSecondary,
   },
   // Route-to-shared-location card — distance + "Open in Maps"
   routeCard: {

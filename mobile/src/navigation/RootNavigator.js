@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { getFocusedRouteNameFromRoute } from '@react-navigation/native';
-import { ActivityIndicator, Platform, View, TouchableOpacity, Text, StyleSheet } from 'react-native';
+import { ActivityIndicator, AppState, Platform, View, TouchableOpacity, Text, StyleSheet } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as NavigationBar from 'expo-navigation-bar';
@@ -17,6 +17,8 @@ import SubscriptionScreen from '../screens/billing/SubscriptionScreen';
 import GraceBanner from '../screens/billing/components/GraceBanner';
 import { connectSocket, disconnectSocket } from '../shared/socket';
 import { registerForPushNotificationsAsync } from '../shared/pushNotifications';
+import { syncBadge } from '../shared/notificationRouting';
+import { scheduleSignedOutNudges } from '../shared/signedOutNudges';
 import SplashScreen from '../screens/SplashScreen';
 import WelcomeScreen from '../screens/WelcomeScreen';
 import ChooseMethodScreen from '../screens/ChooseMethodScreen';
@@ -54,6 +56,10 @@ import JournalScreen from '../screens/JournalScreen';
 import JournalEntryEditorScreen from '../screens/JournalEntryEditorScreen';
 import JournalEntryDetailScreen from '../screens/JournalEntryDetailScreen';
 import JournalHistoryScreen from '../screens/JournalHistoryScreen';
+import SecuritySettingsScreen from '../screens/SecuritySettingsScreen';
+import { withJournalLock } from '../shared/components/JournalLockGate';
+import { withPrivateSpace } from '../shared/components/PrivateSpaceGate';
+import { useJournalLockStore } from '../shared/store/journalLockStore';
 import CommentsScreen from '../screens/CommentsScreen';
 import PhotoGalleryScreen from '../screens/PhotoGalleryScreen';
 
@@ -73,7 +79,10 @@ import CreateExpenseScreen from '../screens/CreateExpenseScreen';
 import MemberBalanceDetailScreen from '../screens/MemberBalanceDetailScreen';
 
 import VaultUploadScreen from '../screens/VaultUploadScreen';
-import VaultSetupScreen from '../screens/VaultSetupScreen';
+import PrivateSpaceSetupScreen from '../screens/PrivateSpaceSetupScreen';
+import MoveHereScreen from '../screens/MoveHereScreen';
+import ApproveMoveScreen from '../screens/ApproveMoveScreen';
+import RestoreScreen from '../screens/RestoreScreen';
 import VaultViewerScreen from '../screens/VaultViewerScreen';
 import VaultListScreen from '../screens/VaultListScreen';
 import ChatScreen from '../screens/ChatScreen';
@@ -89,8 +98,14 @@ const ChatNav = createNativeStackNavigator();
 const MoreNav = createNativeStackNavigator();
 const PaywallStack = createNativeStackNavigator();
 
+const PrivateVaultListScreen = withPrivateSpace(VaultListScreen);
+const LockedJournalScreen = withPrivateSpace(withJournalLock(JournalScreen));
+const LockedJournalHistoryScreen = withPrivateSpace(withJournalLock(JournalHistoryScreen));
+const LockedJournalEntryDetailScreen = withPrivateSpace(withJournalLock(JournalEntryDetailScreen));
+const LockedJournalEntryEditorScreen = withPrivateSpace(withJournalLock(JournalEntryEditorScreen));
+
 /* Vault screens are a fully immersive dark experience — no floating tab dock. */
-const VAULT_ROUTES = ['Vault', 'VaultUpload', 'VaultSetup', 'VaultViewer'];
+const VAULT_ROUTES = ['Vault', 'VaultUpload', 'VaultViewer'];
 // Writing and reading one entry are full-screen tasks — the dock would only
 // compete with the composer's own footer and the detail screen's actions.
 const JOURNAL_FULLSCREEN_ROUTES = ['JournalEditor', 'JournalEntry'];
@@ -189,20 +204,24 @@ function MoreNavigator() {
       <MoreNav.Screen name="ExpenseSettlements" component={ExpenseSettlementScreen} />
       <MoreNav.Screen name="MemberBalanceDetail" component={MemberBalanceDetailScreen} />
       <MoreNav.Screen name="NotificationPreferences" component={NotificationPreferencesScreen} />
-      <MoreNav.Screen name="Vault" component={VaultListScreen} />
+      <MoreNav.Screen name="SecuritySettings" component={SecuritySettingsScreen} />
+      <MoreNav.Screen name="PrivateSpaceSetup" component={PrivateSpaceSetupScreen} />
+      <MoreNav.Screen name="MoveHere" component={MoveHereScreen} />
+      <MoreNav.Screen name="ApproveMove" component={ApproveMoveScreen} />
+      <MoreNav.Screen name="Restore" component={RestoreScreen} />
+      <MoreNav.Screen name="Vault" component={PrivateVaultListScreen} />
       <MoreNav.Screen
         name="VaultUpload"
         component={VaultUploadScreen}
         options={{ headerShown: false, presentation: 'transparentModal', animation: 'slide_from_bottom' }}
       />
-      <MoreNav.Screen name="VaultSetup" component={VaultSetupScreen} />
       <MoreNav.Screen name="VaultViewer" component={VaultViewerScreen} />
-      <MoreNav.Screen name="Journal" component={JournalScreen} />
-      <MoreNav.Screen name="JournalHistory" component={JournalHistoryScreen} />
-      <MoreNav.Screen name="JournalEntry" component={JournalEntryDetailScreen} />
+      <MoreNav.Screen name="Journal" component={LockedJournalScreen} />
+      <MoreNav.Screen name="JournalHistory" component={LockedJournalHistoryScreen} />
+      <MoreNav.Screen name="JournalEntry" component={LockedJournalEntryDetailScreen} />
       <MoreNav.Screen
         name="JournalEditor"
-        component={JournalEntryEditorScreen}
+        component={LockedJournalEntryEditorScreen}
         // The composer is a modal task, not a place in the More hierarchy:
         // it slides up, and swiping it away is the same as Cancel.
         options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
@@ -591,6 +610,24 @@ export default function RootNavigator() {
   useEffect(() => {
     if (isAuthenticated) registerForPushNotificationsAsync();
   }, [isAuthenticated]);
+
+  // Signed-out users get a few win-back nudges; rescheduling replaces the last set.
+  useEffect(() => {
+    if (!isLoading && !isAuthenticated) scheduleSignedOutNudges();
+  }, [isLoading, isAuthenticated]);
+
+  // Badge follows the server's unread count whenever the app comes forward.
+  useEffect(() => {
+    if (!isAuthenticated) return undefined;
+    const sub = AppState.addEventListener('change', (s) => { if (s === 'active') syncBadge(); });
+    return () => sub.remove();
+  }, [isAuthenticated]);
+
+  // Re-lock the journal after a minute in the background.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (s) => useJournalLockStore.getState().onAppStateChange(s));
+    return () => sub.remove();
+  }, []);
 
   if (isLoading || !minSplashDone) {
     return <SplashScreen />;

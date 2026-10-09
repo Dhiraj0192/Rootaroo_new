@@ -1,14 +1,14 @@
 import { v4 as uuidv4 } from 'uuid';
 import { Op } from 'sequelize';
-import { PingRequest, CheckIn, User, HouseholdMember } from '../../database/models';
+import { PingRequest, CheckIn, User, HouseholdMember, sequelize } from '../../database/models';
 import { AppError, ForbiddenError, NotFoundError } from '../../shared/utils/errors';
 import { getUserHousehold as getUserHouseholdCore } from '../../shared/utils/household';
 import { getIO } from '../../shared/utils/socket';
 import * as notificationService from '../../shared/services/notifications';
+import { startShare, shareIdsByPing } from '../location-share/service';
 import type {
   CreatePingRequestBody,
   RespondPingRequestBody,
-  UpdateShareLocationBody,
   PingRequestResponse,
   PaginatedPingRequestsResponse,
 } from './types';
@@ -19,7 +19,7 @@ async function getUserHousehold(userId: string): Promise<string> {
   return getUserHouseholdCore(userId, 'You must belong to a household to use Ping');
 }
 
-function toPingRequestResponse(pingRequest: PingRequest): PingRequestResponse {
+function toPingRequestResponse(pingRequest: PingRequest, locationShareId: string | null = null): PingRequestResponse {
   const requester = (pingRequest.get('requester') as User) || null;
   const target = (pingRequest.get('target') as User) || null;
   return {
@@ -35,22 +35,18 @@ function toPingRequestResponse(pingRequest: PingRequest): PingRequestResponse {
     note: pingRequest.note,
     checkInId: pingRequest.checkInId,
     respondedAt: pingRequest.respondedAt ? pingRequest.respondedAt.toISOString() : null,
-    shareDurationMinutes: pingRequest.shareDurationMinutes,
-    shareExpiresAt: pingRequest.shareExpiresAt ? pingRequest.shareExpiresAt.toISOString() : null,
-    liveLatitude: pingRequest.liveLatitude != null ? Number(pingRequest.liveLatitude) : null,
-    liveLongitude: pingRequest.liveLongitude != null ? Number(pingRequest.liveLongitude) : null,
-    liveUpdatedAt: pingRequest.liveUpdatedAt ? pingRequest.liveUpdatedAt.toISOString() : null,
+    locationShareId,
     createdAt: pingRequest.createdAt.toISOString(),
   };
 }
 
-/** A share is active while fulfilled and its expiry window hasn't passed — lazy, same pattern as Invitation/RefreshToken expiry checks (no cron job). */
-function isShareActive(pingRequest: PingRequest): boolean {
-  return (
-    pingRequest.status === 'fulfilled' &&
-    !!pingRequest.shareExpiresAt &&
-    pingRequest.shareExpiresAt.getTime() > Date.now()
-  );
+/** Sockets only exist in the running server; a missing one must not fail the request. */
+function emitToUser(userId: string, event: string, payload: PingRequestResponse): void {
+  try {
+    getIO().to(`user:${userId}`).emit(event, payload);
+  } catch {
+    // not connected (e.g. tests); the push notification still goes out
+  }
 }
 
 const INCLUDE_USERS = [
@@ -123,7 +119,7 @@ export async function createPingRequest(
     )
     .catch(() => {});
 
-  getIO().to(`user:${body.targetUserId}`).emit('ping:request', response);
+  emitToUser(body.targetUserId, 'ping:request', response);
 
   return response;
 }
@@ -148,6 +144,8 @@ export async function respondToPingRequest(
     throw new AppError(409, 'This ping request has already been responded to');
   }
 
+  let locationShareId: string | null = null;
+
   if (body.action === 'decline') {
     pingRequest.status = 'declined';
     pingRequest.respondedAt = new Date();
@@ -166,28 +164,59 @@ export async function respondToPingRequest(
     const target = await User.findByPk(userId);
     const targetName = target?.displayName || 'Someone';
 
-    const checkIn = await CheckIn.create({
-      id: uuidv4(),
-      householdId: pingRequest.householdId,
-      userId,
-      latitude: body.latitude ?? null,
-      longitude: body.longitude ?? null,
-      address: body.address ?? null,
-      note: null,
-      checkedInAt: new Date(),
+    // The asker may have left the household since; there is nobody to share with.
+    const requesterMembership = await HouseholdMember.findOne({
+      where: { householdId: pingRequest.householdId, userId: pingRequest.requesterId },
     });
+    if (!requesterMembership) {
+      throw new AppError(409, 'They are no longer in your household');
+    }
 
-    pingRequest.status = 'fulfilled';
-    pingRequest.checkInId = checkIn.id;
-    pingRequest.respondedAt = new Date();
-    pingRequest.shareDurationMinutes = body.durationMinutes ?? null;
-    pingRequest.shareExpiresAt = body.durationMinutes
-      ? new Date(Date.now() + body.durationMinutes * 60_000)
-      : null;
-    pingRequest.liveLatitude = body.latitude ?? null;
-    pingRequest.liveLongitude = body.longitude ?? null;
-    pingRequest.liveUpdatedAt = new Date();
-    await pingRequest.save();
+    // All or nothing: the ping is only fulfilled if the check-in and the share both exist.
+    const checkIn = await sequelize.transaction(async (transaction) => {
+      const created = await CheckIn.create(
+        {
+          id: uuidv4(),
+          householdId: pingRequest.householdId,
+          userId,
+          latitude: body.latitude ?? null,
+          longitude: body.longitude ?? null,
+          address: body.address ?? null,
+          note: null,
+          checkedInAt: new Date(),
+        },
+        { transaction },
+      );
+
+      pingRequest.status = 'fulfilled';
+      pingRequest.checkInId = created.id;
+      pingRequest.respondedAt = new Date();
+      await pingRequest.save({ transaction });
+
+      // Live sharing is its own feature now; only the person who asked can see it.
+      // Without a position there is nothing to share (the check-in is still recorded).
+      if (body.durationMinutes && body.latitude != null && body.longitude != null) {
+        const share = await startShare(
+          userId,
+          {
+            durationMinutes: body.durationMinutes,
+            viewerIds: [pingRequest.requesterId],
+            latitude: body.latitude,
+            longitude: body.longitude,
+            pingRequestId: pingRequest.id,
+          },
+          { notify: false, transaction },
+        );
+        locationShareId = share.id;
+      }
+      return created;
+    }).catch((err) => {
+      // The rollback undid the writes; keep the in-memory row in step with the database.
+      pingRequest.status = 'pending';
+      pingRequest.checkInId = null;
+      pingRequest.respondedAt = null;
+      throw err;
+    });
 
     const location = body.address || 'a new location';
     notificationService
@@ -219,9 +248,9 @@ export async function respondToPingRequest(
   );
 
   const full = await loadFull(pingRequest.id);
-  const response = toPingRequestResponse(full || pingRequest);
+  const response = toPingRequestResponse(full || pingRequest, locationShareId);
 
-  getIO().to(`user:${pingRequest.requesterId}`).emit('ping:response', response);
+  emitToUser(pingRequest.requesterId, 'ping:response', response);
 
   return response;
 }
@@ -255,72 +284,12 @@ export async function listPingRequests(
   const hasMore = rows.length > limit;
   const items = rows.slice(0, limit);
 
+  const shareIds = await shareIdsByPing(items.map((r) => r.id));
+
   return {
-    items: items.map(toPingRequestResponse),
+    items: items.map((r) => toPingRequestResponse(r, shareIds.get(r.id) ?? null)),
     nextCursor: hasMore && items.length > 0
       ? items[items.length - 1].createdAt.toISOString()
       : null,
   };
-}
-
-/**
- * Push a live location update during an active share window (foreground-only
- * on the client — see CheckInScreen's polling loop). Only the responder can
- * push updates, and only while the share hasn't expired.
- */
-export async function updateSharedLocation(
-  userId: string,
-  pingRequestId: string,
-  body: UpdateShareLocationBody,
-): Promise<PingRequestResponse> {
-  const pingRequest = await PingRequest.findByPk(pingRequestId);
-  if (!pingRequest) {
-    throw new NotFoundError('Ping request');
-  }
-  if (pingRequest.targetUserId !== userId) {
-    throw new ForbiddenError('This location share is not yours to update');
-  }
-  if (!isShareActive(pingRequest)) {
-    throw new AppError(410, 'This location share has ended');
-  }
-
-  pingRequest.liveLatitude = body.latitude;
-  pingRequest.liveLongitude = body.longitude;
-  pingRequest.liveUpdatedAt = new Date();
-  await pingRequest.save();
-
-  const full = await loadFull(pingRequest.id);
-  const response = toPingRequestResponse(full || pingRequest);
-
-  getIO().to(`user:${pingRequest.requesterId}`).emit('ping:location-update', response);
-
-  return response;
-}
-
-/**
- * End an active share early — called when the responder backgrounds the app
- * or manually stops sharing. Reuses the same lazy-expiry check as everything
- * else here (sets shareExpiresAt to now) rather than adding a separate flag.
- */
-export async function stopShare(
-  userId: string,
-  pingRequestId: string,
-): Promise<PingRequestResponse> {
-  const pingRequest = await PingRequest.findByPk(pingRequestId);
-  if (!pingRequest) {
-    throw new NotFoundError('Ping request');
-  }
-  if (pingRequest.targetUserId !== userId) {
-    throw new ForbiddenError('This location share is not yours to stop');
-  }
-
-  pingRequest.shareExpiresAt = new Date();
-  await pingRequest.save();
-
-  const full = await loadFull(pingRequest.id);
-  const response = toPingRequestResponse(full || pingRequest);
-
-  getIO().to(`user:${pingRequest.requesterId}`).emit('ping:share-ended', response);
-
-  return response;
 }

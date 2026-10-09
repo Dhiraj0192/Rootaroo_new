@@ -5,11 +5,10 @@ class VaultDocument extends Model {
   declare id: CreationOptional<string>;
   declare householdId: string;
   declare uploadedBy: string;
-  declare name: string;
-  declare mimeType: string;
+  /** Base64 of the file name and type, sealed on the phone. The server cannot read it. */
+  declare sealedMeta: string;
+  declare scope: CreationOptional<'personal' | 'household'>;
   declare sizeBytes: number;
-  declare encryptedKey: string;
-  declare iv: string;
   declare s3Key: string;
   declare createdAt: CreationOptional<Date>;
   declare updatedAt: CreationOptional<Date>;
@@ -32,28 +31,20 @@ VaultDocument.init(
       allowNull: false,
       field: 'uploaded_by',
     },
-    name: {
-      type: DataTypes.STRING(255),
+    sealedMeta: {
+      type: DataTypes.TEXT,
       allowNull: false,
+      field: 'sealed_meta',
     },
-    mimeType: {
-      type: DataTypes.STRING(100),
+    scope: {
+      type: DataTypes.ENUM('personal', 'household'),
       allowNull: false,
-      field: 'mime_type',
+      defaultValue: 'personal',
     },
     sizeBytes: {
       type: DataTypes.INTEGER,
       allowNull: false,
       field: 'size_bytes',
-    },
-    encryptedKey: {
-      type: DataTypes.TEXT,
-      allowNull: false,
-      field: 'encrypted_key',
-    },
-    iv: {
-      type: DataTypes.STRING(64),
-      allowNull: false,
     },
     s3Key: {
       type: DataTypes.STRING(500),

@@ -22,12 +22,12 @@ import Expense from './Expense';
 import ExpenseParticipant from './ExpenseParticipant';
 import Settlement from './Settlement';
 import VaultDocument from './VaultDocument';
-import VaultKey from './VaultKey';
 import VaultDocumentKey from './VaultDocumentKey';
 import ChatMessage from './ChatMessage';
 import ChatReaction from './ChatReaction';
 import CheckIn from './CheckIn';
 import PingRequest from './PingRequest';
+import LocationShare from './LocationShare';
 import SavedPlace from './SavedPlace';
 import CalendarEvent from './CalendarEvent';
 import CalendarSyncState from './CalendarSyncState';
@@ -35,12 +35,20 @@ import EventInvitee from './EventInvitee';
 import NotificationPreference from './NotificationPreference';
 import NotificationHistory from './NotificationHistory';
 import DeviceToken from './DeviceToken';
+import Device from './Device';
+import AccountKey from './AccountKey';
+import KeyTransferSession from './KeyTransferSession';
+import KeyBackup from './KeyBackup';
+import KeyRestoreCode from './KeyRestoreCode';
+import CampaignSend from './CampaignSend';
+import CampaignSetting from './CampaignSetting';
 import PhoneVerification from './PhoneVerification';
 import PostTag from './PostTag';
 import Conversation from './Conversation';
 import ConversationParticipant from './ConversationParticipant';
 import JournalEntry from './JournalEntry';
 import JournalMedia from './JournalMedia';
+import JournalUpload from './JournalUpload';
 import BillingCustomer from './BillingCustomer';
 import BillingSubscription from './BillingSubscription';
 import BillingCheckoutSession from './BillingCheckoutSession';
@@ -78,12 +86,12 @@ const models = {
   ExpenseParticipant,
   Settlement,
   VaultDocument,
-  VaultKey,
   VaultDocumentKey,
   ChatMessage,
   ChatReaction,
   CheckIn,
   PingRequest,
+  LocationShare,
   SavedPlace,
   CalendarEvent,
   CalendarSyncState,
@@ -91,8 +99,16 @@ const models = {
   NotificationPreference,
   NotificationHistory,
   DeviceToken,
+  Device,
+  AccountKey,
+  KeyTransferSession,
+  KeyBackup,
+  KeyRestoreCode,
+  CampaignSend,
+  CampaignSetting,
   JournalEntry,
   JournalMedia,
+  JournalUpload,
   BillingCustomer,
   BillingSubscription,
   BillingCheckoutSession,
@@ -109,6 +125,8 @@ export function setupAssociations(): void {
   // ── User associations ──
   User.hasMany(RefreshToken, { foreignKey: 'user_id', as: 'refreshTokens' });
   RefreshToken.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
+  User.hasMany(Device, { foreignKey: 'user_id', as: 'devices' });
+  Device.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
 
   User.hasMany(EmailVerification, { foreignKey: 'user_id', as: 'emailVerifications' });
   EmailVerification.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
@@ -175,8 +193,6 @@ export function setupAssociations(): void {
   Household.hasMany(VaultDocument, { foreignKey: 'household_id', as: 'vaultDocuments' });
   VaultDocument.belongsTo(Household, { foreignKey: 'household_id', as: 'household' });
 
-  Household.hasMany(VaultKey, { foreignKey: 'household_id', as: 'vaultKeys' });
-  VaultKey.belongsTo(Household, { foreignKey: 'household_id', as: 'household' });
 
   Household.hasMany(Settlement, { foreignKey: 'household_id', as: 'settlements' });
   Settlement.belongsTo(Household, { foreignKey: 'household_id', as: 'household' });
@@ -286,21 +302,20 @@ export function setupAssociations(): void {
   PingRequest.belongsTo(User, { foreignKey: 'target_user_id', as: 'target' });
   PingRequest.belongsTo(CheckIn, { foreignKey: 'check_in_id', as: 'checkIn' });
 
+  // ── Location share associations ──
+  LocationShare.belongsTo(User, { foreignKey: 'sharer_id', as: 'sharer' });
+
   // ── Saved place associations ──
   SavedPlace.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
 
   // ── Vault associations ──
   VaultDocument.belongsTo(User, { foreignKey: 'uploaded_by', as: 'uploader' });
-  VaultKey.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
 
   // Per-user wrapped AES keys for vault documents
   VaultDocument.hasMany(VaultDocumentKey, { foreignKey: 'document_id', as: 'documentKeys' });
   VaultDocumentKey.belongsTo(VaultDocument, { foreignKey: 'document_id', as: 'document' });
   VaultDocumentKey.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
   User.hasMany(VaultDocumentKey, { foreignKey: 'user_id', as: 'vaultDocumentKeys' });
-
-  // HouseholdMember ↔ VaultKey (for key status lookups)
-  HouseholdMember.hasOne(VaultKey, { foreignKey: 'user_id', sourceKey: 'userId', as: 'vaultKey' });
 
   // ── Grocery / Todo ──
   GroceryItem.belongsTo(User, { foreignKey: 'assigned_to', as: 'assignee' });
@@ -343,12 +358,12 @@ export {
   ExpenseParticipant,
   Settlement,
   VaultDocument,
-  VaultKey,
   VaultDocumentKey,
   ChatMessage,
   ChatReaction,
   CheckIn,
   PingRequest,
+  LocationShare,
   SavedPlace,
   CalendarEvent,
   CalendarSyncState,
@@ -356,8 +371,16 @@ export {
   NotificationPreference,
   NotificationHistory,
   DeviceToken,
+  Device,
+  AccountKey,
+  KeyTransferSession,
+  KeyBackup,
+  KeyRestoreCode,
+  CampaignSend,
+  CampaignSetting,
   JournalEntry,
   JournalMedia,
+  JournalUpload,
   BillingCustomer,
   BillingSubscription,
   BillingCheckoutSession,

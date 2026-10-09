@@ -2,7 +2,7 @@
  * Key Pin Store — TOFU (Trust On First Use) public key pinning.
  *
  * Threat model: the server may substitute its own RSA public key when
- * responding to GET /vault/keys in order to intercept a key wrapping operation.
+ * responding to GET /vault/members in order to intercept a key wrapping operation.
  * To detect this, we pin each user's public key on first contact (TOFU) and
  * compare every subsequent server response against the stored pin.
  *
@@ -22,7 +22,8 @@
 
 import * as SecureStore from 'expo-secure-store';
 
-const PIN_PREFIX = 'vault_pubkey_pin_';
+// New prefix: earlier builds pinned RSA keys here, which must not read as "changed".
+const PIN_PREFIX = 'vault_x25519_pin_';
 
 /**
  * Pin a public key for a user on first contact (TOFU).

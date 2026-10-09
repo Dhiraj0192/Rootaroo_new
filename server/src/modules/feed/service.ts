@@ -11,6 +11,7 @@ import {
   PostTag,
 } from '../../database/models';
 import { NotFoundError, ForbiddenError } from '../../shared/utils/errors';
+import { assertOwnUploadKey } from '../../shared/utils/uploadKeys';
 import { getSignedUrl } from '../../shared/utils/s3';
 import { isCurrentHouseholdAdmin, getUserHousehold as getUserHouseholdCore } from '../../shared/utils/household';
 import { CommentReaction } from '../../database/models';
@@ -206,6 +207,13 @@ export async function createPost(
   body: CreatePostBody,
 ): Promise<FeedPostResponse> {
   const householdId = await getUserHousehold(userId);
+
+  // Client-supplied keys get signed into links later, so they must be this
+  // user's own uploads — checked before anything is written.
+  for (const m of body.media ?? []) {
+    assertOwnUploadKey(m.mediaUrl, userId, ['feed/images', 'feed/videos']);
+    if (m.thumbnailUrl) assertOwnUploadKey(m.thumbnailUrl, userId, ['feed/thumbnails']);
+  }
 
   const post = await FeedPost.create({
     id: uuidv4(),

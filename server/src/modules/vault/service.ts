@@ -1,62 +1,104 @@
-import { Op } from 'sequelize';
+import { Op, UniqueConstraintError, Transaction } from 'sequelize';
 import {
   sequelize,
   VaultDocument,
   VaultDocumentKey,
-  VaultKey,
+  AccountKey,
+  HouseholdMember,
   User,
 } from '../../database/models';
-import { NotFoundError, ForbiddenError } from '../../shared/utils/errors';
+import { NotFoundError, ForbiddenError, ValidationError, ConflictError } from '../../shared/utils/errors';
 import { uploadBuffer, deleteObject, getSignedUrl } from '../../shared/utils/s3';
-import { isCurrentHouseholdAdmin, getUserHousehold as getUserHouseholdCore } from '../../shared/utils/household';
+import { userUploadFolder } from '../../shared/utils/uploadKeys';
+import { getUserHousehold as getUserHouseholdCore } from '../../shared/utils/household';
 import type {
   CreateVaultDocumentBody,
-  UpdateVaultDocumentBody,
+  ChangeScopeBody,
+  SealedKeyInput,
+  VaultDocumentCreated,
   VaultDocumentResponse,
   PaginatedVaultDocuments,
-  VaultKeyResponse,
+  VaultMemberResponse,
+  PendingGrantResponse,
   VaultStorageUsageResponse,
-  DocumentKeyResponse,
 } from './types';
 
 const MAX_STORAGE_BYTES = 2 * 1024 * 1024 * 1024; // 2GB
 const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
+const PENDING_GRANTS_LIMIT = 100;
+// Download links stop working soon after access is lost, so they are short and never the cached CDN link.
+const DOWNLOAD_URL_OPTIONS = { ttlSeconds: 300, noCdn: true };
 
 export async function getUserHousehold(userId: string): Promise<string> {
   return getUserHouseholdCore(userId, 'You must belong to a household to use the vault');
 }
 
-async function toDocumentResponse(doc: VaultDocument): Promise<VaultDocumentResponse> {
+interface Caller {
+  householdId: string | null;
+  isAdmin: boolean;
+}
+
+/** Household and admin status, re-read from the database (never from the JWT role claim, F-06). */
+async function getCaller(userId: string): Promise<Caller> {
+  const membership = await HouseholdMember.findOne({ where: { userId } });
+  if (!membership) return { householdId: null, isAdmin: false };
+  return { householdId: membership.householdId, isAdmin: membership.role === 'admin' };
+}
+
+/** Files the caller may see: their own personal files, plus the household's shared files if they are in a household (children included). */
+function visibleToCaller(userId: string, caller: Caller): Record<string | symbol, unknown> {
+  const options: unknown[] = [{ scope: 'personal', uploadedBy: userId }];
+  if (caller.householdId) options.push({ scope: 'household', householdId: caller.householdId });
+  return { [Op.or]: options };
+}
+
+async function findVisible(documentId: string, userId: string): Promise<VaultDocument> {
+  const caller = await getCaller(userId);
+  const document = await VaultDocument.findOne({
+    where: { id: documentId, ...visibleToCaller(userId, caller) },
+    include: [{ model: User, as: 'uploader' }],
+  });
+  if (!document) throw new NotFoundError('Document');
+  return document;
+}
+
+function uploaderOf(doc: VaultDocument) {
+  const uploader = doc.get('uploader') as User;
+  return { id: uploader.id, displayName: uploader.displayName };
+}
+
+function toCreated(doc: VaultDocument): VaultDocumentCreated {
   return {
     id: doc.id,
     householdId: doc.householdId,
-    name: doc.name,
-    mimeType: doc.mimeType,
+    scope: doc.scope,
+    sealedMeta: doc.sealedMeta,
     sizeBytes: doc.sizeBytes,
-    uploadedBy: {
-      id: (doc.get('uploader') as User).id,
-      displayName: (doc.get('uploader') as User).displayName,
-      avatarUrl: await getSignedUrl((doc.get('uploader') as User).avatarUrl),
-      avatarEmoji: (doc.get('uploader') as User).avatarEmoji,
-    },
-    uploadedAt: doc.createdAt.toISOString(),
-    downloadUrl: (await getSignedUrl(doc.s3Key))!,
-    iv: doc.iv,
+    createdAt: doc.createdAt.toISOString(),
+    uploadedBy: uploaderOf(doc),
   };
 }
 
-function toKeyResponse(key: VaultKey): VaultKeyResponse {
+async function toResponse(doc: VaultDocument, mySealedKey: string | null): Promise<VaultDocumentResponse> {
   return {
-    userId: key.userId,
-    publicKey: key.publicKey,
-    privateKeyEncrypted: key.privateKeyEncrypted,
-    createdAt: key.createdAt.toISOString(),
+    ...toCreated(doc),
+    mySealedKey,
+    pending: mySealedKey === null,
+    downloadUrl: mySealedKey === null ? null : await getSignedUrl(doc.s3Key, DOWNLOAD_URL_OPTIONS),
   };
 }
 
-async function checkStorageQuota(userId: string, additionalBytes: number): Promise<void> {
+async function toResponses(docs: VaultDocument[], userId: string): Promise<VaultDocumentResponse[]> {
+  if (docs.length === 0) return [];
+  const mine = await VaultDocumentKey.findAll({ where: { userId, documentId: docs.map((d) => d.id) } });
+  const byDocument = new Map(mine.map((k) => [k.documentId, k.wrappedKey]));
+  return Promise.all(docs.map((doc) => toResponse(doc, byDocument.get(doc.id) ?? null)));
+}
+
+async function checkStorageQuota(userId: string, additionalBytes: number, transaction?: Transaction): Promise<void> {
   const totalSize = await VaultDocument.sum('sizeBytes', {
     where: { uploadedBy: userId },
+    transaction,
   }) || 0;
 
   if (totalSize + additionalBytes > MAX_STORAGE_BYTES) {
@@ -66,58 +108,108 @@ async function checkStorageQuota(userId: string, additionalBytes: number): Promi
   }
 }
 
+/**
+ * Every user must be a current member of the household (any role) with an account key; returns their public keys.
+ * With a transaction the membership rows are locked (FOR UPDATE), so a removal running at the
+ * same time either finishes first (and this fails) or waits until the caller's insert is done.
+ */
+async function membersWithKeys(householdId: string, userIds: string[], transaction?: Transaction): Promise<Map<string, string>> {
+  const [members, accountKeys] = await Promise.all([
+    HouseholdMember.findAll({
+      where: { householdId, userId: userIds },
+      ...(transaction ? { transaction, lock: true } : {}),
+    }),
+    AccountKey.findAll({ where: { userId: userIds }, transaction }),
+  ]);
+  const memberIds = new Set(members.map((m) => m.userId));
+  const publicKeys = new Map(accountKeys.map((k) => [k.userId, k.publicKey]));
+  for (const id of userIds) {
+    if (!memberIds.has(id) || !publicKeys.has(id)) {
+      throw new ValidationError('A file can only be shared with household members who have set up their private space');
+    }
+  }
+  return publicKeys;
+}
+
+function assertNoDuplicates(keys: SealedKeyInput[]): void {
+  if (new Set(keys.map((k) => k.userId)).size !== keys.length) {
+    throw new ValidationError('Each person can be given a key only once');
+  }
+}
+
+async function assertNoExistingKeys(documentId: string, keys: SealedKeyInput[], transaction?: Transaction): Promise<void> {
+  const existing = await VaultDocumentKey.findAll({ where: { documentId, userId: keys.map((k) => k.userId) }, transaction });
+  const have = new Set(existing.map((k) => k.userId));
+  if (keys.some((k) => have.has(k.userId))) {
+    throw new ConflictError('Someone you are granting already has a key for this file');
+  }
+}
+
+function keyRows(documentId: string, keys: SealedKeyInput[]) {
+  return keys.map((k) => ({ documentId, userId: k.userId, wrappedKey: k.sealedKey }));
+}
+
 // ─── Upload Document ───
 
 export async function uploadDocument(
   userId: string,
   body: CreateVaultDocumentBody,
   fileBuffer: Buffer
-): Promise<VaultDocumentResponse> {
-  const householdId = await getUserHousehold(userId);
+): Promise<VaultDocumentCreated> {
+  const caller = await getCaller(userId);
+  if (!caller.householdId) throw new ForbiddenError('You must belong to a household to use the vault');
+  const householdId = caller.householdId;
 
-  // Verify file size
-  if (body.sizeBytes > MAX_FILE_SIZE) {
+  // The uploaded ciphertext is the only size we trust: quota and the stored size come from it, not from the client.
+  const sizeBytes = fileBuffer.length;
+  if (sizeBytes > MAX_FILE_SIZE) {
     throw new ForbiddenError(`File size exceeds ${MAX_FILE_SIZE / (1024 * 1024)}MB limit`);
   }
-
-  // Check storage quota
-  await checkStorageQuota(userId, body.sizeBytes);
-
-  const uploadResult = await uploadBuffer(fileBuffer, `vault/${householdId}`, body.mimeType);
-
-  // Create document + per-user wrapped key in a transaction
-  const document = await sequelize.transaction(async (transaction) => {
-    const doc = await VaultDocument.create({
-      householdId,
-      name: body.name,
-      mimeType: body.mimeType,
-      sizeBytes: body.sizeBytes,
-      encryptedKey: body.encryptedKey,
-      iv: body.iv,
-      s3Key: uploadResult.key,
-      uploadedBy: userId,
-    }, { transaction });
-
-    // Store the uploader's wrapped AES key in the per-user junction table
-    await VaultDocumentKey.create({
-      documentId: doc.id,
-      userId,
-      wrappedKey: body.encryptedKey,
-    }, { transaction });
-
-    return doc;
-  });
-
-  // Load with uploader
-  const fullDoc = await VaultDocument.findByPk(document.id, {
-    include: [{ model: User, as: 'uploader' }],
-  });
-
-  if (!fullDoc) {
-    throw new Error('Failed to load created document');
+  if (body.sizeBytes !== sizeBytes) {
+    throw new ValidationError('The declared file size does not match the uploaded file');
   }
 
-  return await toDocumentResponse(fullDoc);
+  assertNoDuplicates(body.keys);
+  if (!body.keys.some((k) => k.userId === userId)) {
+    throw new ValidationError('Your own key for the file is required');
+  }
+  if (body.scope === 'personal') {
+    if (body.keys.length !== 1) throw new ValidationError('A personal file is sealed to you alone');
+  } else {
+    await membersWithKeys(householdId, body.keys.map((k) => k.userId));
+  }
+
+  // Cheap early check; the authoritative one runs under a lock below.
+  await checkStorageQuota(userId, sizeBytes);
+
+  const uploadResult = await uploadBuffer(fileBuffer, userUploadFolder('vault', userId), 'application/octet-stream');
+
+  let documentId: string;
+  try {
+    documentId = await sequelize.transaction(async (transaction) => {
+      // Parallel uploads by one person queue here, so the usage sum below cannot be overshot.
+      await User.findByPk(userId, { attributes: ['id'], transaction, lock: true });
+      await checkStorageQuota(userId, sizeBytes, transaction);
+      const doc = await VaultDocument.create({
+        householdId,
+        scope: body.scope,
+        sealedMeta: body.sealedMeta,
+        sizeBytes,
+        s3Key: uploadResult.key,
+        uploadedBy: userId,
+      }, { transaction });
+      await VaultDocumentKey.bulkCreate(keyRows(doc.id, body.keys), { transaction });
+      return doc.id;
+    });
+  } catch (error) {
+    // The stored object would otherwise be orphaned with nothing pointing at it.
+    await deleteObject(uploadResult.key).catch(() => undefined);
+    throw error;
+  }
+
+  const fullDoc = await VaultDocument.findByPk(documentId, { include: [{ model: User, as: 'uploader' }] });
+  if (!fullDoc) throw new Error('Failed to load created document');
+  return toCreated(fullDoc);
 }
 
 // ─── List Documents ───
@@ -126,10 +218,10 @@ export async function listDocuments(
   userId: string,
   options: { cursor?: string; limit?: number }
 ): Promise<PaginatedVaultDocuments> {
-  const householdId = await getUserHousehold(userId);
+  const caller = await getCaller(userId);
   const limit = Math.min(options.limit || 20, 50);
 
-  const where: any = { householdId, uploadedBy: userId };
+  const where: Record<string | symbol, unknown> = { ...visibleToCaller(userId, caller) };
   if (options.cursor) {
     where.createdAt = { [Op.lt]: new Date(options.cursor) };
   }
@@ -143,147 +235,185 @@ export async function listDocuments(
 
   const hasMore = documents.length > limit;
   const page = hasMore ? documents.slice(0, limit) : documents;
-  const nextCursor = hasMore
-    ? page[page.length - 1].createdAt.toISOString()
-    : null;
+  const nextCursor = hasMore ? page[page.length - 1].createdAt.toISOString() : null;
 
-  return {
-    documents: await Promise.all(page.map(toDocumentResponse)),
-    nextCursor,
-    hasMore,
-  };
+  return { documents: await toResponses(page, userId), nextCursor, hasMore };
 }
 
 // ─── Get Document By ID ───
 
-export async function getDocumentById(
-  documentId: string,
-  userId: string
-): Promise<VaultDocumentResponse> {
-  const householdId = await getUserHousehold(userId);
-
-  const document = await VaultDocument.findOne({
-    where: { id: documentId, householdId, uploadedBy: userId },
-    include: [{ model: User, as: 'uploader' }],
-  });
-
-  if (!document) {
-    throw new NotFoundError('Document');
-  }
-
-  return await toDocumentResponse(document);
+export async function getDocumentById(documentId: string, userId: string): Promise<VaultDocumentResponse> {
+  const document = await findVisible(documentId, userId);
+  return (await toResponses([document], userId))[0];
 }
 
-// ─── Get User's Wrapped Key for a Document ───
+// ─── Household members who can be sealed to (everyone, children included) ───
 
-export async function getDocumentKey(
-  documentId: string,
-  userId: string
-): Promise<DocumentKeyResponse> {
+export async function listVaultMembers(userId: string): Promise<VaultMemberResponse[]> {
   const householdId = await getUserHousehold(userId);
+  const members = await HouseholdMember.findAll({ where: { householdId } });
+  const ids = members.map((m) => m.userId);
+  const [accountKeys, users] = await Promise.all([
+    AccountKey.findAll({ where: { userId: ids } }),
+    User.findAll({ where: { id: ids }, attributes: ['id', 'displayName'] }),
+  ]);
+  const names = new Map(users.map((u) => [u.id, u.displayName]));
+  return accountKeys
+    .filter((k) => ids.includes(k.userId))
+    .map((k) => ({ userId: k.userId, displayName: names.get(k.userId) ?? '', publicKey: k.publicKey }));
+}
 
-  // Verify document belongs to this user
-  const document = await VaultDocument.findOne({
-    where: { id: documentId, householdId, uploadedBy: userId },
+// ─── Pending grants: files I can open that another member cannot yet ───
+
+export async function listPendingGrants(userId: string): Promise<PendingGrantResponse[]> {
+  const caller = await getCaller(userId);
+  if (!caller.householdId) return [];
+  const householdId = caller.householdId;
+
+  const mine = await VaultDocumentKey.findAll({ where: { userId } });
+  if (mine.length === 0) return [];
+  const myKeys = new Map(mine.map((k) => [k.documentId, k.wrappedKey]));
+
+  const documents = await VaultDocument.findAll({
+    where: { id: [...myKeys.keys()], scope: 'household', householdId },
     attributes: ['id'],
+    order: [['createdAt', 'ASC']],
+    limit: PENDING_GRANTS_LIMIT,
   });
+  if (documents.length === 0) return [];
 
-  if (!document) {
-    throw new NotFoundError('Document');
+  const members = await HouseholdMember.findAll({ where: { householdId } });
+  const accountKeys = await AccountKey.findAll({ where: { userId: members.map((m) => m.userId) } });
+  const holdersWithKeys = accountKeys.filter((k) => members.some((m) => m.userId === k.userId));
+
+  const allKeys = await VaultDocumentKey.findAll({ where: { documentId: documents.map((d) => d.id) } });
+  const holders = new Map<string, Set<string>>();
+  for (const k of allKeys) {
+    if (!holders.has(k.documentId)) holders.set(k.documentId, new Set());
+    holders.get(k.documentId)!.add(k.userId);
   }
 
-  // Look up the per-user wrapped key
-  const docKey = await VaultDocumentKey.findOne({
-    where: { documentId, userId },
-  });
-
-  if (!docKey) {
-    throw new NotFoundError(
-      'No vault key found for this document. A key ceremony may be required.'
-    );
+  const result: PendingGrantResponse[] = [];
+  for (const doc of documents) {
+    const have = holders.get(doc.id) ?? new Set<string>();
+    const missing = holdersWithKeys.filter((a) => !have.has(a.userId)).map((a) => ({ userId: a.userId, publicKey: a.publicKey }));
+    if (missing.length > 0) result.push({ documentId: doc.id, mySealedKey: myKeys.get(doc.id)!, missing });
   }
-
-  return {
-    documentId: docKey.documentId,
-    userId: docKey.userId,
-    wrappedKey: docKey.wrappedKey,
-  };
+  return result;
 }
 
-// ─── Update Document ───
+// ─── Grant keys to members who are still pending ───
 
-export async function updateDocument(
-  documentId: string,
-  userId: string,
-  _userRole: string,
-  body: UpdateVaultDocumentBody
-): Promise<VaultDocumentResponse> {
-  const householdId = await getUserHousehold(userId);
+export async function grantKeys(documentId: string, userId: string, grants: SealedKeyInput[]): Promise<void> {
+  assertNoDuplicates(grants);
+  try {
+    await sequelize.transaction(async (transaction) => {
+      // Lock order: the file, then the caller's own key, then each target's membership. Making a file
+      // personal locks the file row first, and a removal deletes membership and keys together, so every
+      // state read here is still true when the insert happens.
+      const document = await VaultDocument.findByPk(documentId, { transaction, lock: true });
+      if (!document) throw new NotFoundError('Document');
 
-  const document = await VaultDocument.findOne({
-    where: { id: documentId, householdId },
-    include: [{ model: User, as: 'uploader' }],
-  });
+      const myKey = await VaultDocumentKey.findOne({ where: { documentId, userId }, transaction, lock: true });
+      if (!myKey) throw new ForbiddenError('You can only grant access to a file you can open');
+      if (document.scope !== 'household') throw new ValidationError('Only household files can be shared');
 
-  if (!document) {
-    throw new NotFoundError('Document');
+      await membersWithKeys(document.householdId, grants.map((g) => g.userId), transaction);
+      await assertNoExistingKeys(documentId, grants, transaction);
+      await VaultDocumentKey.bulkCreate(keyRows(documentId, grants), { transaction });
+    });
+  } catch (error) {
+    // Two phones granting the same person at once: the primary key catches the second.
+    if (error instanceof UniqueConstraintError) {
+      throw new ConflictError('Someone you are granting already has a key for this file');
+    }
+    throw error;
   }
+}
 
-  // Only uploader or admin can rename. Re-checked against the DB rather
-  // than trusting the caller's JWT `role` claim, which goes stale the
-  // moment a user is demoted (F-06) — a demoted admin would otherwise
-  // keep this authority until their token naturally expires.
-  if (document.uploadedBy !== userId && !(await isCurrentHouseholdAdmin(userId, householdId))) {
-    throw new ForbiddenError('Only the uploader or an admin can update this document');
+// ─── Rename (replace the sealed name/type) ───
+
+export async function renameDocument(documentId: string, userId: string, sealedMeta: string): Promise<VaultDocumentResponse> {
+  const document = await findVisible(documentId, userId);
+  if (document.uploadedBy !== userId) {
+    throw new ForbiddenError('Only the uploader can rename this file');
   }
-
-  if (body.name !== undefined) {
-    document.name = body.name;
-  }
-
+  document.sealedMeta = sealedMeta;
   await document.save();
+  return (await toResponses([document], userId))[0];
+}
 
-  const updated = await VaultDocument.findByPk(document.id, {
-    include: [{ model: User, as: 'uploader' }],
-  });
+// ─── Switch between Personal and Household (uploader only) ───
 
-  if (!updated) {
-    throw new Error('Failed to load updated document');
+export async function changeScope(documentId: string, userId: string, body: ChangeScopeBody): Promise<VaultDocumentResponse> {
+  const document = await findVisible(documentId, userId);
+  if (document.uploadedBy !== userId) {
+    throw new ForbiddenError('Only the uploader can change who this file is shared with');
   }
 
-  return await toDocumentResponse(updated);
+  if (body.scope === 'personal') {
+    await sequelize.transaction(async (transaction) => {
+      // Lock the file first: a grant running at the same moment waits, then sees 'personal' and fails.
+      await document.reload({ transaction, lock: true });
+      await VaultDocumentKey.destroy({ where: { documentId, userId: { [Op.ne]: userId } }, transaction });
+      document.scope = 'personal';
+      await document.save({ transaction });
+    });
+  } else {
+    const caller = await getCaller(userId);
+    if (caller.householdId !== document.householdId) {
+      throw new ForbiddenError('Only members of the household can share a file with it');
+    }
+    // The uploader already holds a key; only other people need one added.
+    const added = (body.keys ?? []).filter((k) => k.userId !== userId);
+    assertNoDuplicates(added);
+    await sequelize.transaction(async (transaction) => {
+      await document.reload({ transaction, lock: true });
+      if (added.length > 0) {
+        await membersWithKeys(document.householdId, added.map((k) => k.userId), transaction);
+        await assertNoExistingKeys(documentId, added, transaction);
+        await VaultDocumentKey.bulkCreate(keyRows(documentId, added), { transaction });
+      }
+      document.scope = 'household';
+      await document.save({ transaction });
+    });
+  }
+
+  return (await toResponses([document], userId))[0];
 }
 
 // ─── Delete Document ───
 
-export async function deleteDocument(
-  documentId: string,
-  userId: string,
-  _userRole: string
-): Promise<void> {
-  const householdId = await getUserHousehold(userId);
-
-  const document = await VaultDocument.findOne({
-    where: { id: documentId, householdId },
+async function purge(document: VaultDocument): Promise<void> {
+  await deleteObject(document.s3Key);
+  await sequelize.transaction(async (transaction) => {
+    await VaultDocumentKey.destroy({ where: { documentId: document.id }, transaction });
+    await document.destroy({ force: true, transaction });
   });
+}
 
-  if (!document) {
-    throw new NotFoundError('Document');
-  }
+export async function deleteDocument(documentId: string, userId: string): Promise<void> {
+  const caller = await getCaller(userId);
+  const document = await VaultDocument.findOne({
+    where: {
+      id: documentId,
+      [Op.or]: [
+        visibleToCaller(userId, caller),
+        // An admin can remove any file of the household, even a personal one they cannot
+        // open, so storage and the uploader's quota can always be cleaned up.
+        ...(caller.isAdmin ? [{ householdId: caller.householdId }] : []),
+      ],
+    },
+  });
+  if (!document) throw new NotFoundError('Document');
 
-  // Only uploader or admin can delete (DB-checked, not JWT role — F-06).
-  if (document.uploadedBy !== userId && !(await isCurrentHouseholdAdmin(userId, householdId))) {
+  // Uploader or household admin (role read from the database, not the JWT: F-06).
+  // Only an admin's lookup can reach a file that is not theirs, so anyone else gets 404 first.
+  if (document.uploadedBy !== userId && !caller.isAdmin) {
     throw new ForbiddenError('Only the uploader or an admin can delete this document');
   }
 
-  // Delete from S3
-  await deleteObject(document.s3Key);
-
-  // Hard delete document + all per-user keys in a transaction
-  await sequelize.transaction(async (transaction) => {
-    await VaultDocumentKey.destroy({ where: { documentId }, transaction });
-    await document.destroy({ force: true, transaction });
-  });
+  await purge(document);
 }
 
 // ─── Storage Usage ───
@@ -297,76 +427,5 @@ export async function getStorageUsage(userId: string): Promise<VaultStorageUsage
   });
 
   const usedBytes = documents.reduce((sum, doc) => sum + doc.sizeBytes, 0);
-  const documentCount = documents.length;
-
-  return {
-    usedBytes,
-    limitBytes: MAX_STORAGE_BYTES,
-    documentCount,
-  };
+  return { usedBytes, limitBytes: MAX_STORAGE_BYTES, documentCount: documents.length };
 }
-
-// ─── Hard Delete (admin only, FR-130) ───
-
-export async function hardDeleteDocument(
-  documentId: string,
-  userId: string,
-  _userRole: string
-): Promise<void> {
-  const householdId = await getUserHousehold(userId);
-
-  // Permanent delete — the highest-stakes gate in this module, so it must
-  // never rely on the caller's JWT `role` claim alone (F-06): that claim
-  // is only refreshed on login/refresh, so a demoted admin would
-  // otherwise keep this authority until their token naturally expires.
-  if (!(await isCurrentHouseholdAdmin(userId, householdId))) {
-    throw new ForbiddenError('Only admins can permanently delete documents');
-  }
-
-  const document = await VaultDocument.findOne({
-    where: { id: documentId, householdId },
-  });
-
-  if (!document) {
-    throw new NotFoundError('Document');
-  }
-
-  // Delete from S3
-  await deleteObject(document.s3Key);
-
-  // Permanently purge document + per-user keys
-  await sequelize.transaction(async (transaction) => {
-    await VaultDocumentKey.destroy({ where: { documentId }, transaction });
-    await document.destroy({ force: true, transaction });
-  });
-}
-
-// ─── Vault Key Management ───
-
-export async function storeUserKey(
-  userId: string,
-  body: { publicKey: string; privateKeyEncrypted: string }
-): Promise<VaultKeyResponse> {
-  const householdId = await getUserHousehold(userId);
-
-  await VaultKey.upsert({
-    userId,
-    householdId,
-    publicKey: body.publicKey,
-    privateKeyEncrypted: body.privateKeyEncrypted,
-  });
-
-  // MySQL upsert doesn't support RETURNING — Sequelize just echoes back the
-  // input values, leaving DB-generated fields like createdAt undefined.
-  // Re-fetch so the response reflects what's actually persisted.
-  const key = await VaultKey.findByPk(userId);
-  if (!key) throw new NotFoundError('VaultKey');
-
-  return toKeyResponse(key);
-}
-
-export async function getUserKey(userId: string): Promise<VaultKeyResponse | null> {
-  const key = await VaultKey.findByPk(userId);
-  return key ? toKeyResponse(key) : null;
-}
-

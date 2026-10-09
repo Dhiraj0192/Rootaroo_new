@@ -1,30 +1,46 @@
+export type VaultScope = 'personal' | 'household';
+
+export interface SealedKeyInput {
+  userId: string;
+  /** Base64, at most 256 bytes: the file key sealed on the phone to this person's account key. */
+  sealedKey: string;
+}
+
 export interface CreateVaultDocumentBody {
-  name: string;
-  mimeType: string;
+  scope: VaultScope;
+  /** Base64, at most 2 KB: file name and type, sealed on the phone. */
+  sealedMeta: string;
   sizeBytes: number;
-  encryptedKey: string;
-  iv: string;
+  keys: SealedKeyInput[];
 }
 
-export interface UpdateVaultDocumentBody {
-  name?: string;
+export interface ChangeScopeBody {
+  scope: VaultScope;
+  keys?: SealedKeyInput[];
 }
 
-export interface VaultDocumentResponse {
+export interface VaultUploader {
+  id: string;
+  displayName: string;
+}
+
+/** What is returned right after an upload. */
+export interface VaultDocumentCreated {
   id: string;
   householdId: string;
-  name: string;
-  mimeType: string;
+  scope: VaultScope;
+  sealedMeta: string;
   sizeBytes: number;
-  uploadedBy: {
-    id: string;
-    displayName: string;
-    avatarUrl: string | null;
-    avatarEmoji: string | null;
-  };
-  uploadedAt: string;
-  downloadUrl: string;
-  iv: string;
+  createdAt: string;
+  uploadedBy: VaultUploader;
+}
+
+export interface VaultDocumentResponse extends VaultDocumentCreated {
+  /** The file key sealed to me, or null when no member has granted it to me yet. */
+  mySealedKey: string | null;
+  pending: boolean;
+  /** Signed link to the encrypted file; only present when I hold a key. */
+  downloadUrl: string | null;
 }
 
 export interface PaginatedVaultDocuments {
@@ -33,23 +49,20 @@ export interface PaginatedVaultDocuments {
   hasMore: boolean;
 }
 
-export interface VaultKeyResponse {
+export interface VaultMemberResponse {
   userId: string;
+  displayName: string;
   publicKey: string;
-  privateKeyEncrypted: string;
-  createdAt: string;
+}
+
+export interface PendingGrantResponse {
+  documentId: string;
+  mySealedKey: string;
+  missing: { userId: string; publicKey: string }[];
 }
 
 export interface VaultStorageUsageResponse {
   usedBytes: number;
   limitBytes: number;
   documentCount: number;
-}
-
-// ── Document Key ──
-
-export interface DocumentKeyResponse {
-  documentId: string;
-  userId: string;
-  wrappedKey: string;
 }

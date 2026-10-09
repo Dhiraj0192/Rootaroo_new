@@ -1,0 +1,136 @@
+import { useEffect } from 'react';
+import * as Notifications from 'expo-notifications';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+// type -> [tab, screen, required id param (or null)]
+const ROUTES = {
+  chat: ['ChatStack', 'ChatScreen', 'conversationId'],
+  feed: ['MoreStack', 'PostDetail', 'postId'],
+  task: ['TasksStack', 'TaskDetail', 'taskId'],
+  task_completed: ['TasksStack', 'TaskDetail', 'taskId'],
+  todo: ['MoreStack', 'TodoList', null],
+  expense_reminder: ['MoreStack', 'ExpenseDetail', 'expenseId'],
+  check_in: ['MoreStack', 'CheckIn', null],
+  ping_request: ['MoreStack', 'CheckIn', null],
+  ping_response: ['MoreStack', 'CheckIn', null],
+  location_share_started: ['MoreStack', 'CheckIn', null],
+  calendar: ['MoreStack', 'Calendar', null],
+  member_joined: ['MoreStack', 'HouseholdSettings', null],
+  leave_request: ['MoreStack', 'HouseholdSettings', null],
+  leave_response: ['MoreStack', 'HouseholdSettings', null],
+  household_deletion_scheduled: ['MoreStack', 'HouseholdSettings', null],
+  household_deletion_cancelled: ['MoreStack', 'HouseholdSettings', null],
+};
+
+// Persisted so the OS's 'last response' isn't replayed on every cold start.
+export const LAST_NOTIFICATION_KEY = 'rootaroo_last_notification_id';
+
+const FALLBACK = { name: 'Notifications' };
+
+// Campaign pushes are not kept in the notification list, so each rule opens
+// the screen it nudges towards; anything else lands on Home.
+const CAMPAIGN_ROUTES = {
+  task_due_tomorrow: { name: 'MainTabs', params: { screen: 'TasksStack', params: { screen: 'TaskList', params: undefined } } },
+  no_checkin_today: { name: 'MainTabs', params: { screen: 'MoreStack', params: { screen: 'CheckIn', params: undefined } } },
+  new_member_first_post: { name: 'MainTabs', params: { screen: 'FeedStack' } },
+};
+const HOME = { name: 'MainTabs', params: { screen: 'KnowsDashboard' } };
+
+const handledIds = new Set();
+let pendingRoute = null;
+
+function resolveRoute(type) {
+  if (typeof type !== 'string') return null;
+  if (type.startsWith('billing_')) return ['MoreStack', 'Subscription', null];
+  return ROUTES[type] || null;
+}
+
+export function routeForNotification(data) {
+  if (!data) return FALLBACK;
+  if (data.type === 'campaign') return CAMPAIGN_ROUTES[data.rule] || HOME;
+  const match = resolveRoute(data.type);
+  if (!match) return FALLBACK;
+  const [tab, screen, idKey] = match;
+
+  let params;
+  if (idKey) {
+    const value = data[idKey];
+    if (!value) return FALLBACK;
+    params = { [idKey]: value };
+  }
+
+  return { name: 'MainTabs', params: { screen: tab, params: { screen, params } } };
+}
+
+// Returns a promise that settles once the id is stored (never rejects).
+export function handleNotificationResponse(navRef, response) {
+  const request = response?.notification?.request;
+  const id = request?.identifier;
+  // Opening the app is the whole point of a signed-out nudge.
+  if (request?.content?.data?.type === 'signed_out_nudge') return;
+  let stored = Promise.resolve();
+  if (id) {
+    if (handledIds.has(id)) return stored;
+    handledIds.add(id);
+    stored = AsyncStorage.setItem(LAST_NOTIFICATION_KEY, id).catch(() => {});
+  }
+
+  const route = routeForNotification(request?.content?.data);
+  if (navRef?.isReady?.()) {
+    navRef.navigate(route.name, route.params);
+  } else {
+    pendingRoute = route;
+  }
+  return stored;
+}
+
+export async function handleColdStartResponse(navRef, response) {
+  if (!response) return;
+  const id = response.notification?.request?.identifier;
+  if (id) {
+    try {
+      if ((await AsyncStorage.getItem(LAST_NOTIFICATION_KEY)) === id) return;
+    } catch {
+      // Storage unreadable: handle it rather than drop a real tap.
+    }
+  }
+  await handleNotificationResponse(navRef, response);
+}
+
+export function flushPendingNotification(navRef) {
+  if (!pendingRoute || !navRef?.isReady?.()) return;
+  const route = pendingRoute;
+  pendingRoute = null;
+  navRef.navigate(route.name, route.params);
+}
+
+// Default api is required lazily so tests can import this module without the API client's native deps.
+export async function syncBadge(api = require('./api/notification').notificationApi) {
+  try {
+    const result = await api.getUnreadCount();
+    const count = typeof result === 'number' ? result : Number(result?.count) || 0;
+    await Notifications.setBadgeCountAsync(count);
+  } catch {
+    // Badge is cosmetic — never fail the caller over it.
+  }
+}
+
+export function __resetNotificationRoutingForTests() {
+  handledIds.clear();
+  pendingRoute = null;
+}
+
+export function useNotificationRouting(navRef) {
+  useEffect(() => {
+    Notifications.getLastNotificationResponseAsync()
+      .then((response) => {
+        return handleColdStartResponse(navRef, response);
+      })
+      .catch(() => {});
+
+    const sub = Notifications.addNotificationResponseReceivedListener((response) =>
+      handleNotificationResponse(navRef, response),
+    );
+    return () => sub.remove();
+  }, [navRef]);
+}

@@ -2,9 +2,8 @@ import {
   createPingRequest,
   respondToPingRequest,
   listPingRequests,
-  updateSharedLocation,
-  stopShare,
 } from '../service';
+import { startShare } from '../../location-share/service';
 import * as models from '../../../database/models';
 
 // ── Mocks ──
@@ -34,6 +33,12 @@ jest.mock('../../../database/models', () => ({
   HouseholdMember: {
     findOne: jest.fn(),
   },
+  sequelize: { transaction: jest.fn() },
+}));
+
+jest.mock('../../location-share/service', () => ({
+  startShare: jest.fn().mockResolvedValue({ id: 'share-1' }),
+  shareIdsByPing: jest.fn().mockResolvedValue(new Map()),
 }));
 
 jest.mock('../../../shared/services/notifications', () => ({
@@ -45,6 +50,8 @@ const mockTo = jest.fn(() => ({ emit: mockEmit }));
 jest.mock('../../../shared/utils/socket', () => ({
   getIO: () => ({ to: mockTo }),
 }));
+
+const notifyUserMock = () => (jest.requireMock('../../../shared/services/notifications') as { notifyUser: jest.Mock }).notifyUser;
 
 const modelsMock = models as jest.Mocked<typeof models>;
 
@@ -58,11 +65,6 @@ function makePingRequest(overrides: Record<string, unknown> = {}) {
     note: null,
     checkInId: null,
     respondedAt: null,
-    shareDurationMinutes: null,
-    shareExpiresAt: null as Date | null,
-    liveLatitude: null,
-    liveLongitude: null,
-    liveUpdatedAt: null,
     createdAt: new Date('2026-08-10T10:00:00.000Z'),
     save: jest.fn().mockResolvedValue(undefined),
     get: jest.fn((key: string) => {
@@ -75,8 +77,11 @@ function makePingRequest(overrides: Record<string, unknown> = {}) {
   return base;
 }
 
+const TX = { id: 'tx' };
+
 beforeEach(() => {
   jest.clearAllMocks();
+  (modelsMock.sequelize.transaction as jest.Mock).mockImplementation((cb: any) => cb(TX));
   (modelsMock.PingRequest.findOne as jest.Mock).mockResolvedValue(null);
   (modelsMock.PingRequest.update as jest.Mock).mockResolvedValue([0]);
   (modelsMock.HouseholdMember.findOne as jest.Mock).mockImplementation(({ where }: any) => {
@@ -155,15 +160,19 @@ describe('respondToPingRequest', () => {
 
     expect(modelsMock.CheckIn.create).toHaveBeenCalledWith(
       expect.objectContaining({ householdId, userId: targetUserId, latitude: 27.7172 }),
+      { transaction: TX },
     );
     expect(pending.status).toBe('fulfilled');
     expect(pending.checkInId).toBe('ci-1');
-    expect(pending.shareDurationMinutes).toBe(15);
-    expect(pending.shareExpiresAt).toBeInstanceOf(Date);
-    expect(pending.shareExpiresAt!.getTime()).toBeGreaterThan(Date.now());
-    expect(pending.liveLatitude).toBe(27.7172);
     expect(pending.save).toHaveBeenCalled();
     expect(result.status).toBe('fulfilled');
+    // The live share belongs to the location-share module and is visible only to the asker.
+    expect(startShare).toHaveBeenCalledWith(
+      targetUserId,
+      expect.objectContaining({ durationMinutes: 15, viewerIds: [requesterId], latitude: 27.7172, pingRequestId }),
+      expect.anything(),
+    );
+    expect(result.locationShareId).toBe('share-1');
 
     const notifications = jest.requireMock('../../../shared/services/notifications') as {
       notifyUser: jest.Mock;
@@ -176,6 +185,65 @@ describe('respondToPingRequest', () => {
       expect.objectContaining({ type: 'ping_response', checkInId: 'ci-1' }),
     );
     expect(mockTo).toHaveBeenCalledWith(`user:${requesterId}`);
+  });
+
+  it('refuses with 409 when the requester has left the household, leaving the ping pending', async () => {
+    const pending = makePingRequest();
+    (modelsMock.PingRequest.findByPk as jest.Mock).mockResolvedValueOnce(pending);
+    (modelsMock.HouseholdMember.findOne as jest.Mock).mockImplementation(({ where }: any) =>
+      Promise.resolve(where.userId === targetUserId ? { householdId, userId: targetUserId } : null));
+
+    await expect(
+      respondToPingRequest(targetUserId, pingRequestId, { action: 'accept', latitude: 1, longitude: 2, durationMinutes: 15 }),
+    ).rejects.toMatchObject({ statusCode: 409, message: 'They are no longer in your household' });
+
+    expect(pending.status).toBe('pending');
+    expect(pending.save).not.toHaveBeenCalled();
+    expect(modelsMock.CheckIn.create).not.toHaveBeenCalled();
+    expect(startShare).not.toHaveBeenCalled();
+  });
+
+  it('writes the check-in, the fulfilled ping and the share inside one transaction', async () => {
+    const pending = makePingRequest();
+    (modelsMock.PingRequest.findByPk as jest.Mock)
+      .mockResolvedValueOnce(pending)
+      .mockResolvedValueOnce(makePingRequest({ status: 'fulfilled' }));
+    (modelsMock.CheckIn.create as jest.Mock).mockResolvedValue({ id: 'ci-1' });
+
+    await respondToPingRequest(targetUserId, pingRequestId, { action: 'accept', latitude: 1, longitude: 2, durationMinutes: 15 });
+
+    expect(modelsMock.sequelize.transaction).toHaveBeenCalledTimes(1);
+    expect(modelsMock.CheckIn.create).toHaveBeenCalledWith(expect.anything(), { transaction: TX });
+    expect(pending.save).toHaveBeenCalledWith({ transaction: TX });
+    expect(startShare).toHaveBeenCalledWith(targetUserId, expect.anything(), expect.objectContaining({ transaction: TX, notify: false }));
+  });
+
+  it('does not leave the ping fulfilled when starting the share fails', async () => {
+    const pending = makePingRequest();
+    (modelsMock.PingRequest.findByPk as jest.Mock).mockResolvedValueOnce(pending);
+    (modelsMock.CheckIn.create as jest.Mock).mockResolvedValue({ id: 'ci-1' });
+    (startShare as jest.Mock).mockRejectedValueOnce(new Error('boom'));
+
+    await expect(
+      respondToPingRequest(targetUserId, pingRequestId, { action: 'accept', latitude: 1, longitude: 2, durationMinutes: 15 }),
+    ).rejects.toThrow('boom');
+
+    // every write went through the transaction, which rolls back on the rejection
+    for (const call of (pending.save as jest.Mock).mock.calls) expect(call[0]).toEqual({ transaction: TX });
+    expect(notifyUserMock()).not.toHaveBeenCalled();
+    expect(mockEmit).not.toHaveBeenCalled();
+  });
+
+  it('does not start a live share when no position was sent', async () => {
+    (modelsMock.PingRequest.findByPk as jest.Mock)
+      .mockResolvedValueOnce(makePingRequest())
+      .mockResolvedValueOnce(makePingRequest({ status: 'fulfilled' }));
+    (modelsMock.CheckIn.create as jest.Mock).mockResolvedValue({ id: 'ci-1' });
+
+    const result = await respondToPingRequest(targetUserId, pingRequestId, { action: 'accept', durationMinutes: 15 });
+
+    expect(startShare).not.toHaveBeenCalled();
+    expect(result.locationShareId).toBeNull();
   });
 
   it('declines without creating a CheckIn', async () => {
@@ -238,74 +306,5 @@ describe('listPingRequests', () => {
     expect(modelsMock.PingRequest.findAll).toHaveBeenCalledWith(
       expect.objectContaining({ where: { requesterId } }),
     );
-  });
-});
-
-describe('updateSharedLocation', () => {
-  it('updates live coordinates and emits to the requester while the share is active', async () => {
-    const active = makePingRequest({
-      status: 'fulfilled',
-      shareExpiresAt: new Date(Date.now() + 10 * 60_000),
-    });
-    (modelsMock.PingRequest.findByPk as jest.Mock)
-      .mockResolvedValueOnce(active)
-      .mockResolvedValueOnce(active);
-
-    const result = await updateSharedLocation(targetUserId, pingRequestId, {
-      latitude: 27.72,
-      longitude: 85.32,
-    });
-
-    expect(active.liveLatitude).toBe(27.72);
-    expect(active.liveLongitude).toBe(85.32);
-    expect(active.save).toHaveBeenCalled();
-    expect(mockTo).toHaveBeenCalledWith(`user:${requesterId}`);
-    expect(mockEmit).toHaveBeenCalledWith('ping:location-update', expect.any(Object));
-    expect(result).toBeDefined();
-  });
-
-  it('rejects updates from someone other than the responder', async () => {
-    (modelsMock.PingRequest.findByPk as jest.Mock).mockResolvedValue(
-      makePingRequest({ status: 'fulfilled', shareExpiresAt: new Date(Date.now() + 60_000) }),
-    );
-
-    await expect(
-      updateSharedLocation(requesterId, pingRequestId, { latitude: 1, longitude: 1 }),
-    ).rejects.toThrow('not yours to update');
-  });
-
-  it('rejects updates once the share has expired', async () => {
-    (modelsMock.PingRequest.findByPk as jest.Mock).mockResolvedValue(
-      makePingRequest({ status: 'fulfilled', shareExpiresAt: new Date(Date.now() - 1000) }),
-    );
-
-    await expect(
-      updateSharedLocation(targetUserId, pingRequestId, { latitude: 1, longitude: 1 }),
-    ).rejects.toThrow('has ended');
-  });
-});
-
-describe('stopShare', () => {
-  it('expires the share immediately and notifies the requester', async () => {
-    const active = makePingRequest({
-      status: 'fulfilled',
-      shareExpiresAt: new Date(Date.now() + 10 * 60_000),
-    });
-    (modelsMock.PingRequest.findByPk as jest.Mock)
-      .mockResolvedValueOnce(active)
-      .mockResolvedValueOnce(active);
-
-    await stopShare(targetUserId, pingRequestId);
-
-    expect(active.shareExpiresAt!.getTime()).toBeLessThanOrEqual(Date.now());
-    expect(active.save).toHaveBeenCalled();
-    expect(mockTo).toHaveBeenCalledWith(`user:${requesterId}`);
-    expect(mockEmit).toHaveBeenCalledWith('ping:share-ended', expect.any(Object));
-  });
-
-  it('rejects stopping a share that is not yours', async () => {
-    (modelsMock.PingRequest.findByPk as jest.Mock).mockResolvedValue(makePingRequest());
-
-    await expect(stopShare(requesterId, pingRequestId)).rejects.toThrow('not yours to stop');
   });
 });

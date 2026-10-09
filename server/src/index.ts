@@ -7,14 +7,19 @@ import { setupAssociations } from './database/models';
 import './config/redis';
 import { startGroceryArchiveJob } from './jobs/grocery-archive';
 import { startEventReminderJob } from './jobs/event-reminder';
+import { startPushReceiptsJob } from './jobs/push-receipts';
 import { startCalendarSyncJob } from './jobs/calendar-sync';
 import { startOverduePointsReductionJob } from './jobs/overdue-points';
 import { startPurgeScheduledDeletionsJob } from './jobs/purge-scheduled-deletions';
 import { startPingExpiryJob } from './jobs/ping-expiry';
+import { startLocationShareExpiryJob } from './jobs/location-share-expiry';
+import { startE2eCleanupJob } from './jobs/e2e-cleanup';
+import { startJournalUploadCleanupJob } from './jobs/journal-upload-cleanup';
 import { startBillingEventSweepJob } from './jobs/billing-event-sweep';
 import { startBillingCheckoutSweepJob } from './jobs/billing-checkout-sweep';
 import { startBillingReconcileJobs } from './jobs/billing-reconcile';
 import { startBillingPriceNoticesJob } from './jobs/billing-price-notices';
+import { startCampaignsJob } from './jobs/campaigns';
 import { setIO } from './shared/utils/socket';
 import {
   socketAuthMiddleware,
@@ -25,6 +30,8 @@ import logger from './shared/utils/logger';
 import { assertBillingConfigAtStartup, getBillingConfig } from './modules/billing/config';
 import { assertNoUploadsInProduction } from './shared/middleware/uploads';
 import { startCatalogBustSubscriber } from './modules/billing/catalog';
+import { loadServicesConfig, describeServices } from './services/config';
+import { initServices } from './services';
 
 // Optional infra (Redis cache/rate-limit store, etc.) must never take the
 // whole API down. ioredis and its consumers (e.g. rate-limit-redis) can
@@ -61,9 +68,22 @@ registerChatSocket(io);
 app.set('io', io);
 setIO(io);
 
+// Fail fast on a bad provider setup (e.g. log email in production) before anything starts.
+function initServicesAtStartup(): void {
+  const { config, errors, warnings } = loadServicesConfig(process.env);
+  if (errors.length > 0) {
+    for (const e of errors) logger.error(`[Services] ${e}`);
+    process.exit(1);
+  }
+  for (const w of warnings) logger.warn(`[Services] ${w}`);
+  initServices(config);
+  for (const line of describeServices(config)) logger.info(`[Services] ${line}`);
+}
+
 // ── Start Server ──
 async function start(): Promise<void> {
   try {
+    initServicesAtStartup();
     assertBillingConfigAtStartup();
     startCatalogBustSubscriber();
     assertNoUploadsInProduction(app, env.nodeEnv);
@@ -83,10 +103,15 @@ async function start(): Promise<void> {
     // Start scheduled jobs
     startGroceryArchiveJob();
     startEventReminderJob();
+    startPushReceiptsJob();
     startCalendarSyncJob();
     startOverduePointsReductionJob();
     startPurgeScheduledDeletionsJob();
     startPingExpiryJob();
+    startLocationShareExpiryJob();
+    startE2eCleanupJob();
+    startJournalUploadCleanupJob();
+    if (process.env.CAMPAIGNS_ENABLED !== 'false') startCampaignsJob();
     if (getBillingConfig().enabled) {
       startBillingEventSweepJob();
       startBillingCheckoutSweepJob();

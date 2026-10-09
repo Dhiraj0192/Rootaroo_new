@@ -1,11 +1,13 @@
 import { v4 as uuidv4 } from 'uuid';
 import { Op } from 'sequelize';
 import { formatInTimeZone, fromZonedTime } from 'date-fns-tz';
-import { JournalEntry, JournalMedia, Household } from '../../database/models';
-import { NotFoundError } from '../../shared/utils/errors';
+import { UniqueConstraintError } from 'sequelize';
+import { JournalEntry, JournalMedia, JournalUpload, Household } from '../../database/models';
+import { AppError, ConflictError, NotFoundError } from '../../shared/utils/errors';
+import { assertOwnUploadKey, userUploadFolder } from '../../shared/utils/uploadKeys';
 import { getUserHousehold as getUserHouseholdCore } from '../../shared/utils/household';
-import { getSignedUrl } from '../../shared/utils/s3';
-import { MOOD_VALUES } from './validation';
+import { getSignedUrl, deleteObject, uploadBuffer } from '../../shared/utils/s3';
+import logger from '../../shared/utils/logger';
 import type {
   CreateEntryBody,
   UpdateEntryBody,
@@ -16,12 +18,12 @@ import type {
   EntryMediaInput,
   JournalStatsResponse,
   JournalHistoryResponse,
-  OnThisDayEntry,
-  Mood,
-  MoodDay,
+  OnThisDayResponse,
   StreakDay,
-  TagCount,
 } from './types';
+
+/** Where the phone uploads encrypted photos and thumbnails (see the controller). */
+const BLOB_AREA = 'journal/blobs';
 
 /**
  * Look up the user's current household membership.
@@ -32,7 +34,7 @@ async function getUserHousehold(userId: string): Promise<string> {
 }
 
 /**
- * The household's timezone, so "today" on the streak card means the user's
+ * The caller's timezone, so "today" on the streak card means the user's
  * today and not the server's. Same self-heal rule the dashboard uses: trust
  * the caller's `X-Timezone` when the stored value disagrees, since a phone
  * knows where it is and a household row may never have been told.
@@ -52,7 +54,7 @@ function isValidTimeZone(tz: string): boolean {
   }
 }
 
-/** `yyyy-MM-dd` for an instant, as the household sees it. */
+/** `yyyy-MM-dd` for an instant, as the caller sees it. */
 function dateKey(d: Date, timeZone: string): string {
   return formatInTimeZone(d, timeZone, 'yyyy-MM-dd');
 }
@@ -65,30 +67,12 @@ function keyMinusDays(key: string, n: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-/** Words in an entry body — the count the composer and detail header show. */
-function countWords(content: string | null): number {
-  if (!content) return 0;
-  const trimmed = content.trim();
-  return trimmed ? trimmed.split(/\s+/).length : 0;
-}
-
-function moodScore(mood: Mood): number {
-  // 1-based so a `rough` day still draws a visible bar in the History chart;
-  // a 0 would render as nothing and read as "no entry" instead of "bad day".
-  return MOOD_VALUES.indexOf(mood) + 1;
-}
-
-function normalizeTags(tags: unknown): string[] {
-  return Array.isArray(tags) ? (tags as string[]) : [];
-}
-
 async function toMediaResponse(items: JournalMedia[]): Promise<JournalMediaResponse[]> {
   return Promise.all(items.map(async (m) => ({
     id: m.id,
-    mediaUrl: (await getSignedUrl(m.mediaUrl))!,
-    mediaType: m.mediaType,
-    thumbnailUrl: await getSignedUrl(m.thumbnailUrl),
-    fileSizeBytes: m.fileSizeBytes,
+    url: (await getSignedUrl(m.blobKey))!,
+    thumbnailUrl: await getSignedUrl(m.thumbnailKey),
+    sizeBytes: m.sizeBytes,
   })));
 }
 
@@ -96,14 +80,82 @@ async function toEntryResponse(entry: JournalEntry): Promise<JournalEntryRespons
   const media = (entry.get('media') as JournalMedia[]) || [];
   return {
     id: entry.id,
-    content: entry.content,
-    mood: (entry.mood as Mood) || null,
-    tags: normalizeTags(entry.tags),
-    wordCount: countWords(entry.content),
+    ciphertext: entry.ciphertext,
+    sealedKey: entry.sealedKey,
+    format: entry.format,
     media: await toMediaResponse(media),
     createdAt: entry.createdAt.toISOString(),
     updatedAt: entry.updatedAt.toISOString(),
   };
+}
+
+// Keys come from the client and are later signed into download links, so they
+// must be ones this user uploaded — never another user's journal or vault file.
+function assertOwnMediaKeys(userId: string, media?: EntryMediaInput[]): void {
+  for (const m of media ?? []) {
+    assertOwnUploadKey(m.blobKey, userId, [BLOB_AREA]);
+    if (m.thumbnailKey) assertOwnUploadKey(m.thumbnailKey, userId, [BLOB_AREA]);
+  }
+}
+
+/** The encrypted photos and thumbnails one user may keep across all entries (same as the vault). */
+export const JOURNAL_QUOTA_BYTES = 2 * 1024 * 1024 * 1024;
+
+/**
+ * Stores encrypted blobs and records each key, so they count toward the user's
+ * quota right away and the daily cleanup can remove any that never get attached
+ * to an entry. The quota is checked before anything is written to storage.
+ */
+export async function uploadBlobs(
+  userId: string,
+  files: Array<{ buffer: Buffer; size: number }>,
+): Promise<Array<{ fileName: string; size: number }>> {
+  const incoming = files.reduce((sum, f) => sum + f.size, 0);
+  const used = Number(await JournalUpload.sum('sizeBytes', { where: { userId } })) || 0;
+  if (used + incoming > JOURNAL_QUOTA_BYTES) {
+    throw new AppError(
+      413,
+      `Journal photo storage limit reached (${JOURNAL_QUOTA_BYTES / (1024 * 1024 * 1024)} GB). Delete some photos to add more.`,
+      'JOURNAL_QUOTA_EXCEEDED',
+    );
+  }
+  const results: Array<{ fileName: string; size: number }> = [];
+  for (const f of files) {
+    const { key } = await uploadBuffer(f.buffer, userUploadFolder(BLOB_AREA, userId), 'application/octet-stream');
+    await JournalUpload.create({ key, userId, sizeBytes: f.size });
+    results.push({ fileName: key, size: f.size });
+  }
+  return results;
+}
+
+/** An entry now owns these uploads: the cleanup job must leave them alone. */
+async function markAttached(userId: string, media?: EntryMediaInput[]): Promise<void> {
+  const keys = (media ?? []).flatMap((m) => [m.blobKey, m.thumbnailKey]).filter((k): k is string => Boolean(k));
+  if (keys.length === 0) return;
+  await JournalUpload.update({ attachedAt: new Date() }, { where: { userId, key: keys } });
+}
+
+/** Best effort: a stray object in the bucket is not worth failing a delete or save over. */
+async function deleteBlobs(
+  rows: Array<{ blobKey: string; thumbnailKey: string | null }>,
+  userId?: string,
+): Promise<void> {
+  const keys = rows.flatMap((r) => [r.blobKey, r.thumbnailKey]).filter((k): k is string => Boolean(k));
+  if (userId && keys.length > 0) {
+    // The blobs are gone (or about to be), so they stop counting toward the quota.
+    try {
+      await JournalUpload.destroy({ where: { userId, key: keys } });
+    } catch (error) {
+      logger.warn('[Journal] Could not clear upload records:', (error as Error).message);
+    }
+  }
+  await Promise.all(keys.map(async (key) => {
+    try {
+      await deleteObject(key);
+    } catch (error) {
+      logger.warn(`[Journal] Could not delete blob ${key}:`, (error as Error).message);
+    }
+  }));
 }
 
 /**
@@ -113,31 +165,47 @@ async function toEntryResponse(entry: JournalEntry): Promise<JournalEntryRespons
  * isn't the caller's own simply doesn't exist as far as any query is
  * concerned, so a wrong id 404s rather than 403s — the same
  * don't-leak-existence pattern Vault uses for its owner-scoped reads.
+ *
+ * The text, mood, tags and photos are encrypted on the phone: the server
+ * stores the ciphertext and the sealed key and never reads them.
  */
 export async function createEntry(
   userId: string,
   body: CreateEntryBody,
 ): Promise<JournalEntryResponse> {
   const householdId = await getUserHousehold(userId);
+  assertOwnMediaKeys(userId, body.media);
 
-  const entry = await JournalEntry.create({
-    id: uuidv4(),
-    householdId,
-    userId,
-    content: body.content || null,
-    mood: body.mood || null,
-    tags: body.tags && body.tags.length > 0 ? body.tags : null,
-  });
+  // The phone chose the id because the ciphertext is bound to it. A taken id
+  // (even a deleted entry's) is refused, so one entry's sealed bytes can never
+  // be replayed under an id that already meant something else.
+  const taken = await JournalEntry.findOne({ where: { id: body.id }, attributes: ['id'], paranoid: false });
+  if (taken) throw new ConflictError('An entry with this id already exists');
+
+  let entry: JournalEntry;
+  try {
+    entry = await JournalEntry.create({
+      id: body.id,
+      householdId,
+      userId,
+      ciphertext: body.ciphertext,
+      sealedKey: body.sealedKey,
+      format: body.format,
+    });
+  } catch (error) {
+    if (error instanceof UniqueConstraintError) throw new ConflictError('An entry with this id already exists');
+    throw error;
+  }
+  await markAttached(userId, body.media);
 
   if (body.media && body.media.length > 0) {
     await JournalMedia.bulkCreate(
       body.media.map((m) => ({
         id: uuidv4(),
         entryId: entry.id,
-        mediaUrl: m.mediaUrl,
-        mediaType: m.mediaType,
-        thumbnailUrl: m.thumbnailUrl || null,
-        fileSizeBytes: m.fileSizeBytes || null,
+        blobKey: m.blobKey,
+        thumbnailKey: m.thumbnailKey || null,
+        sizeBytes: m.sizeBytes,
       })),
     );
   }
@@ -212,41 +280,38 @@ export async function updateEntry(
     where: { id: entryId, householdId, userId },
   });
   if (!entry) throw new NotFoundError('Journal entry');
+  assertOwnMediaKeys(userId, body.media?.filter((m): m is EntryMediaInput => !('id' in m)));
 
-  // PATCH semantics: only the keys the client actually sent are touched, so
-  // saving a mood from the detail sheet can't blank the entry's tags.
-  const changes: Record<string, unknown> = {};
-  if (body.content !== undefined) changes.content = body.content;
-  if (body.mood !== undefined) changes.mood = body.mood;
-  if (body.tags !== undefined) changes.tags = body.tags.length > 0 ? body.tags : null;
-  if (Object.keys(changes).length > 0) await entry.update(changes);
+  // The phone always re-encrypts the whole entry, so ciphertext, sealed key and
+  // format are replaced together.
+  await entry.update({ ciphertext: body.ciphertext, sealedKey: body.sealedKey, format: body.format });
 
   // Media is replace-the-whole-set: the composer always holds the complete
   // attachment list when it saves, so one authoritative array is simpler than
   // diffing and cannot drift. Items already on the entry arrive as `{ id }`
-  // and are kept untouched — the client only ever saw their signed URLs, and
-  // writing one of those back would replace the S3 key with an expiring link.
+  // and are kept untouched; anything not listed is dropped, blob and all.
   if (body.media !== undefined) {
     const keptIds = body.media
       .filter((m): m is { id: string } => 'id' in m)
       .map((m) => m.id);
     const added = body.media.filter((m): m is EntryMediaInput => !('id' in m));
+    const dropWhere = {
+      entryId: entry.id,
+      ...(keptIds.length > 0 ? { id: { [Op.notIn]: keptIds } } : {}),
+    };
 
-    await JournalMedia.destroy({
-      where: {
-        entryId: entry.id,
-        ...(keptIds.length > 0 ? { id: { [Op.notIn]: keptIds } } : {}),
-      },
-    });
+    const dropped = await JournalMedia.findAll({ where: dropWhere });
+    await JournalMedia.destroy({ where: dropWhere });
+    await deleteBlobs(dropped, userId);
+    await markAttached(userId, added);
     if (added.length > 0) {
       await JournalMedia.bulkCreate(
         added.map((m) => ({
           id: uuidv4(),
           entryId: entry.id,
-          mediaUrl: m.mediaUrl,
-          mediaType: m.mediaType,
-          thumbnailUrl: m.thumbnailUrl || null,
-          fileSizeBytes: m.fileSizeBytes || null,
+          blobKey: m.blobKey,
+          thumbnailKey: m.thumbnailKey || null,
+          sizeBytes: m.sizeBytes,
         })),
       );
     }
@@ -268,10 +333,16 @@ export async function deleteEntry(userId: string, entryId: string): Promise<void
   });
   if (!entry) throw new NotFoundError('Journal entry');
 
-  await entry.destroy();
+  // Hard delete: a soft-deleted row would keep the ciphertext and sealed key
+  // in the database after the user asked for the entry to be gone.
+  const media = await JournalMedia.findAll({ where: { entryId: entry.id } });
+  await entry.destroy({ force: true });
+  await JournalMedia.destroy({ where: { entryId: entry.id } });
+  await deleteBlobs(media, userId);
 }
 
-// ── Stats: the streak card, the History chart, "On this day" ──
+// ── Stats: the streak card, the History calendar, "On this day" ──
+// All of these work from entry dates alone; nothing here can read an entry.
 
 /** How far back "On this day" looks. Five anniversaries is already more than
  *  any card can show; beyond that it is five wasted queries. */
@@ -300,14 +371,6 @@ const PROMPTS = [
   'What would you do again exactly the same way?',
   'What is quietly working in your life right now?',
 ];
-
-const MOOD_LABELS: Record<Mood, string> = {
-  rough: 'Mostly rough',
-  low: 'Mostly low',
-  neutral: 'Mostly steady',
-  calm: 'Mostly calm',
-  happy: 'Mostly bright',
-};
 
 function promptForDay(dayKey: string): string {
   // A stable hash of the date string — the point is only that consecutive days
@@ -355,58 +418,29 @@ export async function getStats(
   const householdId = await getUserHousehold(userId);
   const timeZone = await getTimeZone(householdId, clientTimeZone);
   const todayKey = dateKey(new Date(), timeZone);
-
   const monthKey = todayKey.slice(0, 7);
 
-  // Two reads rather than one, because they want different things:
-  //
-  //   · the streak spans the user's whole history, but needs only the day and
-  //     mood of each entry — no bodies. Selecting `content` here too would
-  //     drag every word ever written (up to 10 000 chars an entry) across the
-  //     wire on every home-screen focus, purely to word-count the last few.
-  //   · the month totals need the bodies, but only this month's.
-  const [entries, monthEntries] = await Promise.all([
-    JournalEntry.findAll({
-      where: { householdId, userId },
-      attributes: ['createdAt', 'mood'],
-      order: [['createdAt', 'ASC']],
-    }),
-    JournalEntry.findAll({
-      where: {
-        householdId,
-        userId,
-        createdAt: { [Op.gte]: fromZonedTime(`${monthKey}-01 00:00:00`, timeZone) },
-      },
-      attributes: ['createdAt', 'content'],
-    }),
-  ]);
+  // Only the creation date of each entry: the streak spans the whole history
+  // but needs nothing else, and the server has nothing else to give.
+  const entries = await JournalEntry.findAll({
+    where: { householdId, userId },
+    attributes: ['createdAt'],
+    order: [['createdAt', 'ASC']],
+  });
 
   const dayKeys = new Set<string>();
-  const moodByDay = new Map<string, Mood>();
-
+  let entriesThisMonth = 0;
   for (const entry of entries) {
     const key = dateKey(entry.createdAt, timeZone);
     dayKeys.add(key);
-    // Later entries win: the last mood you recorded is how the day ended up.
-    if (entry.mood) moodByDay.set(key, entry.mood as Mood);
-  }
-
-  let entriesThisMonth = 0;
-  let wordsThisMonth = 0;
-  for (const entry of monthEntries) {
-    // The query's lower bound is this month's local midnight, but an entry
-    // written late on the last day of next month would also pass it once the
-    // clock rolls over — so the day key still decides.
-    if (!dateKey(entry.createdAt, timeZone).startsWith(monthKey)) continue;
-    entriesThisMonth += 1;
-    wordsThisMonth += countWords(entry.content);
+    if (key.startsWith(monthKey)) entriesThisMonth += 1;
   }
 
   const sortedKeys = Array.from(dayKeys).sort();
   const last7Days: StreakDay[] = [];
   for (let i = 6; i >= 0; i -= 1) {
     const key = keyMinusDays(todayKey, i);
-    last7Days.push({ date: key, written: dayKeys.has(key), mood: moodByDay.get(key) || null });
+    last7Days.push({ date: key, wrote: dayKeys.has(key) });
   }
 
   return {
@@ -414,7 +448,6 @@ export async function getStats(
     bestStreak: computeBestStreak(sortedKeys),
     wroteToday: dayKeys.has(todayKey),
     entriesThisMonth,
-    wordsThisMonth,
     last7Days,
     prompt: promptForDay(todayKey),
   };
@@ -432,12 +465,6 @@ function monthMinus(monthKey: string, n: number): string {
   return d.toISOString().slice(0, 7);
 }
 
-/** Average mood score across days that recorded one; null when none did. */
-function averageScore(moods: Mood[]): number | null {
-  if (moods.length === 0) return null;
-  return moods.reduce((sum, mood) => sum + moodScore(mood), 0) / moods.length;
-}
-
 export async function getHistory(
   userId: string,
   monthParam: string | undefined,
@@ -446,69 +473,25 @@ export async function getHistory(
   const householdId = await getUserHousehold(userId);
   const timeZone = await getTimeZone(householdId, clientTimeZone);
   const month = monthParam || dateKey(new Date(), timeZone).slice(0, 7);
-  const previousMonth = monthMinus(month, 1);
 
-  // One query spanning both months: the delta needs last month's moods, and
-  // fetching them separately would double the round trips for no benefit.
   const entries = await JournalEntry.findAll({
     where: {
       householdId,
       userId,
       createdAt: {
-        [Op.gte]: monthStart(previousMonth, timeZone),
+        [Op.gte]: monthStart(month, timeZone),
         [Op.lt]: monthStart(monthMinus(month, -1), timeZone),
       },
     },
-    attributes: ['createdAt', 'mood', 'tags'],
+    attributes: ['createdAt'],
     order: [['createdAt', 'ASC']],
   });
 
-  const moodByDay = new Map<string, Mood>();
   const entryDates = new Set<string>();
-  // Both months are reduced to one mood per day before they are compared, so
-  // the delta measures how the days felt — not how many times someone wrote.
-  const previousMoodByDay = new Map<string, Mood>();
-  const tagCounts = new Map<string, number>();
-
   for (const entry of entries) {
     const key = dateKey(entry.createdAt, timeZone);
-    if (key.startsWith(previousMonth)) {
-      if (entry.mood) previousMoodByDay.set(key, entry.mood as Mood);
-      continue;
-    }
-    if (!key.startsWith(month)) continue;
-    entryDates.add(key);
-    if (entry.mood) moodByDay.set(key, entry.mood as Mood);
-    for (const tag of normalizeTags(entry.tags)) {
-      tagCounts.set(tag, (tagCounts.get(tag) || 0) + 1);
-    }
+    if (key.startsWith(month)) entryDates.add(key);
   }
-
-  const moodDays: MoodDay[] = Array.from(moodByDay.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([date, mood]) => ({ date, mood, score: moodScore(mood) }));
-
-  // The summary names the month's *most frequent* mood, not its average — a
-  // month of mostly-calm days with one rough one reads as calm, and averaging
-  // would blur it into "steady".
-  const frequency = new Map<Mood, number>();
-  for (const { mood } of moodDays) frequency.set(mood, (frequency.get(mood) || 0) + 1);
-  let modalMood: Mood | null = null;
-  for (const [mood, count] of frequency) {
-    if (modalMood === null || count > frequency.get(modalMood)!) modalMood = mood;
-  }
-
-  const currentAverage = averageScore(moodDays.map((d) => d.mood));
-  const previousAverage = averageScore(Array.from(previousMoodByDay.values()));
-  const moodDeltaPercent =
-    currentAverage !== null && previousAverage !== null && previousAverage > 0
-      ? Math.round(((currentAverage - previousAverage) / previousAverage) * 100)
-      : null;
-
-  const topTags: TagCount[] = Array.from(tagCounts.entries())
-    .map(([tag, count]) => ({ tag, count }))
-    .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag))
-    .slice(0, 6);
 
   const [year, monthNumber] = month.split('-').map(Number);
   const daysInMonth = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
@@ -517,12 +500,7 @@ export async function getHistory(
 
   return {
     month,
-    moodDays,
     entryDates: Array.from(entryDates).sort(),
-    topTags,
-    moodSummary: modalMood ? MOOD_LABELS[modalMood] : null,
-    goodDays: moodDays.filter((d) => d.score > moodScore('neutral')).length,
-    moodDeltaPercent,
     daysInMonth,
     firstWeekday,
   };
@@ -530,13 +508,14 @@ export async function getHistory(
 
 /**
  * Past entries written on the same month/day as `dateParam`, most recent
- * first. Powers the detail screen's "On this day" card.
+ * first. Returned encrypted: the phone decrypts them and builds the snippets
+ * for the detail screen's "On this day" card.
  */
 export async function getOnThisDay(
   userId: string,
   dateParam: string | undefined,
   clientTimeZone?: string,
-): Promise<OnThisDayEntry[]> {
+): Promise<OnThisDayResponse> {
   const householdId = await getUserHousehold(userId);
   const timeZone = await getTimeZone(householdId, clientTimeZone);
   const anchor = dateParam || dateKey(new Date(), timeZone);
@@ -554,28 +533,21 @@ export async function getOnThisDay(
     if (anchorMonth === 2 && anchorDay === 29 && !isLeapYear(year)) continue;
     const key = `${year}-${pad(anchorMonth)}-${pad(anchorDay)}`;
     windows.push({
-      yearsAgo: back,
       start: fromZonedTime(`${key} 00:00:00`, timeZone),
       end: fromZonedTime(`${keyMinusDays(key, -1)} 00:00:00`, timeZone),
     });
   }
 
   const perYear = await Promise.all(
-    windows.map(async ({ yearsAgo, start, end }) => {
-      const entry = await JournalEntry.findOne({
+    windows.map(({ start, end }) =>
+      JournalEntry.findAll({
         where: { householdId, userId, createdAt: { [Op.gte]: start, [Op.lt]: end } },
-        attributes: ['id', 'createdAt', 'content'],
+        include: [{ model: JournalMedia, as: 'media' }],
         order: [['createdAt', 'ASC']],
-      });
-      if (!entry) return null;
-      return {
-        id: entry.id,
-        date: dateKey(entry.createdAt, timeZone),
-        yearsAgo,
-        snippet: (entry.content || '').trim().slice(0, 120),
-      };
-    }),
+      }),
+    ),
   );
 
-  return perYear.filter((e): e is OnThisDayEntry => e !== null);
+  const entries = await Promise.all(perYear.flat().map(toEntryResponse));
+  return { entries };
 }

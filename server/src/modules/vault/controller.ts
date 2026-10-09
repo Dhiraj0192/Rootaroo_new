@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import * as vaultService from './service';
 import multer from 'multer';
+import { ValidationError } from '../../shared/utils/errors';
 
 export const vaultUpload = multer({
   storage: multer.memoryStorage(),
@@ -11,10 +12,6 @@ function getUserId(req: Request): string {
   return (req as any).user!.userId;
 }
 
-function getUserRole(req: Request): string {
-  return (req as any).user!.role;
-}
-
 export async function uploadDocumentCtrl(
   req: Request,
   res: Response,
@@ -22,12 +19,12 @@ export async function uploadDocumentCtrl(
 ): Promise<void> {
   try {
     if (!req.file) {
-      return next(new Error('No file uploaded'));
+      return next(new ValidationError('No file uploaded'));
     }
 
     const document = await vaultService.uploadDocument(
       getUserId(req),
-      req.body,
+      req.body.meta,
       req.file.buffer
     );
 
@@ -50,6 +47,32 @@ export async function listDocumentsCtrl(
   }
 }
 
+export async function listMembersCtrl(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const members = await vaultService.listVaultMembers(getUserId(req));
+    res.json({ success: true, data: members });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function listPendingGrantsCtrl(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const grants = await vaultService.listPendingGrants(getUserId(req));
+    res.json({ success: true, data: grants });
+  } catch (error) {
+    next(error);
+  }
+}
+
 export async function getDocumentByIdCtrl(
   req: Request,
   res: Response,
@@ -63,18 +86,39 @@ export async function getDocumentByIdCtrl(
   }
 }
 
-export async function updateDocumentCtrl(
+export async function grantKeysCtrl(
   req: Request,
   res: Response,
   next: NextFunction
 ): Promise<void> {
   try {
-    const document = await vaultService.updateDocument(
-      req.params.id,
-      getUserId(req),
-      getUserRole(req),
-      req.body
-    );
+    await vaultService.grantKeys(req.params.id, getUserId(req), req.body.grants);
+    res.json({ success: true });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function renameDocumentCtrl(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const document = await vaultService.renameDocument(req.params.id, getUserId(req), req.body.sealedMeta);
+    res.json({ success: true, data: document });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function changeScopeCtrl(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const document = await vaultService.changeScope(req.params.id, getUserId(req), req.body);
     res.json({ success: true, data: document });
   } catch (error) {
     next(error);
@@ -87,20 +131,7 @@ export async function deleteDocumentCtrl(
   next: NextFunction
 ): Promise<void> {
   try {
-    await vaultService.deleteDocument(req.params.id, getUserId(req), getUserRole(req));
-    res.json({ success: true });
-  } catch (error) {
-    next(error);
-  }
-}
-
-export async function hardDeleteDocumentCtrl(
-  req: Request,
-  res: Response,
-  next: NextFunction
-): Promise<void> {
-  try {
-    await vaultService.hardDeleteDocument(req.params.id, getUserId(req), getUserRole(req));
+    await vaultService.deleteDocument(req.params.id, getUserId(req));
     res.json({ success: true });
   } catch (error) {
     next(error);
@@ -115,45 +146,6 @@ export async function getStorageUsageCtrl(
   try {
     const usage = await vaultService.getStorageUsage(getUserId(req));
     res.json({ success: true, data: usage });
-  } catch (error) {
-    next(error);
-  }
-}
-
-export async function storeUserKeyCtrl(
-  req: Request,
-  res: Response,
-  next: NextFunction
-): Promise<void> {
-  try {
-    const key = await vaultService.storeUserKey(getUserId(req), req.body);
-    res.status(201).json({ success: true, data: key });
-  } catch (error) {
-    next(error);
-  }
-}
-
-export async function getUserKeyCtrl(
-  req: Request,
-  res: Response,
-  next: NextFunction
-): Promise<void> {
-  try {
-    const key = await vaultService.getUserKey(getUserId(req));
-    res.json({ success: true, data: key });
-  } catch (error) {
-    next(error);
-  }
-}
-
-export async function getDocumentKeyCtrl(
-  req: Request,
-  res: Response,
-  next: NextFunction
-): Promise<void> {
-  try {
-    const key = await vaultService.getDocumentKey(req.params.id, getUserId(req));
-    res.json({ success: true, data: key });
   } catch (error) {
     next(error);
   }

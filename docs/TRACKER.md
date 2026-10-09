@@ -18,6 +18,16 @@ One place for work that is planned, waiting on someone, finished or dropped. Upd
 | T6 | Real-device store purchases | mobile, release | owner | [`docs/billing/device-test-checklist.md`](billing/device-test-checklist.md) |
 | T7 | Full unit and integration suites plus coverage in CI | ci | dev | Locally only targeted sets are run. |
 | T8 | Stripe PaymentSheet as an in-app alternative to hosted Checkout | mobile | dev | Optional. Hosted Checkout stays the default for store-policy reasons. |
+| T9 | Admin panel (W6 foundation with staff accounts and audit, W7 billing, requests, support and campaign switches, W8 metrics) | admin, server | dev | The remaining waves of the MVP next pass. W1–W5 and W9–W12 are done (see Done). |
+| T10 | Remove the shared `ADMIN_API_KEY` and `ADMIN_BILLING_API_KEY` routes | server | dev | After the admin panel covers their screens (W7). |
+| T12 | Sign every API request with the device identity key | server, mobile | dev | Makes a stolen session token useless on another device. After W9. |
+| T13 | External cryptography review | security | owner | Before any public "end-to-end encrypted" claim. Covers W10–W12. |
+| T14 | Re-encrypt household vault files when a member leaves | server, mobile | dev | Optional hardening after W12. |
+| T15 | "Streak about to break" campaign rule | server | dev | Left out of the first campaign engine; needs the dashboard streak logic shared with the job. |
+| T17 | Run the location-sharing device checklist on iOS and Android | mobile, release | owner | [`docs/location-sharing-device-checklist.md`](location-sharing-device-checklist.md). Needs a new development build (`expo-task-manager`, background location). |
+| T18 | Background location: store review notes and Privacy Policy wording | release, legal | owner, client | Apple and Google ask why "Always" location is needed: sharing runs only while a share the user started is active, and stops at the timer. Add to T4 and the submission notes. |
+| T19 | Rotate the account key and re-seal items when the key moves | e2e, security | engineering | Post-MVP. A moved or restored key is the same key, so a modified app that kept a copy still opens old items. Rotation on move closes that; see "Known limits" in [`docs/e2e/device-transfer.md`](e2e/device-transfer.md). |
+| T16 | Run the push device checklist on iOS and Android | mobile, release | owner | [`docs/push/device-test-checklist.md`](push/device-test-checklist.md). Needs a new development build (journal lock adds a native module). |
 
 ## Go-live steps
 
@@ -32,6 +42,8 @@ In order, after the checklist in [`docs/billing/runbooks.md`](billing/runbooks.m
 | G5 | Set `BILLING_ENABLED=true` in production and restart | dev |
 | G6 | Delete pre-launch test households, or move the ones testers keep to cohort `test` | dev |
 | G7 | Remove the `BILLING_ENABLED` switch from the code | dev |
+| G8 | Review the campaign copy and switch campaigns on (`PUT /api/v1/admin/campaigns/...`) | owner |
+| G9 | Optional: move backup protection to AWS KMS (~$2/month). Set `KEY_VAULT_PROVIDER=aws-kms` and the KMS vars, keep `KEY_VAULT_LOCAL_SECRET` until every backup has been re-protected. | owner |
 
 ## Waiting on a decision
 
@@ -47,6 +59,8 @@ In order, after the checklist in [`docs/billing/runbooks.md`](billing/runbooks.m
 | D3 | Checkout charges in USD only (Adaptive Pricing off). | 2026-10-08 |
 | D4 | A lapsed household gets a hard paywall but keeps Settings, profile, account deletion, help and the privacy policy. | 2026-10-08 |
 | D5 | Data is kept 12 months after a lapse, with an email warning before deletion (T2). | 2026-10-08 |
+| D6 | Campaign copy approved by owner, with the roo and due-tomorrow edits. | 2026-10-08 |
+| D7 | Household vault files are shared with everyone in the household, children included. | 2026-10-09 |
 
 ## Done
 
@@ -59,6 +73,12 @@ In order, after the checklist in [`docs/billing/runbooks.md`](billing/runbooks.m
 | Back button on the Subscription screen | PR #2 review |
 | `jest` and `jest-expo` moved to dev dependencies | PR #2 review |
 | Checkout locked to USD | PR #2 review |
+| W1 journal lock; W2 push fixes (chat push, live chat delivery, tap routing, badge, receipts, reminder de-dup) | PR #3 |
+| W3 push campaign; W4 service adapters; W9 device registry | PR #4 |
+| W5 location sharing (presets up to 8 h, background, live map, share without a request) | Large PR |
+| W10 private-space key, QR move, guess-capped backup; W11 encrypted journal; W12 shared household vault | PRs #7, #8, W12 PR |
+| Own-uploads-only check; vault key primary keys | PR #6 |
+| T20 Removed members can rejoin; old membership row is restored | feat/e2e-shared-vault |
 
 ## Dropped
 
@@ -67,4 +87,5 @@ In order, after the checklist in [`docs/billing/runbooks.md`](billing/runbooks.m
 | Moving old `rootaru_*` login keys to `rootaroo_*` on first launch | No released build used them; internal testers sign in once after updating. | 2026-10-08 |
 | Keeping `rootaru://` invite links working | Only testers received them; they get new invites. | 2026-10-08 |
 | Grandfathering or a free period for existing households | All existing households are test data (D1). | 2026-10-08 |
+| T11: Remove the server-held passphrase backup of the account key | Superseded: the backup now uses the guess-capped design in `docs/e2e/device-transfer.md` (key vault MAC and encryption, 10 tries, email code), so removing it is no longer wanted. | 2026-10-08 |
 | Read-only access for lapsed households | Every screen would need a read-only state, and it weakens the paywall. Data export (T1) covers access to data. Revisit if many households lapse. | 2026-10-08 |

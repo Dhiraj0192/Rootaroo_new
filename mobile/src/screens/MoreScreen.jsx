@@ -118,6 +118,10 @@ export default function MoreScreen({ navigation }) {
           onPress: go('NotificationPreferences'),
         },
         {
+          label: 'Privacy & security',
+          onPress: go('SecuritySettings'),
+        },
+        {
           label: 'Document vault',
           onPress: go('Vault'),
         },

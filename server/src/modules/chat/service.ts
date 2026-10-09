@@ -12,9 +12,11 @@ import {
   User,
 } from '../../database/models';
 import { NotFoundError, ForbiddenError, ValidationError } from '../../shared/utils/errors';
+import { assertOwnUploadKey } from '../../shared/utils/uploadKeys';
 import { getUserHousehold as getUserHouseholdCore } from '../../shared/utils/household';
 import { getSignedUrl } from '../../shared/utils/s3';
 import { getIO } from '../../shared/utils/socket';
+import { broadcastToParticipants, notifyChatMessage } from './push';
 import type {
   ChatReactionType,
   ConversationResponse,
@@ -384,6 +386,9 @@ export async function sendMessage(
     throw new ValidationError('Message must contain content or media');
   }
 
+  // Checked before anything is written: the key is later signed into a link.
+  if (body.mediaUrl) assertOwnUploadKey(body.mediaUrl, userId, ['chat/voice', 'chat/image']);
+
   let mediaUrl: string | null = null;
   let type: 'text' | 'image' | 'voice' = 'text';
   let durationSeconds: number | null = null;
@@ -437,13 +442,15 @@ export async function sendMessage(
 
   const response = await toMessageResponse(saved);
 
-  // FR-141: Broadcast via Socket.io to conversation room
-  try {
-    const io = getIO();
-    io.to(body.conversationId).emit('new_message', response);
-  } catch {
-    /* socket not available */
-  }
+  // FR-141: Broadcast via Socket.io to each participant's personal room
+  await broadcastToParticipants(body.conversationId, 'new_message', response);
+  void notifyChatMessage({
+    conversationId: body.conversationId,
+    senderId: userId,
+    senderName: response.sender.displayName,
+    type,
+    content: body.content || null,
+  });
 
   return response;
 }
@@ -604,13 +611,7 @@ export async function updateMessage(
 
   const response = await toMessageResponse(saved);
 
-  // Broadcast edit to conversation room
-  try {
-    const io = getIO();
-    io.to(conversationId).emit('message_edited', response);
-  } catch {
-    /* ignore */
-  }
+  await broadcastToParticipants(conversationId, 'message_edited', response);
 
   return response;
 }
@@ -645,16 +646,10 @@ export async function deleteMessage(
     await msg.destroy({ force: true, transaction });
   });
 
-  // Broadcast deletion event to conversation room
-  try {
-    const io = getIO();
-    io.to(conversationId).emit('message_deleted', {
-      id: messageId,
-      hardDelete: true,
-    });
-  } catch {
-    /* ignore */
-  }
+  await broadcastToParticipants(conversationId, 'message_deleted', {
+    id: messageId,
+    hardDelete: true,
+  });
 }
 
 // ── Add Reaction (FR-148) ──
@@ -679,14 +674,7 @@ export async function addReaction(
 
   const reactions = await getReactions(messageId);
 
-  // Broadcast to conversation room
-  try {
-    const conversationId = msg.get('conversationId') as string;
-    const io = getIO();
-    io.to(conversationId).emit('reaction_added', { messageId, reactions, userId, emoji });
-  } catch {
-    /* ignore */
-  }
+  await broadcastToParticipants(msg.get('conversationId') as string, 'reaction_added', { messageId, reactions, userId, emoji });
 
   return reactions;
 }
@@ -709,9 +697,7 @@ export async function removeReaction(
   try {
     const msg = await ChatMessage.findByPk(messageId);
     if (msg) {
-      const conversationId = msg.get('conversationId') as string;
-      const io = getIO();
-      io.to(conversationId).emit('reaction_removed', { messageId, reactions, userId, emoji });
+      await broadcastToParticipants(msg.get('conversationId') as string, 'reaction_removed', { messageId, reactions, userId, emoji });
     }
   } catch {
     /* ignore */

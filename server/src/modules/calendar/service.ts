@@ -235,6 +235,10 @@ export async function updateEvent(
   if (body.description !== undefined) event.description = body.description;
   if (body.startsAt !== undefined) {
     const s = splitDateTime(body.startsAt);
+    // Rescheduled events should remind again.
+    if (String(event.eventDate) !== s.date || event.startTime !== s.time) {
+      event.reminderSentAt = null;
+    }
     event.eventDate = s.date as unknown as Date;
     event.startTime = s.time;
   }
@@ -420,7 +424,7 @@ export async function notifyUpcomingEvents(): Promise<number> {
   ])];
 
   const events = await CalendarEvent.findAll({
-    where: { eventDate: { [Op.in]: candidateDates } },
+    where: { eventDate: { [Op.in]: candidateDates }, reminderSentAt: null },
     include: [{ model: Household, as: 'household', attributes: ['timezone'] }],
   });
   const entitled = await isEntitledBatch(events.map((e) => e.householdId));
@@ -437,17 +441,35 @@ export async function notifyUpcomingEvents(): Promise<number> {
     const startsAt = fromZonedTime(`${ev.eventDate}T${startTime}`, timezone);
     if (startsAt < now || startsAt > inOneHour) continue;
 
+    // Claim before sending: a concurrent run loses the race and skips.
+    const [claimed] = await CalendarEvent.update(
+      { reminderSentAt: now },
+      { where: { id: ev.id, reminderSentAt: null } },
+    );
+    if (claimed !== 1) continue;
+
     const householdId = ev.householdId;
     const title = ev.title;
-    notificationService
-      .notifyHousehold(
+    try {
+      // notifyHousehold swallows errors by default; throwOnError lets a failed
+      // send surface so the claim can be released and the next run retries.
+      await notificationService.notifyHousehold(
         householdId,
         'calendar',
         'Event starting soon',
         `${title} starts at ${startTime.slice(0, 5)}`,
         { type: 'calendar', eventId: ev.id },
-      )
-      .catch((e: Error) => logger.warn('[Calendar] Reminder push failed:', e.message));
+        undefined,
+        { throwOnError: true },
+      );
+    } catch (e) {
+      logger.warn('[Calendar] Reminder push failed:', (e as Error).message);
+      await CalendarEvent.update(
+        { reminderSentAt: null },
+        { where: { id: ev.id, reminderSentAt: now } },
+      );
+      continue;
+    }
     sent += 1;
   }
   return sent;

@@ -16,9 +16,11 @@ import taskRouter from './modules/task/routes';
 import groceryRouter from './modules/grocery/routes';
 import todoRouter from './modules/todo/routes';
 import notificationRouter from './modules/notification/routes';
+import deviceRouter from './modules/device/routes';
 import dashboardRouter from './modules/dashboard/routes';
 import expenseRouter from './modules/expense/routes';
 import vaultRouter from './modules/vault/routes';
+import { accountKeyRouter, keyTransferRouter, keyBackupRouter } from './modules/e2e/routes';
 import chatRouter from './modules/chat/routes';
 import eventRouter from './modules/calendar/routes';
 import calendarFeedRouter from './modules/calendar/feedRoutes';
@@ -27,11 +29,13 @@ import billingRouter from './modules/billing/routes';
 import billingWebhookRouter from './modules/billing/webhookRoutes';
 import checkInRouter from './modules/checkin/routes';
 import pingRouter from './modules/ping/routes';
+import locationShareRouter from './modules/location-share/routes';
 import placeRouter from './modules/place/routes';
 import journalRouter from './modules/journal/routes';
 import adminRouter from './modules/admin/routes';
 import billingAdminRouter from './modules/billing/admin/routes';
 import weatherRouter from './modules/weather/routes';
+import campaignRouter from './modules/campaign/routes';
 import swaggerUi from 'swagger-ui-express';
 import { swaggerSpec } from './config/swagger';
 import logger from './shared/utils/logger';
@@ -143,6 +147,7 @@ if (shouldServeUploads(env.nodeEnv)) {
 
 // ── API Routes ──
 app.use('/api/v1/auth', authRouter);
+app.use('/api/v1/devices', deviceRouter);
 app.use('/api/v1/households', householdRouter);
 app.use('/api/v1/feed', feedRouter);
 app.use('/api/v1/tasks', taskRouter);
@@ -150,6 +155,9 @@ app.use('/api/v1/groceries', groceryRouter);
 app.use('/api/v1/todos', todoRouter);
 app.use('/api/v1/expenses', expenseRouter);
 app.use('/api/v1/vault', vaultRouter);
+app.use('/api/v1/account-key', accountKeyRouter);
+app.use('/api/v1/key-transfer', keyTransferRouter);
+app.use('/api/v1/key-backup', keyBackupRouter);
 app.use('/api/v1/notifications', notificationRouter);
 app.use('/api/v1/dashboard', dashboardRouter);
 app.use('/api/v1/events', eventRouter);
@@ -157,12 +165,14 @@ app.use('/api/v1/calendar-feed', calendarFeedRouter);
 app.use('/api/v1/chat', chatRouter);
 app.use('/api/v1/checkins', checkInRouter);
 app.use('/api/v1/pings', pingRouter);
+app.use('/api/v1/location-shares', locationShareRouter);
 app.use('/api/v1/places', placeRouter);
 app.use('/api/v1/journal', journalRouter);
 app.use('/api/v1/billing', billingRouter);
 app.use('/api/v1/admin', adminRouter);
 app.use('/api/v1/billing-admin', billingAdminRouter);
 app.use('/api/v1/weather', weatherRouter);
+app.use('/api/v1/campaigns', campaignRouter);
 
 // ── Swagger Docs ──
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));

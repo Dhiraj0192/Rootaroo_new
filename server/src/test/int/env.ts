@@ -17,3 +17,21 @@ delete process.env.STRIPE_LIVE_SECRET_KEY;
 delete process.env.STRIPE_LIVE_WEBHOOK_SECRETS;
 process.env.ADMIN_API_KEY = 'int-admin-key-0123456789abcdef0123456789';
 process.env.ADMIN_BILLING_API_KEY = 'int-billing-key-0123456789abcdef01234567';
+process.env.KEY_VAULT_PROVIDER = 'local';
+process.env.KEY_VAULT_LOCAL_SECRET = 'int-test-key-vault-secret-0123456789abcdef';
+// Integration tests import app.ts directly (not index.ts), so providers are initialised here.
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+require('../../services').initServices({
+  email: 'log', sms: 'log', push: 'log', storage: 's3', weather: 'open-meteo', monitoring: 'console', keyVault: 'local',
+});
+
+// No object store in the test harness: uploads and deletes are swallowed here; signing stays real (it makes no network call).
+jest.mock('../../shared/utils/s3', () => {
+  const actual = jest.requireActual('../../shared/utils/s3');
+  const { randomUUID } = jest.requireActual('crypto');
+  return {
+    ...actual,
+    uploadBuffer: async (_buffer: Buffer, folder: string) => ({ key: `${folder}/${randomUUID()}` }),
+    deleteObject: async () => undefined,
+  };
+});

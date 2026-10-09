@@ -2,6 +2,8 @@ import axios from 'axios';
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 import { useAuthStore } from '../store/authStore';
+import { deviceHeaders } from '../device/deviceInfo';
+import { classifyAuthError } from './authErrors';
 
 // Expo's dev client already knows a reachable host for this machine — it just
 // downloaded the JS bundle from it. Deriving the API host from it means a
@@ -48,7 +50,10 @@ const apiClient = axios.create({
  * first-screen request 401 and retry.
  */
 export async function requestTokenRefresh(refreshToken, timeout = 15000) {
-  const { data } = await axios.post(`${BASE_URL}/auth/refresh`, { refreshToken }, { timeout });
+  const { data } = await axios.post(`${BASE_URL}/auth/refresh`, { refreshToken }, {
+    timeout,
+    headers: deviceHeaders(),
+  });
   return data.data;
 }
 
@@ -106,12 +111,19 @@ apiClient.interceptors.request.use(
       } catch {
         /* Intl unavailable — server falls back to the household's stored zone */
       }
-      Object.entries(platformHeaders()).forEach(([k, v]) => { config.headers[k] = v; });
+      Object.entries({ ...platformHeaders(), ...deviceHeaders() }).forEach(([k, v]) => { config.headers[k] = v; });
     }
     return config;
   },
   (error) => Promise.reject(error),
 );
+
+/** This phone was signed out from another one: drop the private-space key, then sign out. */
+function signOutRevokedDevice() {
+  // Lazy require: the store imports the API modules, which import this client.
+  try { require('../store/privateSpaceStore').usePrivateSpaceStore.getState().forget(); } catch { /* not loaded yet */ }
+  useAuthStore.getState().logout();
+}
 
 apiClient.interceptors.response.use(
   (response) => response,
@@ -120,7 +132,12 @@ apiClient.interceptors.response.use(
       try { paymentRequiredHandler(error.response.data); } catch { /* never block the original rejection */ }
     }
     const original = error.config;
-    if (error.response?.status === 401 && !original._retry) {
+    const authKind = classifyAuthError(error);
+    if (authKind === 'device_revoked') {
+      signOutRevokedDevice();
+      return Promise.reject(error);
+    }
+    if (authKind === 'expired' && !original._retry) {
       if (isRefreshing) {
         // Another request is already refreshing — queue this one
         return new Promise((resolve, reject) => {
@@ -155,7 +172,8 @@ apiClient.interceptors.response.use(
         return apiClient(original);
       } catch (refreshError) {
         onRefreshFailed(refreshError);
-        useAuthStore.getState().logout();
+        if (classifyAuthError(refreshError) === 'device_revoked') signOutRevokedDevice();
+        else useAuthStore.getState().logout();
         return Promise.reject(error);
       } finally {
         isRefreshing = false;

@@ -16,6 +16,7 @@ class CalendarEvent extends Model {
   declare googleEventId: string | null;
   declare externalProvider: CalendarProvider | null;
   declare externalEventId: string | null;
+  declare reminderSentAt: Date | null;
   declare createdAt: CreationOptional<Date>;
   declare updatedAt: CreationOptional<Date>;
   declare deletedAt: Date | null;
@@ -85,6 +86,11 @@ CalendarEvent.init(
       type: DataTypes.STRING(255),
       allowNull: true,
       field: 'external_event_id',
+    },
+    reminderSentAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      field: 'reminder_sent_at',
     },
     createdAt: {
       type: DataTypes.DATE,

@@ -1,4 +1,6 @@
 jest.mock('../../billing/socketGate', () => ({ emitToHousehold: jest.fn().mockResolvedValue(undefined) }));
+jest.mock('../../notification/service', () => ({ sendToUser: jest.fn().mockResolvedValue(undefined) }));
+import { sendToUser } from '../../notification/service';
 import {
   createTask,
   getTasks,
@@ -241,6 +243,46 @@ describe('Task Service', () => {
 
       expect(result.status).toBe('completed');
       expect(result.completedAt).toBeTruthy();
+    });
+
+    it('tells the creator when someone else finishes their task', async () => {
+      (modelsMock.HouseholdMember.findOne as jest.Mock).mockResolvedValue({ householdId });
+      const completer = { ...mockUser, id: userId, displayName: 'Ravi' };
+      const task = fakeTask({
+        createdBy: otherUserId,
+        title: 'Take out bins',
+        get: jest.fn((key: string) => {
+          if (key === 'creator') return { ...mockUser, id: otherUserId };
+          if (key === 'completer') return null;
+          if (key === 'assignees') return [completer];
+          return undefined;
+        }),
+      });
+      (modelsMock.Task.findOne as jest.Mock).mockResolvedValue(task);
+
+      await completeTask(taskId, userId);
+
+      expect(sendToUser).toHaveBeenCalledWith(
+        otherUserId, 'task_completed', 'Task done', 'Ravi finished: Take out bins',
+        { type: 'task_completed', taskId },
+      );
+    });
+
+    it('does not notify when the creator finishes their own task', async () => {
+      (modelsMock.HouseholdMember.findOne as jest.Mock).mockResolvedValue({ householdId });
+      const task = fakeTask({
+        get: jest.fn((key: string) => {
+          if (key === 'creator') return mockUser;
+          if (key === 'completer') return null;
+          if (key === 'assignees') return [mockUser];
+          return undefined;
+        }),
+      });
+      (modelsMock.Task.findOne as jest.Mock).mockResolvedValue(task);
+
+      await completeTask(taskId, userId);
+
+      expect(sendToUser).not.toHaveBeenCalledWith(expect.anything(), 'task_completed', expect.anything(), expect.anything(), expect.anything());
     });
 
     it('re-opens a completed task', async () => {

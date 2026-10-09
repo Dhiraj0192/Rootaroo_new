@@ -12,11 +12,6 @@ class PingRequest extends Model {
   declare note: string | null;
   declare checkInId: string | null;
   declare respondedAt: Date | null;
-  declare shareDurationMinutes: number | null;
-  declare shareExpiresAt: Date | null;
-  declare liveLatitude: number | null;
-  declare liveLongitude: number | null;
-  declare liveUpdatedAt: Date | null;
   declare createdAt: CreationOptional<Date>;
 }
 
@@ -60,31 +55,6 @@ PingRequest.init(
       type: DataTypes.DATE,
       allowNull: true,
       field: 'responded_at',
-    },
-    shareDurationMinutes: {
-      type: DataTypes.INTEGER,
-      allowNull: true,
-      field: 'share_duration_minutes',
-    },
-    shareExpiresAt: {
-      type: DataTypes.DATE,
-      allowNull: true,
-      field: 'share_expires_at',
-    },
-    liveLatitude: {
-      type: DataTypes.DECIMAL(10, 7),
-      allowNull: true,
-      field: 'live_latitude',
-    },
-    liveLongitude: {
-      type: DataTypes.DECIMAL(10, 7),
-      allowNull: true,
-      field: 'live_longitude',
-    },
-    liveUpdatedAt: {
-      type: DataTypes.DATE,
-      allowNull: true,
-      field: 'live_updated_at',
     },
     createdAt: {
       type: DataTypes.DATE,

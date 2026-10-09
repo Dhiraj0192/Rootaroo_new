@@ -13,6 +13,10 @@ import { onPurchaserDeleted, reportPurchaserDeletionFailure } from '../billing/d
 import { jwtVerify, createRemoteJWKSet } from 'jose';
 import { hashOtpCode, MAX_OTP_ATTEMPTS } from '../../shared/utils/otp';
 import { UnauthorizedError, ConflictError, NotFoundError, AppError } from '../../shared/utils/errors';
+import { assertOwnUploadKey } from '../../shared/utils/uploadKeys';
+import { getEmail, getSms } from '../../services';
+import { upsertDevice, touchDevice } from '../device/service';
+import type { DeviceInfo } from '../device/types';
 import type {
   RegisterBody, LoginBody, AuthResponse, AuthTokens, UserResponse, UpdateProfileBody, GoogleAuthBody,
   AppleAuthBody,
@@ -21,6 +25,8 @@ import type {
 } from './types';
 
 // ── Helpers ──
+
+const NO_DEVICE: DeviceInfo = { deviceKey: null, name: null, platform: null, appVersion: null };
 
 async function toUserResponse(user: User): Promise<UserResponse> {
   return {
@@ -42,36 +48,36 @@ async function toUserResponse(user: User): Promise<UserResponse> {
   };
 }
 
-function generateAccessToken(user: User): string {
+function generateAccessToken(user: User, deviceId: string): string {
   return jwt.sign(
-    { userId: user.id, email: user.email, role: user.role },
+    { userId: user.id, email: user.email, role: user.role, deviceId },
     env.jwt.accessSecret,
     { expiresIn: env.jwt.accessExpiry as any },
   );
 }
 
-async function generateRefreshToken(userId: string): Promise<string> {
+async function generateRefreshToken(userId: string, deviceId: string): Promise<string> {
   const token = uuidv4();
-  // Clean up old tokens for this user (keep last 5)
-  const count = await RefreshToken.count({ where: { userId } });
-  if (count >= 5) {
-    const oldest = await RefreshToken.findAll({
-      where: { userId },
-      order: [['createdAt', 'ASC']],
-      limit: count - 4,
-    });
-    await RefreshToken.destroy({
-      where: { id: { [Op.in]: oldest.map((t) => t.id) } },
-    });
-  }
+  // One session per device: signing in again replaces that device's token.
+  await RefreshToken.destroy({ where: { userId, deviceId } });
 
   await RefreshToken.create({
     id: uuidv4(),
     userId,
     token,
+    deviceId,
     expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
   });
   return token;
+}
+
+/** Shared tail of every sign-in path: register the device, then issue its tokens. */
+async function issueSession(user: User, device?: DeviceInfo): Promise<AuthTokens> {
+  const { id: deviceId } = await upsertDevice(user.id, device ?? NO_DEVICE);
+  return {
+    accessToken: generateAccessToken(user, deviceId),
+    refreshToken: await generateRefreshToken(user.id, deviceId),
+  };
 }
 
 async function rotateRefreshToken(oldToken: string): Promise<AuthTokens> {
@@ -89,18 +95,35 @@ async function rotateRefreshToken(oldToken: string): Promise<AuthTokens> {
     throw new UnauthorizedError('Refresh token expired — please log in again');
   }
 
+  // Sessions from before devices existed can't be tied to one, so they end here.
+  if (!record.deviceId) {
+    await record.destroy();
+    throw new UnauthorizedError('Invalid refresh token');
+  }
+
+  if (!(await touchDevice(record.deviceId))) {
+    await record.destroy();
+    throw new UnauthorizedError('This device was signed out', 'DEVICE_REVOKED');
+  }
+
   // Rotate: delete old, issue new
   await record.destroy();
   const user = record.user;
-  const accessToken = generateAccessToken(user);
-  const refreshToken = await generateRefreshToken(user.id);
+  const accessToken = generateAccessToken(user, record.deviceId);
+  const refreshToken = await generateRefreshToken(user.id, record.deviceId);
+
+  // A removal that landed after the check above would otherwise leave a live session.
+  if (!(await touchDevice(record.deviceId))) {
+    await RefreshToken.destroy({ where: { deviceId: record.deviceId } });
+    throw new UnauthorizedError('This device was signed out', 'DEVICE_REVOKED');
+  }
 
   return { accessToken, refreshToken };
 }
 
 // ── Public Service Methods ──
 
-export async function register(body: RegisterBody): Promise<AuthResponse> {
+export async function register(body: RegisterBody, device?: DeviceInfo): Promise<AuthResponse> {
   const { email, password } = body;
   const displayName = body.displayName?.trim() || email.split('@')[0];
 
@@ -129,8 +152,7 @@ export async function register(body: RegisterBody): Promise<AuthResponse> {
     isVerified: false,
   });
 
-  const accessToken = generateAccessToken(user);
-  const refreshToken = await generateRefreshToken(user.id);
+  const { accessToken, refreshToken } = await issueSession(user, device);
 
   // Auto-send verification code for new registrations
   const code = await sendVerification(user.id);
@@ -138,7 +160,7 @@ export async function register(body: RegisterBody): Promise<AuthResponse> {
   return { user: await toUserResponse(user), tokens: { accessToken, refreshToken }, verificationCode: code };
 }
 
-export async function login(body: LoginBody): Promise<AuthResponse> {
+export async function login(body: LoginBody, device?: DeviceInfo): Promise<AuthResponse> {
   const { email, password } = body;
 
   const user = await User.findOne({ where: { email: email.toLowerCase() } });
@@ -155,8 +177,7 @@ export async function login(body: LoginBody): Promise<AuthResponse> {
   user.lastLoginAt = new Date();
   await user.save();
 
-  const accessToken = generateAccessToken(user);
-  const refreshToken = await generateRefreshToken(user.id);
+  const { accessToken, refreshToken } = await issueSession(user, device);
 
   return { user: await toUserResponse(user), tokens: { accessToken, refreshToken } };
 }
@@ -181,6 +202,9 @@ export async function updateProfile(
 ): Promise<UserResponse> {
   const user = await User.findByPk(userId);
   if (!user) throw new NotFoundError('User');
+
+  // Own upload, or a Google/Apple photo link; never an arbitrary storage key.
+  if (body.avatarUrl) assertOwnUploadKey(body.avatarUrl, userId, ['avatars'], { allowExternalUrl: true });
 
   if (body.displayName !== undefined) user.displayName = body.displayName;
   if (body.avatarUrl !== undefined) user.avatarUrl = body.avatarUrl;
@@ -209,7 +233,7 @@ export async function updateProfile(
 
 const GOOGLE_JWKS = createRemoteJWKSet(new URL('https://www.googleapis.com/oauth2/v3/certs'));
 
-export async function googleAuth(body: GoogleAuthBody): Promise<AuthResponse> {
+export async function googleAuth(body: GoogleAuthBody, device?: DeviceInfo): Promise<AuthResponse> {
   const { idToken } = body;
 
   // The mobile client obtains this ID token directly from Google's native
@@ -281,8 +305,7 @@ export async function googleAuth(body: GoogleAuthBody): Promise<AuthResponse> {
     });
   }
 
-  const accessToken = generateAccessToken(user);
-  const refreshToken = await generateRefreshToken(user.id);
+  const { accessToken, refreshToken } = await issueSession(user, device);
 
   return { user: await toUserResponse(user), tokens: { accessToken, refreshToken } };
 }
@@ -291,7 +314,7 @@ export async function googleAuth(body: GoogleAuthBody): Promise<AuthResponse> {
 
 const APPLE_JWKS = createRemoteJWKSet(new URL('https://appleid.apple.com/auth/keys'));
 
-export async function appleAuth(body: AppleAuthBody): Promise<AuthResponse> {
+export async function appleAuth(body: AppleAuthBody, device?: DeviceInfo): Promise<AuthResponse> {
   const { idToken, displayName: providedName } = body;
 
   // The mobile client obtains this identity token directly from Apple's
@@ -356,8 +379,7 @@ export async function appleAuth(body: AppleAuthBody): Promise<AuthResponse> {
     });
   }
 
-  const accessToken = generateAccessToken(user);
-  const refreshToken = await generateRefreshToken(user.id);
+  const { accessToken, refreshToken } = await issueSession(user, device);
 
   return { user: await toUserResponse(user), tokens: { accessToken, refreshToken } };
 }
@@ -388,7 +410,7 @@ export async function sendVerification(userId: string): Promise<string | undefin
   // If Resend is not configured, return the code for dev-mode display only —
   // never in production, where a missing Resend config should be a delivery
   // failure, not a JSON-response leak of a live verification code.
-  if (!env.resend.apiKey) {
+  if (getEmail().name === 'log') {
     if (env.nodeEnv !== 'production') {
       console.warn(`[DEV] Email verification code for ${user.email}: ${code}`);
       return code;
@@ -459,7 +481,7 @@ export async function forgotPassword(body: ForgotPasswordBody): Promise<void> {
     expiresAt: new Date(Date.now() + 15 * 60 * 1000),
   });
 
-  if (!env.resend.apiKey) {
+  if (getEmail().name === 'log') {
     if (env.nodeEnv !== 'production') {
       console.warn(`[DEV] Password reset code for ${user.email}: ${code}`);
     } else {
@@ -681,7 +703,7 @@ async function issuePhoneOtp(phone: string, userId: string | null): Promise<stri
     expiresAt: new Date(Date.now() + 15 * 60 * 1000),
   });
 
-  if (!env.twilio.accountSid || !env.twilio.authToken || !env.twilio.fromNumber) {
+  if (getSms().name !== 'twilio') {
     if (env.nodeEnv !== 'production') {
       console.warn(`[DEV] Phone OTP for ${normalized}: ${code}`);
       return code;
@@ -701,7 +723,7 @@ async function issuePhoneOtp(phone: string, userId: string | null): Promise<stri
  * be wasted (no verify screen is shown at this point) and would invalidate
  * itself the moment the real send happens later.
  */
-export async function registerPhone(body: RegisterPhoneBody): Promise<AuthResponse> {
+export async function registerPhone(body: RegisterPhoneBody, device?: DeviceInfo): Promise<AuthResponse> {
   const phone = normalizePhone(body.phone);
   if (phone.length < 8) throw new AppError(400, 'Invalid phone number');
 
@@ -732,8 +754,12 @@ export async function registerPhone(body: RegisterPhoneBody): Promise<AuthRespon
     throw new ConflictError('An account with this phone number already exists. Please sign in.');
   }
   if (!user) {
+    const id = uuidv4();
+    // The account doesn't exist yet, so nothing can have been uploaded under
+    // it: only an outside photo link is acceptable here.
+    if (body.avatarUrl) assertOwnUploadKey(body.avatarUrl, id, ['avatars'], { allowExternalUrl: true });
     user = await User.create({
-      id: uuidv4(),
+      id,
       email,
       passwordHash: '',
       displayName: body.displayName,
@@ -751,8 +777,7 @@ export async function registerPhone(body: RegisterPhoneBody): Promise<AuthRespon
     });
   }
 
-  const accessToken = generateAccessToken(user);
-  const refreshToken = await generateRefreshToken(user.id);
+  const { accessToken, refreshToken } = await issueSession(user, device);
 
   return {
     user: await toUserResponse(user),
@@ -795,7 +820,7 @@ export async function sendPhoneOtp(body: SendPhoneOtpBody, userId?: string): Pro
   return issuePhoneOtp(phone, user?.id || null);
 }
 
-export async function verifyPhoneOtp(body: VerifyPhoneOtpBody, userId?: string): Promise<AuthResponse> {
+export async function verifyPhoneOtp(body: VerifyPhoneOtpBody, userId?: string, device?: DeviceInfo): Promise<AuthResponse> {
   const phone = normalizePhone(body.phone);
 
   const record = await PhoneVerification.findOne({
@@ -833,8 +858,7 @@ export async function verifyPhoneOtp(body: VerifyPhoneOtpBody, userId?: string):
   await user.save();
 
   // Issue auth tokens for login flow (unauthenticated) or refresh for authenticated
-  const accessToken = generateAccessToken(user);
-  const refreshToken = await generateRefreshToken(user.id);
+  const { accessToken, refreshToken } = await issueSession(user, device);
 
   return { user: await toUserResponse(user), tokens: { accessToken, refreshToken } };
 }

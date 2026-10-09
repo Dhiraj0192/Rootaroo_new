@@ -5,9 +5,9 @@ import { notifyUpcomingEvents } from '../modules/calendar/service';
 /**
  * FR-186: Push notification for events starting within 1 hour.
  * Runs every 15 minutes; the service scans events starting in [now, now+1h]
- * and notifies the whole household. Idempotent per window by design —
- * repeated runs inside the same hour may re-notify; acceptable for P0,
- * and dedupe can be added later via a `last_notified_at` column.
+ * and notifies the whole household. Each event is claimed atomically via
+ * `reminder_sent_at`, so it is notified once even across overlapping runs;
+ * rescheduling an event clears the column to re-arm the reminder.
  */
 export function startEventReminderJob(): void {
   cron.schedule('*/15 * * * *', async () => {

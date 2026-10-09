@@ -5,6 +5,8 @@ import { NavigationContainer, DarkTheme } from '@react-navigation/native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import RootNavigator from './src/navigation/RootNavigator';
+import { navigationRef } from './src/shared/navigation/navigationRef';
+import { useNotificationRouting, flushPendingNotification } from './src/shared/notificationRouting';
 import AlertHost from './src/components/AlertHost';
 import PermissionHost from './src/components/PermissionHost';
 import { useAppFonts } from './src/shared/theme/useAppFonts';
@@ -43,6 +45,7 @@ const navigationTheme = {
 
 export default function App() {
   const { fontsLoaded, fontError } = useAppFonts();
+  useNotificationRouting(navigationRef);
 
   // Hold rendering until brand fonts are ready (or font loading failed).
   if (!fontsLoaded && !fontError) {
@@ -57,7 +60,11 @@ export default function App() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <QueryClientProvider client={queryClient}>
         <SafeAreaProvider>
-          <NavigationContainer theme={navigationTheme}>
+          <NavigationContainer
+            ref={navigationRef}
+            theme={navigationTheme}
+            onReady={() => flushPendingNotification(navigationRef)}
+          >
             <RootNavigator />
           </NavigationContainer>
           <AlertHost />

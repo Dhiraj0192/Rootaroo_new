@@ -17,6 +17,7 @@ import { format, isToday, isYesterday, parseISO } from 'date-fns';
 import { colors, fonts, goldButton, radius, spacing, withAlpha } from '../shared/theme';
 import { GoldFill } from '../shared/components/GoldButton';
 import { journalApi } from '../shared/api/journal';
+import { getJournalRepo } from '../shared/journal/journalRepo';
 import { moodById, moodIcon } from '../shared/constants/journalMoods';
 import GlassCard from '../shared/components/GlassCard';
 import EmptyState from '../components/EmptyState';
@@ -70,15 +71,13 @@ function StreakRing({ streak, bestStreak }) {
   );
 }
 
-/** One square in the last-7-days strip: written days carry their mood's tint. */
+/** One square in the last-7-days strip: days with an entry are filled. */
 function DaySquare({ day, isLast }) {
-  const mood = moodById(day.mood);
   return (
     <View
       style={[
         styles.daySquare,
-        day.written && styles.daySquareWritten,
-        day.written && mood && { backgroundColor: withAlpha(colors.goldGlow, 0.1 + (mood.score / 5) * 0.28) },
+        day.wrote && styles.daySquareWritten,
         isLast && styles.daySquareToday,
       ]}
     />
@@ -114,7 +113,7 @@ function EntryRow({ entry, onPress, isLast }) {
           <Text style={styles.entryTime}>{format(date, 'h:mmaaa')}</Text>
         </View>
         <Text style={styles.entrySnippet} numberOfLines={2}>
-          {entry.content?.trim() || 'Photo entry'}
+          {entry.unreadable ? entry.text : entry.text?.trim() || 'Photo entry'}
         </Text>
       </View>
     </TouchableOpacity>
@@ -129,17 +128,26 @@ export default function JournalScreen({ navigation }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
+  const [wordsThisMonth, setWordsThisMonth] = useState(null);
 
   const load = useCallback(async () => {
     try {
       // Stats and the recent list are independent reads; failing either one
       // should not blank the other, so they settle separately.
+      const repo = getJournalRepo();
       const [statsResult, listResult] = await Promise.allSettled([
         journalApi.stats(),
-        journalApi.list({ limit: 5 }),
+        repo.loadPage({ limit: 5 }),
       ]);
       if (statsResult.status === 'fulfilled') setStats(statsResult.value);
-      if (listResult.status === 'fulfilled') setEntries(listResult.value.entries);
+      if (listResult.status === 'fulfilled') {
+        setEntries(listResult.value.entries);
+        // Words need the decrypted text, so they fill in after the screen is up.
+        repo
+          .monthView(format(new Date(), 'yyyy-MM'))
+          .then((view) => setWordsThisMonth(view.wordsThisMonth))
+          .catch(() => {});
+      }
       setError(
         statsResult.status === 'rejected' && listResult.status === 'rejected'
           ? 'Could not load your journal.'
@@ -234,7 +242,8 @@ export default function JournalScreen({ navigation }) {
                 </Text>
                 <Text style={styles.streakMeta}>
                   {stats.entriesThisMonth} {stats.entriesThisMonth === 1 ? 'entry' : 'entries'} this
-                  month · {stats.wordsThisMonth.toLocaleString()} words
+                  month
+                  {wordsThisMonth === null ? '' : ` · ${wordsThisMonth.toLocaleString()} words`}
                 </Text>
               </View>
             </View>

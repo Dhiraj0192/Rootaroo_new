@@ -2,6 +2,7 @@ import { io } from 'socket.io-client';
 import apiClient from './api/client';
 import { useFeedStore } from './store/feedStore';
 import { usePingStore } from './store/pingStore';
+import { useLocationShareStore } from './store/locationShareStore';
 import { useEngagementStore } from './store/engagementStore';
 
 let socket = null;
@@ -79,15 +80,17 @@ function attachListeners() {
     useEngagementStore.getState().bump();
   });
 
-  // Live location ticks + early-stop during an active timed share — same
-  // shape as ping:response (full PingRequestResponse), so the same
-  // upsertOutgoing keeps the requester's copy of the request current.
-  socket.on('ping:location-update', (request) => {
-    usePingStore.getState().upsertOutgoing(request);
+  socket.on('location:share-started', (share) => {
+    useLocationShareStore.getState().onStarted(share);
+    useEngagementStore.getState().bump();
   });
 
-  socket.on('ping:share-ended', (request) => {
-    usePingStore.getState().upsertOutgoing(request);
+  socket.on('location:update', (share) => {
+    useLocationShareStore.getState().onUpdate(share);
+  });
+
+  socket.on('location:share-ended', (share) => {
+    useLocationShareStore.getState().onEnded(share);
   });
 
   // Streak/activity/leaderboard-relevant completions — no per-event UI to

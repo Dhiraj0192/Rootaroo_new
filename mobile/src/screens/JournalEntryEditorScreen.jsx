@@ -9,15 +9,15 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   StatusBar,
-  Image,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { ensureCamera } from '../shared/permissions';
 import { format, parseISO } from 'date-fns';
 import { colors, fonts, radius, spacing, withAlpha } from '../shared/theme';
-import { journalApi } from '../shared/api/journal';
+import { getJournalRepo, isKeyMissing } from '../shared/journal/journalRepo';
 import { MOODS } from '../shared/constants/journalMoods';
 import { showAlert } from '../shared/services/themedAlert';
 import { KEYBOARD_BEHAVIOR } from '../shared/components/KeyboardAware';
@@ -41,33 +41,62 @@ const ATTACH_ACTIONS = [
  * Compose or edit one entry.
  *
  * Route params:
- *   `entry`   — the full entry object when editing (passed straight from the
- *               detail screen, so opening the editor costs no extra fetch)
+ *   `entryId` — the entry to edit. Only the id travels in navigation params:
+ *               the decrypted text and the entry key are loaded from the repo
+ *               here, so they never sit in the navigation state.
  *   `prompt`  — the day's writing prompt, when arrived at from the prompt card
  */
 export default function JournalEntryEditorScreen({ navigation, route }) {
   const insets = useSafeAreaInsets();
-  const existing = route.params?.entry || null;
+  const entryId = route.params?.entryId || null;
   const prompt = route.params?.prompt || null;
-  const isEditing = !!existing;
+  const isEditing = !!entryId;
 
-  const [content, setContent] = useState(existing?.content || '');
-  const [mood, setMood] = useState(existing?.mood || null);
-  const [tags, setTags] = useState(existing?.tags || []);
+  const [existing, setExisting] = useState(null);
+  const [loadState, setLoadState] = useState(entryId ? 'loading' : 'ready');
+  const [content, setContent] = useState('');
+  const [mood, setMood] = useState(null);
+  const [tags, setTags] = useState([]);
   const [tagDraft, setTagDraft] = useState(null);
   const [saving, setSaving] = useState(false);
-  // Existing attachments keep their server id and signed preview URL; newly
-  // picked ones carry the local uri plus, once uploaded, the S3 descriptor the
-  // save call needs.
-  const [media, setMedia] = useState(() =>
-    (existing?.media || []).map((m) => ({
-      key: m.id,
-      id: m.id,
-      previewUri: m.thumbnailUrl || m.mediaUrl,
-      uploading: false,
-    })),
-  );
+  // Existing attachments are decrypted for preview; newly picked ones stay local
+  // until Save, which encrypts and uploads them.
+  const [media, setMedia] = useState([]);
   const tagInputRef = useRef(null);
+
+  const loadExisting = useCallback(async () => {
+    setLoadState('loading');
+    try {
+      const entry = await getJournalRepo().loadEntry(entryId);
+      if (entry.unreadable) {
+        setLoadState('failed');
+        return;
+      }
+      setExisting(entry);
+      setContent(entry.text || '');
+      setMood(entry.mood || null);
+      setTags(entry.tags || []);
+      setMedia((entry.media || []).map((m) => ({ key: m.id, id: m.id, previewUri: null })));
+      setLoadState('ready');
+    } catch {
+      setLoadState('failed');
+    }
+  }, [entryId]);
+
+  useEffect(() => {
+    if (entryId) loadExisting();
+  }, [entryId, loadExisting]);
+
+  // Picked photos are copies in the app cache, in plain form. Whatever is still
+  // there when this screen goes away (saved, discarded or backed out of) is deleted.
+  const draftUrisRef = useRef([]);
+  draftUrisRef.current = media.filter((m) => !m.id).map((m) => m.uri);
+  useEffect(
+    () => () => {
+      getJournalRepo().discardPhotos(draftUrisRef.current);
+    },
+    [],
+  );
 
   // The header date names the entry's own day, not today — editing last
   // Tuesday's entry must not relabel it "Today".
@@ -79,12 +108,24 @@ export default function JournalEntryEditorScreen({ navigation, route }) {
     ? format(entryDate, 'EEE, MMM d')
     : `Today, ${format(entryDate, 'MMM d')}`;
 
-  const uploading = media.some((m) => m.uploading);
   const hasMedia = media.length > 0;
   // A photo-only entry is a valid entry, so text is not required when
-  // something is attached — but an in-flight upload has no S3 key yet, so
-  // saving waits for it rather than dropping the attachment.
-  const canSave = (content.trim().length > 0 || hasMedia) && !saving && !uploading;
+  // something is attached.
+  const canSave = (content.trim().length > 0 || hasMedia) && !saving;
+
+  useEffect(() => {
+    if (!existing?.media?.length) return undefined;
+    let live = true;
+    existing.media.forEach((m) => {
+      getJournalRepo()
+        .loadPhoto(m, existing)
+        .then((uri) => live && setMedia((cur) => cur.map((x) => (x.id === m.id ? { ...x, previewUri: uri } : x))))
+        .catch(() => live && setMedia((cur) => cur.map((x) => (x.id === m.id ? { ...x, failedPreview: true } : x))));
+    });
+    return () => {
+      live = false;
+    };
+  }, [existing]);
 
   useEffect(() => {
     if (tagDraft !== null) tagInputRef.current?.focus();
@@ -119,15 +160,14 @@ export default function JournalEntryEditorScreen({ navigation, route }) {
   }, []);
 
   const removeMedia = useCallback((key) => {
-    setMedia((current) => current.filter((m) => m.key !== key));
+    setMedia((current) => {
+      const gone = current.find((m) => m.key === key);
+      if (gone && !gone.id) getJournalRepo().discardPhotos([gone.uri]);
+      return current.filter((m) => m.key !== key);
+    });
   }, []);
 
-  /**
-   * Upload happens as soon as an asset is picked, not at save time — a
-   * thumbnail appears immediately and Save stays instant. A draft that fails
-   * keeps its slot and is marked, so nothing disappears silently.
-   */
-  const uploadAssets = useCallback(async (assets) => {
+  const addAssets = useCallback((assets) => {
     const room = MAX_MEDIA - media.length;
     if (room <= 0) {
       showAlert('Attachment limit', `An entry can hold up to ${MAX_MEDIA} photos.`, [
@@ -135,54 +175,15 @@ export default function JournalEntryEditorScreen({ navigation, route }) {
       ]);
       return;
     }
-    const batch = assets.slice(0, room);
-    const drafts = batch.map((asset, i) => ({
-      key: `draft-${Date.now()}-${i}`,
-      previewUri: asset.uri,
-      uploading: true,
-    }));
-    setMedia((current) => [...current, ...drafts]);
-
-    try {
-      const formData = new FormData();
-      batch.forEach((asset) => {
-        formData.append('files', {
-          uri: asset.uri,
-          name: asset.fileName || asset.uri.split('/').pop() || `journal-${Date.now()}.jpg`,
-          type: asset.mimeType || 'image/jpeg',
-        });
-      });
-      const uploaded = await journalApi.uploadMedia(formData);
-      setMedia((current) =>
-        current.map((m) => {
-          const index = drafts.findIndex((d) => d.key === m.key);
-          if (index === -1) return m;
-          const result = uploaded[index];
-          if (!result) return { ...m, uploading: false, failed: true };
-          return {
-            ...m,
-            uploading: false,
-            // `fileName`/`thumbnailFileName` are durable S3 keys — the
-            // values the entry stores.
-            upload: {
-              mediaUrl: result.fileName,
-              mediaType: 'photo',
-              thumbnailUrl: result.thumbnailFileName || undefined,
-              fileSizeBytes: result.size,
-            },
-          };
-        }),
-      );
-    } catch (e) {
-      setMedia((current) =>
-        current.map((m) =>
-          drafts.some((d) => d.key === m.key) ? { ...m, uploading: false, failed: true } : m,
-        ),
-      );
-      showAlert('Upload failed', e?.message || 'That attachment could not be uploaded.', [
-        { text: 'OK' },
-      ]);
-    }
+    const stamp = Date.now();
+    setMedia((current) => [
+      ...current,
+      ...assets.slice(0, room).map((asset, i) => ({
+        key: `draft-${stamp}-${i}`,
+        uri: asset.uri,
+        previewUri: asset.uri,
+      })),
+    ]);
   }, [media.length]);
 
   const handleAttach = useCallback(
@@ -200,46 +201,39 @@ export default function JournalEntryEditorScreen({ navigation, route }) {
             quality: 0.85,
           });
       if (result.canceled || !result.assets?.length) return;
-      await uploadAssets(result.assets);
+      addAssets(result.assets);
     },
-    [uploadAssets],
+    [addAssets],
   );
 
   const handleSave = useCallback(async () => {
     if (!canSave) return;
     setSaving(true);
     try {
-      // Failed uploads never reach the server: they have no S3 key, so
-      // sending them would either 400 the whole save or store a broken row.
-      const attachments = media
-        .filter((m) => !m.failed)
-        .map((m) => (m.id ? { id: m.id } : m.upload))
-        .filter(Boolean);
-      const text = content.trim();
-      const body = { tags: withPendingTag(tags), media: attachments };
+      const input = {
+        text: content.trim(),
+        mood: mood || null,
+        tags: withPendingTag(tags),
+        photos: media.filter((m) => !m.id).map((m) => ({ uri: m.uri })),
+      };
+      const repo = getJournalRepo();
       if (isEditing) {
-        // `mood` is sent as null (not omitted) when cleared, so unpicking a
-        // face actually removes it rather than silently keeping the old one.
-        // `content` is omitted when empty — the API rejects a blank string,
-        // and a photo-only entry legitimately has none.
-        await journalApi.update(existing.id, {
-          ...body,
-          mood: mood || null,
-          ...(text ? { content: text } : {}),
+        await repo.updateEntry(entryId, {
+          ...input,
+          keepMedia: media.filter((m) => m.id).map((m) => m.id),
+          entryKey: existing.entryKey,
         });
       } else {
-        await journalApi.create({
-          ...body,
-          ...(text ? { content: text } : {}),
-          ...(mood ? { mood } : {}),
-        });
+        await repo.saveEntry(input);
       }
       navigation.goBack();
     } catch (e) {
       setSaving(false);
       showAlert(
         'Could not save',
-        e?.response?.data?.message || 'Your entry was not saved. Try again in a moment.',
+        isKeyMissing(e)
+          ? 'Your private space is not on this phone.'
+          : e?.response?.data?.message || 'Your entry was not saved. Try again in a moment.',
         [{ text: 'OK' }],
       );
     }
@@ -247,7 +241,7 @@ export default function JournalEntryEditorScreen({ navigation, route }) {
 
   const handleCancel = useCallback(() => {
     const dirty = isEditing
-      ? content !== (existing.content || '') ||
+      ? content !== (existing.text || '') ||
         mood !== (existing.mood || null) ||
         withPendingTag(tags).join() !== (existing.tags || []).join() ||
         media.length !== (existing.media || []).length ||
@@ -262,6 +256,27 @@ export default function JournalEntryEditorScreen({ navigation, route }) {
       { text: 'Discard', style: 'destructive', onPress: () => navigation.goBack() },
     ]);
   }, [isEditing, content, mood, tags, withPendingTag, media, existing, navigation]);
+
+  if (loadState !== 'ready') {
+    return (
+      <View style={[styles.screen, styles.flex, { paddingTop: insets.top, alignItems: 'center', justifyContent: 'center' }]}>
+        <StatusBar barStyle="light-content" backgroundColor={colors.canvas} />
+        {loadState === 'loading' ? (
+          <ActivityIndicator color={colors.gold} />
+        ) : (
+          <>
+            <Text style={styles.cancel}>We couldn't open this entry.</Text>
+            <TouchableOpacity onPress={loadExisting} hitSlop={12} activeOpacity={0.7}>
+              <Text style={styles.save}>Try again</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={12} activeOpacity={0.7}>
+              <Text style={styles.cancel}>Go back</Text>
+            </TouchableOpacity>
+          </>
+        )}
+      </View>
+    );
+  }
 
   return (
     <KeyboardAvoidingView
@@ -339,17 +354,17 @@ export default function JournalEntryEditorScreen({ navigation, route }) {
           >
             {media.map((item) => (
               <View key={item.key} style={styles.mediaThumb}>
-                <Image source={{ uri: item.previewUri }} style={styles.mediaImage} />
-                {item.uploading ? (
+                {item.previewUri ? (
+                  <Image source={{ uri: item.previewUri }} style={styles.mediaImage} cachePolicy="none" />
+                ) : (
                   <View style={styles.mediaOverlay}>
-                    <ActivityIndicator size="small" color={colors.onAccent} />
+                    {item.failedPreview ? (
+                      <Ionicons name="alert-circle" size={16} color={colors.danger} />
+                    ) : (
+                      <ActivityIndicator size="small" color={colors.onAccent} />
+                    )}
                   </View>
-                ) : null}
-                {item.failed ? (
-                  <View style={styles.mediaOverlay}>
-                    <Ionicons name="alert-circle" size={16} color={colors.danger} />
-                  </View>
-                ) : null}
+                )}
                 <TouchableOpacity
                   style={styles.mediaRemove}
                   onPress={() => removeMedia(item.key)}

@@ -17,7 +17,12 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.rootaroo.app",
-      "googleServicesFile": "./GoogleService-Info.plist"
+      "googleServicesFile": "./GoogleService-Info.plist",
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "location"
+        ]
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -36,7 +41,10 @@
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.CAMERA",
-        "android.permission.MODIFY_AUDIO_SETTINGS"
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_LOCATION"
       ],
       "googleServicesFile": "./google-services.json"
     },
@@ -52,11 +60,21 @@
       "expo-notifications",
       "expo-file-system",
       [
-        "expo-location",
+        "expo-local-authentication",
         {
-          "locationWhenInUsePermission": "Rootaroo uses your location when you check in or answer a household ping. It is never tracked in the background."
+          "faceIDPermission": "Rootaroo uses Face ID to unlock your journal."
         }
       ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Rootaroo uses your location when you check in, answer a ping, or share your location with family.",
+          "locationAlwaysAndWhenInUsePermission": "Rootaroo keeps sharing your location in the background only while a share you started is running, and stops when the timer ends.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
+        }
+      ],
+      "expo-task-manager",
       "expo-web-browser",
       [
         "expo-camera",

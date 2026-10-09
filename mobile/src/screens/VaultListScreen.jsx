@@ -7,12 +7,13 @@
  *  - Unlocked (26): "Auto-locks in m:ss" countdown, 2-col grid of ink cards, gold FAB "+".
  * Long-press a card → white bottom sheet (View / Rename / Delete).
  */
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import {
+  AppState,
+  SectionList,
   View,
   Text,
   StyleSheet,
-  FlatList,
   TouchableOpacity,
   RefreshControl,
   Modal,
@@ -23,11 +24,10 @@ import {
 import { showAlert } from '../shared/services/themedAlert';
 import Svg, { SvgXml, Rect, Path, Circle } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useFocusEffect } from '@react-navigation/native';
 import { useVaultStore } from '../shared/store/vaultStore';
 import { useAuthStore } from '../shared/store/authStore';
-import { vaultApi } from '../shared/api/vault';
-import { getPrivateKey } from '../shared/crypto/secureKeyStore';
+import { getVaultRepo } from '../shared/vault/vaultRepo';
+import { fingerprint, loadAccountPrivateKey } from '../shared/crypto/accountKey';
 import Avatar from '../components/Avatar';
 import { formatFileSize, formatDate } from '../shared/utils/format';
 import { colors, fonts, goldButton, radius, withAlpha } from '../shared/theme';
@@ -50,9 +50,14 @@ const VAULT_SVG =
 /** Coarse type label shown on the top of each card (mock {{ d.type }}). */
 function documentType(mimeType) {
   if (mimeType === 'application/pdf') return 'pdf';
-  if (mimeType.startsWith('image/')) return 'image';
+  if (mimeType?.startsWith('image/')) return 'image';
   return 'document';
 }
+const chunk = (list, size) => {
+  const rows = [];
+  for (let i = 0; i < list.length; i += size) rows.push(list.slice(i, i + size));
+  return rows;
+};
 function formatLockTime(totalSeconds) {
   const m = Math.floor(totalSeconds / 60);
   const s = totalSeconds % 60;
@@ -61,8 +66,10 @@ function formatLockTime(totalSeconds) {
 export default function VaultListScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const { documents, loading, refreshing, error } = useVaultStore();
+  const me = useAuthStore((s) => s.user);
+  const [changedMembers, setChangedMembers] = useState([]);
+  const [safetySheet, setSafetySheet] = useState({ visible: false, prints: {} });
   const [locked, setLocked] = useState(true);
-  const [checkingSetup, setCheckingSetup] = useState(true);
   const [unlockLoading, setUnlockLoading] = useState(false);
   const [autoLockSeconds, setAutoLockSeconds] = useState(AUTO_LOCK_SECONDS);
   const [showActionSheet, setShowActionSheet] = useState({
@@ -75,30 +82,6 @@ export default function VaultListScreen({ navigation }) {
     value: '',
   });
   const [deleteDoc, setDeleteDoc] = useState(null);
-
-  // Before ever showing "Unlock vault", check the server for whether a vault
-  // key exists at all — no key means first-time setup, so skip straight there
-  // instead of showing an unlock screen for a vault that doesn't exist yet.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const myKey = await vaultApi.getMyKey();
-        if (cancelled) return;
-        if (!myKey) {
-          navigation.replace('VaultSetup');
-          return;
-        }
-      } catch {
-        // Network/error — fall back to the normal locked screen; Unlock will retry.
-      } finally {
-        if (!cancelled) setCheckingSetup(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [navigation]);
 
   // Auto-lock countdown runs only while unlocked
   useEffect(() => {
@@ -117,63 +100,79 @@ export default function VaultListScreen({ navigation }) {
       const user = useAuthStore.getState().user;
       if (!user?.id) return;
 
-      // Key exists on this device → getPrivateKey fires the Face ID / fingerprint
-      // prompt (hardware keychain requireAuthentication) → unlock on success.
-      let priv;
+      // Loading the key fires the Face ID / fingerprint prompt (hardware keychain
+      // requireAuthentication). The gate around this screen guarantees this phone holds it.
+      let key;
       try {
-        priv = await getPrivateKey(user.id);
+        key = await loadAccountPrivateKey(user.id);
       } catch {
-        // A key exists on this device but authentication failed/was cancelled —
-        // stay locked. Must NOT fall through to the "no local key" branch below,
-        // which would unlock without ever requiring biometric confirmation.
+        // Authentication failed or was cancelled: stay locked.
         showAlert(
           'Authentication failed',
           'Could not verify your fingerprint or Face ID. Please try again.',
         );
         return;
       }
-      if (priv) {
-        setLocked(false);
-        setAutoLockSeconds(AUTO_LOCK_SECONDS);
+      if (!key) {
+        showAlert('Private space not on this phone', 'Move it here or restore it from your backup in Privacy & security.');
         return;
       }
-
-      // No key on this device at all (fresh device). If a key exists on the
-      // server (set up elsewhere), let the user in — passphrase recovery
-      // happens when opening a document.
-      const myKey = await vaultApi.getMyKey().catch(() => null);
-      if (myKey?.publicKey) {
-        setLocked(false);
-        setAutoLockSeconds(AUTO_LOCK_SECONDS);
-        return;
-      }
-
-      // First-time user — no vault key anywhere. Send them through setup
-      // (passphrase + biometric) before they can unlock.
-      navigation.navigate('VaultSetup');
+      setLocked(false);
+      setAutoLockSeconds(AUTO_LOCK_SECONDS);
     } finally {
       setUnlockLoading(false);
     }
-  }, [navigation]);
-
-  // After first-time setup returns, a key now exists locally → auto-unlock (biometric)
-  useFocusEffect(
-    useCallback(() => {
-      if (useVaultStore.getState().justSetUpVault) {
-        useVaultStore.setState({
-          justSetUpVault: false,
-        });
-        handleUnlock();
-      }
-    }, [handleUnlock]),
-  );
+  }, []);
 
   // Fetch documents when vault becomes unlocked
+  const syncSharing = useCallback(async () => {
+    try {
+      const repo = getVaultRepo();
+      await repo.grantPending();
+      setChangedMembers((await repo.memberKeyStatus()).changed);
+    } catch {
+      /* best effort, silent */
+    }
+  }, []);
   useEffect(() => {
     if (!locked) {
       useVaultStore.getState().fetchDocuments();
+      syncSharing();
     }
+  }, [locked, syncSharing]);
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (next) => {
+      getVaultRepo().onAppStateChange(next);
+      if (next === 'active' && !locked) syncSharing();
+    });
+    return () => sub.remove();
+  }, [locked, syncSharing]);
+  useEffect(() => {
+    if (locked) getVaultRepo().clear();
   }, [locked]);
+  useEffect(() => () => getVaultRepo().clear(), []);
+  const closeSafetySheet = () => setSafetySheet({ visible: false, prints: {} });
+  const openSafetySheet = async () => {
+    const prints = {};
+    for (const m of changedMembers) {
+      prints[m.userId] = {
+        before: m.pinnedKey ? await fingerprint(m.pinnedKey) : '-',
+        now: await fingerprint(m.publicKey),
+      };
+    }
+    setSafetySheet({ visible: true, prints });
+  };
+  const trustMember = async (m) => {
+    try {
+      await getVaultRepo().confirmMemberKey(m.userId, m.publicKey);
+      const left = changedMembers.filter((x) => x.userId !== m.userId);
+      setChangedMembers(left);
+      if (!left.length) closeSafetySheet();
+      syncSharing();
+    } catch {
+      showAlert('Error', 'Could not save that. Please try again.');
+    }
+  };
   const handleRefresh = useCallback(async () => {
     await useVaultStore.getState().fetchDocuments(true);
   }, []);
@@ -191,7 +190,7 @@ export default function VaultListScreen({ navigation }) {
   const confirmDelete = async () => {
     if (!deleteDoc) return;
     try {
-      await vaultApi.deleteDocument(deleteDoc.id);
+      await getVaultRepo().remove(deleteDoc.id);
       useVaultStore.getState().removeDocument(deleteDoc.id);
       setDeleteDoc(null);
       showAlert('Deleted', 'Document deleted successfully');
@@ -221,9 +220,7 @@ export default function VaultListScreen({ navigation }) {
       return;
     }
     try {
-      await vaultApi.updateDocument(doc.id, {
-        name,
-      });
+      await getVaultRepo().rename(doc, name);
       useVaultStore.getState().updateDocument({
         ...doc,
         name,
@@ -244,23 +241,33 @@ export default function VaultListScreen({ navigation }) {
       visible: false,
       document: null,
     });
-  const renderGridItem = ({ item }) => (
+  const renderCard = (item) => (
     <TouchableOpacity
+      key={item.id}
       style={styles.card}
-      onPress={() => openViewer(item)}
+      onPress={() => (item.pending
+        ? showAlert('Not ready yet', 'This file opens once another adult in your household opens Rootaroo on their phone.')
+        : openViewer(item))}
       onLongPress={() => openActionSheet(item)}
       delayLongPress={350}
       activeOpacity={0.85}
     >
-      <Text style={styles.cardType} numberOfLines={1}>
-        {documentType(item.mimeType)}
-      </Text>
+      <View style={styles.cardTop}>
+        <Text style={styles.cardType} numberOfLines={1}>
+          {documentType(item.mimeType)}
+        </Text>
+        {item.pending && (
+          <View style={styles.pendingBadge}>
+            <Text style={styles.pendingBadgeText}>Waiting</Text>
+          </View>
+        )}
+      </View>
       <View>
         <Text style={styles.cardName} numberOfLines={2}>
           {item.name}
         </Text>
         <Text style={styles.cardMeta} numberOfLines={1}>
-          {formatFileSize(item.sizeBytes)} · {formatDate(item.uploadedAt)}
+          {formatFileSize(item.sizeBytes)} · {formatDate(item.createdAt)}
         </Text>
         {item.uploadedBy && (
           <View style={styles.cardUploader}>
@@ -278,6 +285,20 @@ export default function VaultListScreen({ navigation }) {
         )}
       </View>
     </TouchableOpacity>
+  );
+
+  const renderRow = ({ item: row }) => (
+    <View style={styles.gridRow}>
+      {row.map(renderCard)}
+      {row.length === 1 && <View style={styles.cardSpacer} />}
+    </View>
+  );
+  const sections = useMemo(
+    () => [
+      { title: 'Household', data: chunk(documents.filter((d) => d.scope === 'household'), 2) },
+      { title: 'Personal', data: chunk(documents.filter((d) => d.scope !== 'household'), 2) },
+    ].filter((sec) => sec.data.length),
+    [documents],
   );
 
   /** Loading / error / empty content for the grid — never a bare black screen. */
@@ -309,16 +330,6 @@ export default function VaultListScreen({ navigation }) {
       </View>
     );
   };
-
-  // ── Checking whether a vault key exists at all (pre-locked) ──
-  if (checkingSetup) {
-    return (
-      <View style={[styles.root, styles.checkingRoot]}>
-        <StatusBar barStyle="light-content" backgroundColor={colors.shadow} />
-        <ActivityIndicator size="small" color={colors.gold} />
-      </View>
-    );
-  }
 
   // ── Locked state (SCREEN 25) ──
   if (locked) {
@@ -437,12 +448,21 @@ export default function VaultListScreen({ navigation }) {
         <OfflineBanner dark onRetry={handleRefresh} />
       </View>
 
-      <FlatList
-        data={documents}
-        renderItem={renderGridItem}
-        keyExtractor={(item) => item.id}
-        numColumns={2}
-        columnWrapperStyle={styles.gridRow}
+      {changedMembers.length > 0 && (
+        <TouchableOpacity style={styles.keyBanner} onPress={openSafetySheet} activeOpacity={0.85}>
+          <Text style={styles.keyBannerTitle}>
+            {changedMembers.map((m) => m.displayName).join(', ')} has a new key
+          </Text>
+          <Text style={styles.keyBannerBody}>Sharing with them is paused. Tap to compare safety numbers.</Text>
+        </TouchableOpacity>
+      )}
+
+      <SectionList
+        sections={sections}
+        renderItem={renderRow}
+        renderSectionHeader={({ section }) => <Text style={styles.sectionTitle}>{section.title}</Text>}
+        keyExtractor={(row) => row[0].id}
+        stickySectionHeadersEnabled={false}
         contentContainerStyle={styles.gridContent}
         refreshControl={
           <RefreshControl
@@ -506,24 +526,28 @@ export default function VaultListScreen({ navigation }) {
             >
               <Text style={styles.sheetOptionText}>View</Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.sheetOption}
-              onPress={() => {
-                if (showActionSheet.document) openRename(showActionSheet.document);
-                closeActionSheet();
-              }}
-            >
-              <Text style={styles.sheetOptionText}>Rename</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.sheetOption}
-              onPress={() => {
-                if (showActionSheet.document) handleDelete(showActionSheet.document);
-                closeActionSheet();
-              }}
-            >
-              <Text style={[styles.sheetOptionText, styles.sheetOptionDanger]}>Delete</Text>
-            </TouchableOpacity>
+            {showActionSheet.document?.mine && !showActionSheet.document?.unreadable && !showActionSheet.document?.pending && (
+              <TouchableOpacity
+                style={styles.sheetOption}
+                onPress={() => {
+                  if (showActionSheet.document) openRename(showActionSheet.document);
+                  closeActionSheet();
+                }}
+              >
+                <Text style={styles.sheetOptionText}>Rename</Text>
+              </TouchableOpacity>
+            )}
+            {(showActionSheet.document?.mine || me?.role === 'admin') && (
+              <TouchableOpacity
+                style={styles.sheetOption}
+                onPress={() => {
+                  if (showActionSheet.document) handleDelete(showActionSheet.document);
+                  closeActionSheet();
+                }}
+              >
+                <Text style={[styles.sheetOptionText, styles.sheetOptionDanger]}>Delete</Text>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity style={styles.sheetOption} onPress={closeActionSheet}>
               <Text style={styles.sheetOptionText}>Cancel</Text>
             </TouchableOpacity>
@@ -578,6 +602,37 @@ export default function VaultListScreen({ navigation }) {
         </KeyboardAvoider>
       </Modal>
 
+      {/* ── Compare safety numbers ── */}
+      <Modal visible={safetySheet.visible} transparent animationType="slide" onRequestClose={closeSafetySheet}>
+        <View style={styles.overlay}>
+          <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={closeSafetySheet} />
+          <View style={[styles.sheet, { paddingBottom: insets.bottom + 24 }]}>
+            <View style={styles.handle} />
+            <Text style={styles.sheetTitle}>Compare safety numbers</Text>
+            <Text style={styles.safetyHelp}>
+              Ask them, in person, to read the safety number on their phone. Only trust the new key if it matches the
+              Now number.
+            </Text>
+            {changedMembers.map((m) => (
+              <View key={m.userId} style={styles.safetyBlock}>
+                <Text style={styles.safetyName}>{m.displayName}</Text>
+                <Text style={styles.safetyLabel}>Before</Text>
+                <Text style={styles.safetyPrint}>{safetySheet.prints[m.userId]?.before}</Text>
+                <Text style={styles.safetyLabel}>Now</Text>
+                <Text style={styles.safetyPrint}>{safetySheet.prints[m.userId]?.now}</Text>
+                <TouchableOpacity style={styles.trustBtn} onPress={() => trustMember(m)} activeOpacity={0.85}>
+                  <GoldFill radius={10} />
+                  <Text style={styles.renameSaveText}>They match, trust it</Text>
+                </TouchableOpacity>
+              </View>
+            ))}
+            <TouchableOpacity style={styles.sheetOption} onPress={closeSafetySheet}>
+              <Text style={styles.sheetOptionText}>Not now</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
       {/* Delete document confirmation sheet */}
       <ConfirmSheet
         visible={!!deleteDoc}
@@ -594,10 +649,6 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: colors.surfaceRaised,
-  },
-  checkingRoot: {
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   buttonDisabled: {
     opacity: 0.6,
@@ -731,11 +782,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingTop: 12,
     paddingBottom: 104,
-    gap: 14,
     flexGrow: 1,
   },
   gridRow: {
+    flexDirection: 'row',
     gap: 14,
+    marginBottom: 14,
   },
   card: {
     flex: 1,
@@ -744,6 +796,90 @@ const styles = StyleSheet.create({
     padding: 16,
     height: 142,
     justifyContent: 'space-between',
+  },
+  cardTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  cardSpacer: {
+    flex: 1,
+  },
+  pendingBadge: {
+    backgroundColor: withAlpha(colors.gold, 0.2),
+    borderRadius: 8,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+  },
+  pendingBadgeText: {
+    fontSize: 10,
+    fontFamily: fonts.bodySemiBold,
+    color: colors.gold,
+  },
+  sectionTitle: {
+    fontSize: 13,
+    fontFamily: fonts.displayBold,
+    color: colors.textFaint,
+    marginTop: 6,
+    marginBottom: 10,
+  },
+  keyBanner: {
+    marginHorizontal: 24,
+    marginBottom: 8,
+    padding: 14,
+    borderRadius: radius.cardLg,
+    backgroundColor: withAlpha(colors.danger, 0.18),
+    borderWidth: 1,
+    borderColor: colors.danger,
+  },
+  keyBannerTitle: {
+    fontSize: 14,
+    fontFamily: fonts.displayBold,
+    color: colors.onAccent,
+  },
+  keyBannerBody: {
+    fontSize: 12,
+    fontFamily: fonts.body,
+    color: colors.textFaint,
+    marginTop: 2,
+  },
+  safetyHelp: {
+    fontSize: 13,
+    lineHeight: 19,
+    fontFamily: fonts.body,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  safetyBlock: {
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+    gap: 4,
+  },
+  safetyName: {
+    fontSize: 15,
+    fontFamily: fonts.displayBold,
+    color: colors.ink,
+  },
+  safetyLabel: {
+    fontSize: 11,
+    fontFamily: fonts.bodySemiBold,
+    color: colors.textMuted,
+    marginTop: 4,
+  },
+  safetyPrint: {
+    fontSize: 14,
+    fontFamily: fonts.mono,
+    color: colors.ink,
+  },
+  trustBtn: {
+    marginTop: 10,
+    height: 44,
+    borderRadius: 10,
+    backgroundColor: colors.gold,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   cardType: {
     fontSize: 11,

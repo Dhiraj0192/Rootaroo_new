@@ -53,8 +53,18 @@ const REMINDER_ROWS = [
   },
 ];
 
-const ALL_PREF_KEYS = [...ACTIVITY_ROWS, ...REMINDER_ROWS].map((row) => row.key);
+// Tips group: subtitle explains the cap; the server defaults `tips` on.
+const TIP_ROWS = [
+  {
+    label: 'Tips and nudges',
+    key: 'tips',
+    subtitle: 'Occasional reminders to check in with your family. Max 2 a week.',
+  },
+];
+
+const ALL_PREF_KEYS = [...ACTIVITY_ROWS, ...REMINDER_ROWS, ...TIP_ROWS].map((row) => row.key);
 const DEFAULT_PREFS = {
+  tips: true,
   newPost: true,
   taskAssigned: true,
   taskCompleted: true,
@@ -64,6 +74,9 @@ const DEFAULT_PREFS = {
   calendarEvent: true,
   memberJoined: true,
 };
+// A response without `tips` (older server) means the default, on.
+const withDefaults = (prefs) => ({ tips: true, ...prefs });
+
 export default function NotificationPreferencesScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const [prefs, setPrefs] = useState(DEFAULT_PREFS);
@@ -71,7 +84,7 @@ export default function NotificationPreferencesScreen({ navigation }) {
   useEffect(() => {
     (async () => {
       try {
-        setPrefs(await notificationApi.getPreferences());
+        setPrefs(withDefaults(await notificationApi.getPreferences()));
       } catch {
         showAlert('Error', 'Could not load notification preferences.');
       } finally {
@@ -88,7 +101,7 @@ export default function NotificationPreferencesScreen({ navigation }) {
       const saved = await notificationApi.updatePreferences({
         [key]: next,
       });
-      setPrefs(saved);
+      setPrefs(withDefaults(saved));
     } catch {
       // Revert optimistic update on failure.
       setPrefs((p) => ({
@@ -106,7 +119,7 @@ export default function NotificationPreferencesScreen({ navigation }) {
       setPrefs((p) => ({ ...p, ...patch }));
       try {
         const saved = await notificationApi.updatePreferences(patch);
-        setPrefs(saved);
+        setPrefs(withDefaults(saved));
       } catch {
         setPrefs(snapshot);
         showAlert('Error', 'Could not save preference.');
@@ -202,6 +215,21 @@ export default function NotificationPreferencesScreen({ navigation }) {
             />
           </View>
         ))}
+
+        {/* Tips */}
+        <Text style={[styles.sectionLabel, styles.sectionLabelGap]}>Tips</Text>
+        {TIP_ROWS.map((row) => (
+          <View key={row.key} style={styles.row}>
+            <View style={styles.rowText}>
+              <Text style={styles.rowLabel}>{row.label}</Text>
+              <Text style={styles.rowSubtitle}>{row.subtitle}</Text>
+            </View>
+            <PreferenceToggle
+              value={prefs[row.key]}
+              onChange={(next) => handleToggle(row.key, next)}
+            />
+          </View>
+        ))}
       </ScrollView>
     </View>
   );
@@ -269,10 +297,20 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.border,
   },
+  rowText: {
+    flex: 1,
+    paddingRight: 16,
+  },
   rowLabel: {
     fontSize: 14,
     fontFamily: fonts.body,
     color: colors.ink,
+  },
+  rowSubtitle: {
+    marginTop: 4,
+    fontSize: 12,
+    fontFamily: fonts.body,
+    color: colors.textMuted,
   },
   // Master "All notifications" toggle
   masterRow: {

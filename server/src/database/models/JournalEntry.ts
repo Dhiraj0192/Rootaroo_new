@@ -5,9 +5,11 @@ class JournalEntry extends Model {
   declare id: CreationOptional<string>;
   declare householdId: string;
   declare userId: string;
-  declare content: string | null;
-  declare mood: string | null;
-  declare tags: string[] | null;
+  /** Base64 ciphertext; the server never sees the text, mood, tags or photos inside. */
+  declare ciphertext: string;
+  /** Base64 per-entry key, sealed to the author's account key. */
+  declare sealedKey: string;
+  declare format: number;
   declare createdAt: CreationOptional<Date>;
   declare updatedAt: CreationOptional<Date>;
   declare deletedAt: Date | null;
@@ -30,20 +32,19 @@ JournalEntry.init(
       allowNull: false,
       field: 'user_id',
     },
-    content: {
+    ciphertext: {
+      type: DataTypes.TEXT('medium'),
+      allowNull: false,
+    },
+    sealedKey: {
       type: DataTypes.TEXT,
-      allowNull: true,
+      allowNull: false,
+      field: 'sealed_key',
     },
-    mood: {
-      type: DataTypes.STRING(16),
-      allowNull: true,
-    },
-    // Free-text labels, private to the entry's author. Stored as JSON rather
-    // than a join table — they are never queried across users, so a table
-    // would only add a join to every list page.
-    tags: {
-      type: DataTypes.JSON,
-      allowNull: true,
+    format: {
+      type: DataTypes.TINYINT,
+      allowNull: false,
+      defaultValue: 1,
     },
     createdAt: {
       type: DataTypes.DATE,

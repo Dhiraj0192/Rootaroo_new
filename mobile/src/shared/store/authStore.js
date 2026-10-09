@@ -9,6 +9,7 @@ import { warmScreenCache, clearScreenCache, clearSharedRequests } from '../cache
 import { prefetchHome } from '../cache/homePrefetch';
 import { useFeedStore } from './feedStore';
 import { unregisterPushNotificationsAsync } from '../pushNotifications';
+import { loadDeviceId } from '../device/deviceInfo';
 
 // Access tokens live 15 minutes, so almost every cold start finds an
 // expired one. Refreshing during the splash beats letting the first
@@ -29,6 +30,22 @@ function accessTokenExpiresSoon(token) {
   }
 }
 
+// Lazy require: keeps notification native deps out of the auth store's import graph.
+function scheduleNudges() {
+  try { require('../signedOutNudges').scheduleSignedOutNudges(); } catch { /* not loaded yet */ }
+}
+
+function cancelNudges() {
+  try { require('../signedOutNudges').cancelSignedOutNudges(); } catch { /* not loaded yet */ }
+}
+
+// A phone the server no longer lists as the key holder must not keep a stale key: the store deletes it on refresh.
+function checkPrivateSpace() {
+  try {
+    Promise.resolve(require('./privateSpaceStore').usePrivateSpaceStore.getState().refresh()).catch(() => {});
+  } catch { /* not loaded yet */ }
+}
+
 export const useAuthStore = create((set, get) => ({
   user: null,
   accessToken: null,
@@ -46,6 +63,8 @@ export const useAuthStore = create((set, get) => ({
 
   setAuth: (user, accessToken, refreshToken) => {
     set({ user, accessToken, refreshToken, isAuthenticated: true, isLoading: false });
+    cancelNudges();
+    checkPrivateSpace();
     warmScreenCache(user?.id);
     saveTokens(accessToken, refreshToken, user).catch(() => {});
   },
@@ -91,8 +110,12 @@ export const useAuthStore = create((set, get) => ({
     clearSignupProgress().catch(() => {});
     clearSharedRequests();
     clearScreenCache();
+    scheduleNudges();
     // Lazy require: billingStore → api → client → authStore would be a cycle at import time.
     try { require('./billingStore').useBillingStore.getState().reset(); } catch { /* not loaded yet */ }
+    try { require('./privateSpaceStore').usePrivateSpaceStore.getState().reset(); } catch { /* not loaded yet */ }
+    try { require('./journalLockStore').useJournalLockStore.getState().reset(); } catch { /* not loaded yet */ }
+    try { require('../journal/journalRepo').clearJournalSecrets(); } catch { /* not loaded yet */ }
     useFeedStore.setState({ posts: [], cursor: null, hasMore: true, lastFetchedAt: null });
   },
 
@@ -121,6 +144,7 @@ export const useAuthStore = create((set, get) => ({
   completeSetup: () => {
     const { accessToken, refreshToken, user } = get();
     set({ isAuthenticated: true, isLoading: false, signupProgress: null });
+    cancelNudges();
     warmScreenCache(user?.id);
     clearSignupProgress().catch(() => {});
     if (accessToken && refreshToken && user) {
@@ -130,6 +154,7 @@ export const useAuthStore = create((set, get) => ({
 
   restoreSession: async () => {
     try {
+      await loadDeviceId();
       const [{ accessToken, refreshToken, user, householdId }, progress] = await Promise.all([
         loadTokens(),
         loadSignupProgress(),
@@ -184,6 +209,8 @@ export const useAuthStore = create((set, get) => ({
           householdId: householdId ?? null,
           signupProgress: null,
         });
+        cancelNudges();
+        checkPrivateSpace();
         prefetchHome(householdId);
 
         apiClient
