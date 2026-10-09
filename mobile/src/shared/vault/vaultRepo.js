@@ -14,6 +14,7 @@ export const UNREADABLE_NAME = "Can't open this file";
 export const PENDING_NAME = "Waiting for a family member's phone";
 const TEMP_FILE_LIFETIME_MS = 60000;
 const KEY_GRACE_MS = 60000;
+const PREVIEW_MAX_BYTES = 8 * 1024 * 1024;
 
 export class VaultKeyMissingError extends Error {
   constructor() {
@@ -61,8 +62,12 @@ export function createVaultRepo({
     return keys;
   }
 
-  const clear = () => { keyPair = null; };
+  // Decrypted image previews, memory only (never written to disk), dropped on lock.
+  const previews = new Map();
+  const clear = () => { keyPair = null; previews.clear(); };
   const hasKeys = () => keyPair !== null;
+  /** Hand over a key the screen already unlocked, so loading the list doesn't prompt again. */
+  const prime = (keys) => { if (keys?.privateKey && keys?.publicKey) keyPair = keys; };
 
   async function describe(raw, keys) {
     const base = {
@@ -107,6 +112,21 @@ export function createVaultRepo({
   return {
     clear,
     hasKeys,
+    prime,
+
+    /** A data URI for an image file's thumbnail, or null (not an image, too big, or not readable here). */
+    async preview(doc) {
+      if (!doc?.mimeType?.startsWith('image/') || !doc.fileKey) return null;
+      if (doc.sizeBytes > PREVIEW_MAX_BYTES) return null;
+      if (previews.has(doc.id)) return previews.get(doc.id);
+      // A just-uploaded file has no signed link yet; ask for one.
+      const url = doc.downloadUrl || (await api.get(doc.id)).downloadUrl;
+      if (!url) return null;
+      const plain = await decryptFile(await fetchBytes(url), doc.fileKey);
+      const uri = `data:${doc.mimeType};base64,${bytesToBase64(plain)}`;
+      if (keyPair) previews.set(doc.id, uri); // locked meanwhile: don't keep it
+      return uri;
+    },
 
     onAppStateChange(next, now = Date.now()) {
       if (next === 'background') {

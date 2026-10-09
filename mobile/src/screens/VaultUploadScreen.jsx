@@ -165,7 +165,10 @@ export default function VaultUploadScreen({ navigation }) {
         quality: 0.8,
       });
       if (result.canceled || !result.assets?.[0]) return;
-      const asset = await takeBytes(normalizeAsset(result.assets[0]));
+      const shot = normalizeAsset(result.assets[0]);
+      // The camera names files with a random ID; offer a readable default instead.
+      const label = `Photo ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`;
+      const asset = await takeBytes({ ...shot, name: `${label}.jpg` });
       const name = await promptDocumentName(asset.name);
       await processAndUpload({ ...asset, name });
     } catch (e) {
