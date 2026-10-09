@@ -1,65 +1,39 @@
-import React from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, StatusBar } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, StatusBar, ActivityIndicator } from 'react-native';
+import { WebView } from 'react-native-webview';
+import * as WebBrowser from 'expo-web-browser';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, fonts, radius } from '../shared/theme';
 import { useTabBarDockHeight } from '../shared/hooks/useTabBarDockHeight';
-const SECTIONS = [
-  {
-    heading: 'What we collect',
-    body: 'Account information you give us directly: name, email or phone number, and an optional avatar. Content you and your household create: feed posts, tasks, grocery/to-do items, expenses, chat messages, calendar events, and Ping location shares. We also store technical data needed to run the app — device push-notification tokens and login sessions.',
-  },
-  {
-    heading: 'Household data is shared, not private to you',
-    body: 'Anything you post to a household — feed posts, tasks, chat messages, calendar events, expenses, and Ping location shares — is visible to the other members of that household. Removing someone from a household stops their future access but does not undo anything they already saw, saved, or shared elsewhere.',
-  },
-  {
-    heading: 'Location (Ping)',
-    body: 'Ping only shares your location when you tap "Ping everyone" or accept a location request — there is no background location tracking. Shared locations are visible to your household and stored so you can see recent activity; you control every share individually.',
-  },
-  {
-    heading: 'The Vault is end-to-end encrypted — we cannot read it',
-    body: 'Documents you store in the Vault are encrypted and decrypted only on your device. We store encrypted bytes we have no technical ability to decrypt. This also means: if you lose your device without passphrase backup enabled, your Vault contents cannot be recovered by you or by us. That is a deliberate design property, not a bug.',
-  },
-  {
-    heading: 'Third-party services we use',
-    body: 'Cloudinary stores uploaded photos and files (feed media, avatars). Auth0 delivers phone verification codes. Google handles "Sign in with Google" if you use it. Firebase Cloud Messaging delivers push notifications. None of these services can see the contents of your end-to-end encrypted Vault.',
-  },
-  {
-    heading: 'Data retention & deletion',
-    body: 'Deleting your account or a household you administer schedules removal with a 30-day grace period you can cancel at any time, or you can choose to delete immediately. Once deleted, your access — and everyone else’s access, for a household — is removed.',
-  },
-  {
-    heading: 'Your choices',
-    body: 'You can edit your profile, leave a household, revoke Vault access for a removed member, turn off individual notification types, and delete your account at any time from Settings.',
-  },
-  {
-    heading: 'Contact',
-    body: 'Questions about this policy or your data can be sent to the support address in Help Center.',
-  },
-];
+import { PRIVACY_URL } from '../shared/billing/legalLinks';
+
+/**
+ * Shows the live policy from rootaroo.com/privacy, so the app never carries a
+ * stale copy. Links that leave the policy page open in the browser.
+ */
 export default function PrivacyPolicyScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const dockHeight = useTabBarDockHeight();
+  const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
+
+  const keepInApp = (req) => {
+    if (req.isTopFrame === false) return true;
+    if (/^https:\/\/(www\.)?rootaroo\.com\/privacy(\/|\?|#|$)/.test(req.url)) return true;
+    WebBrowser.openBrowserAsync(req.url).catch(() => {});
+    return false;
+  };
+
   return (
-    <View
-      style={[
-        styles.root,
-        {
-          paddingTop: insets.top,
-        },
-      ]}
-    >
+    <View style={[styles.root, { paddingTop: insets.top }]}>
       <StatusBar barStyle="light-content" backgroundColor={colors.canvas} />
       <View style={styles.header}>
         <TouchableOpacity
           style={styles.backBtn}
           onPress={() => navigation.goBack()}
-          hitSlop={{
-            top: 8,
-            bottom: 8,
-            left: 8,
-            right: 8,
-          }}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityRole="button"
+          accessibilityLabel="Back"
         >
           <Text style={styles.backIcon}>‹</Text>
         </TouchableOpacity>
@@ -67,33 +41,42 @@ export default function PrivacyPolicyScreen({ navigation }) {
         <View style={styles.headerSpacer} />
       </View>
 
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={[
-          styles.scrollContent,
-          {
-            paddingBottom: dockHeight + 16,
-          },
-        ]}
-        showsVerticalScrollIndicator={false}
-      >
-        <View style={styles.draftBanner}>
-          <Text style={styles.draftBannerText}>
-            Draft — this describes how Rootaroo actually handles data today. It has not yet been
-            reviewed by a lawyer and should not be treated as final legal text.
-          </Text>
+      {failed ? (
+        <View style={styles.center}>
+          <Text style={styles.errorTitle}>Couldn't load the privacy policy</Text>
+          <Text style={styles.errorBody}>Check your connection, or read it in your browser.</Text>
+          <TouchableOpacity
+            style={styles.openBtn}
+            onPress={() => WebBrowser.openBrowserAsync(PRIVACY_URL).catch(() => {})}
+            accessibilityRole="link"
+          >
+            <Text style={styles.openBtnText}>Open rootaroo.com/privacy</Text>
+          </TouchableOpacity>
         </View>
-
-        {SECTIONS.map((section) => (
-          <View key={section.heading} style={styles.section}>
-            <Text style={styles.sectionHeading}>{section.heading}</Text>
-            <Text style={styles.sectionBody}>{section.body}</Text>
-          </View>
-        ))}
-      </ScrollView>
+      ) : (
+        <View style={[styles.webWrap, { marginBottom: dockHeight }]}>
+          <WebView
+            source={{ uri: PRIVACY_URL }}
+            style={styles.web}
+            onLoadEnd={() => setLoading(false)}
+            onError={() => setFailed(true)}
+            onHttpError={() => setFailed(true)}
+            onShouldStartLoadWithRequest={keepInApp}
+            setSupportMultipleWindows={false}
+            javaScriptEnabled
+            domStorageEnabled
+          />
+          {loading && (
+            <View style={styles.loading} pointerEvents="none">
+              <ActivityIndicator color={colors.gold} />
+            </View>
+          )}
+        </View>
+      )}
     </View>
   );
 }
+
 const styles = StyleSheet.create({
   root: {
     flex: 1,
@@ -127,39 +110,51 @@ const styles = StyleSheet.create({
   headerSpacer: {
     width: 32,
   },
-  scroll: {
+  webWrap: {
     flex: 1,
   },
-  scrollContent: {
-    paddingHorizontal: 24,
-    paddingTop: 8,
+  web: {
+    flex: 1,
+    backgroundColor: colors.canvas,
   },
-  draftBanner: {
-    backgroundColor: colors.goldTint,
-    borderRadius: radius.card,
-    padding: 14,
-    marginBottom: 24,
+  loading: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.canvas,
   },
-  draftBannerText: {
-    fontSize: 12.5,
-    lineHeight: 18,
-    fontFamily: fonts.bodyMedium,
-    color: colors.goldDeep,
+  center: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+    gap: 10,
   },
-  section: {
-    marginBottom: 24,
-  },
-  sectionHeading: {
-    fontSize: 15,
-    fontWeight: '700',
+  errorTitle: {
+    fontSize: 16,
     fontFamily: fonts.displayBold,
     color: colors.ink,
-    marginBottom: 8,
+    textAlign: 'center',
   },
-  sectionBody: {
+  errorBody: {
     fontSize: 13.5,
     lineHeight: 20,
     fontFamily: fonts.body,
     color: colors.textSecondary,
+    textAlign: 'center',
+  },
+  openBtn: {
+    marginTop: 8,
+    paddingHorizontal: 20,
+    height: 48,
+    borderRadius: radius.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.gold,
+  },
+  openBtnText: {
+    fontSize: 15,
+    fontFamily: fonts.bodySemiBold,
+    color: colors.canvas,
   },
 });

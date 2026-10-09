@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, StyleSheet, StatusBar, TouchableOpacity, Image, Platform } from 'react-native';
 import Svg, { Path, Rect } from 'react-native-svg';
 import { colors, fonts, radius } from '../shared/theme';
@@ -10,6 +10,9 @@ import { loadSignupProgress } from '../shared/store/signupProgress';
 import { useGoogleSignIn } from '../shared/hooks/useGoogleSignIn';
 import { useAppleSignIn } from '../shared/hooks/useAppleSignIn';
 import SpinningIcon from '../components/SpinningIcon';
+import { Ionicons } from '@expo/vector-icons';
+import * as WebBrowser from 'expo-web-browser';
+import { TERMS_URL, PRIVACY_URL } from '../shared/billing/legalLinks';
 /* Small inline icons (stroke = ink, like the mockup) */
 function PhoneIcon() {
   return (
@@ -55,6 +58,20 @@ export default function ChooseMethodScreen({ navigation }) {
     const progress = await loadSignupProgress();
     await resolvePostAuthNavigation(resp, 'apple', navigation, progress);
   });
+  const [agreed, setAgreed] = useState(false);
+  const [showAgreeError, setShowAgreeError] = useState(false);
+  // Every way of creating an account needs the Terms accepted first.
+  const requireAgreement = (fn) => () => {
+    if (!agreed) {
+      setShowAgreeError(true);
+      return;
+    }
+    fn();
+  };
+  const toggleAgreed = () => {
+    setAgreed((v) => !v);
+    setShowAgreeError(false);
+  };
   const handlePhone = async () => {
     try {
       await startPhoneSignupProgress();
@@ -102,7 +119,7 @@ export default function ChooseMethodScreen({ navigation }) {
           <TouchableOpacity
             style={[styles.methodBtn, styles.methodBtnLight]}
             activeOpacity={0.8}
-            onPress={() => googleSignIn()}
+            onPress={requireAgreement(() => googleSignIn())}
             disabled={googleLoading}
           >
             {googleLoading ? (
@@ -119,7 +136,7 @@ export default function ChooseMethodScreen({ navigation }) {
             <TouchableOpacity
               style={[styles.methodBtn, styles.methodBtnDark]}
               activeOpacity={0.85}
-              onPress={() => appleSignIn()}
+              onPress={requireAgreement(() => appleSignIn())}
               disabled={appleLoading}
             >
               <AppleIcon />
@@ -130,7 +147,7 @@ export default function ChooseMethodScreen({ navigation }) {
           <TouchableOpacity
             style={[styles.methodBtn, styles.methodBtnLight]}
             activeOpacity={0.8}
-            onPress={handlePhone}
+            onPress={requireAgreement(handlePhone)}
           >
             <PhoneIcon />
             <Text style={styles.methodTextLight}>Continue with Phone</Text>
@@ -139,12 +156,44 @@ export default function ChooseMethodScreen({ navigation }) {
           <TouchableOpacity
             style={[styles.methodBtn, styles.methodBtnLight]}
             activeOpacity={0.8}
-            onPress={() => navigation.navigate('SignUp')}
+            onPress={requireAgreement(() => navigation.navigate('SignUp'))}
           >
             <MailIcon />
             <Text style={styles.methodTextLight}>Continue with Email</Text>
           </TouchableOpacity>
         </View>
+
+        <View style={styles.agreeRow}>
+          <TouchableOpacity
+            onPress={toggleAgreed}
+            style={styles.checkbox}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: agreed }}
+            accessibilityLabel="I agree to the Terms of Service and Privacy Policy"
+          >
+            <Ionicons
+              name={agreed ? 'checkbox' : 'square-outline'}
+              size={24}
+              color={agreed ? colors.gold : showAgreeError ? colors.danger : colors.textSecondary}
+            />
+          </TouchableOpacity>
+          <Text style={styles.agreeText}>
+            <Text onPress={toggleAgreed}>I agree to the </Text>
+            <Text style={styles.agreeLink} onPress={() => WebBrowser.openBrowserAsync(TERMS_URL)} accessibilityRole="link">
+              Terms of Service
+            </Text>
+            <Text onPress={toggleAgreed}> and </Text>
+            <Text style={styles.agreeLink} onPress={() => WebBrowser.openBrowserAsync(PRIVACY_URL)} accessibilityRole="link">
+              Privacy Policy
+            </Text>
+          </Text>
+        </View>
+        {showAgreeError ? (
+          <Text style={styles.agreeError} accessibilityLiveRegion="polite">
+            Please agree to the Terms and Privacy Policy to continue.
+          </Text>
+        ) : null}
       </View>
     </View>
   );
@@ -196,6 +245,35 @@ const styles = StyleSheet.create({
   },
   methods: {
     gap: 14,
+  },
+  agreeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginTop: 24,
+  },
+  checkbox: {
+    width: 28,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  agreeText: {
+    flex: 1,
+    fontFamily: fonts.body,
+    fontSize: 13.5,
+    lineHeight: 20,
+    color: colors.textSecondary,
+  },
+  agreeLink: {
+    color: colors.gold,
+    fontFamily: fonts.bodySemiBold,
+  },
+  agreeError: {
+    marginTop: 10,
+    fontFamily: fonts.body,
+    fontSize: 13,
+    color: colors.danger,
   },
   methodBtn: {
     height: 54,
