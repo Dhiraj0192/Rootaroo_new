@@ -27,6 +27,14 @@ describe('notifyHousehold', () => {
     ).rejects.toThrow('push down');
   });
 
+  it('with throwOnError, does not reject when some members were reached (a retry would push them twice)', async () => {
+    (sendToUser as jest.Mock).mockRejectedValueOnce(new Error('one phone down')).mockResolvedValueOnce(undefined);
+    await expect(
+      notifyHousehold('h1', 'calendar', 't', 'b', undefined, undefined, { throwOnError: true }),
+    ).resolves.toBeUndefined();
+    expect(sendToUser).toHaveBeenCalledTimes(2);
+  });
+
   it('rejects when the member lookup fails and throwOnError is set', async () => {
     (HouseholdMember.findAll as jest.Mock).mockRejectedValue(new Error('db down'));
     await expect(

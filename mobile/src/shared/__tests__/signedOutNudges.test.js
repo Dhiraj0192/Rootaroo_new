@@ -10,7 +10,7 @@ jest.mock('expo-notifications', () => ({
 
 const Notifications = require('expo-notifications');
 const {
-  scheduleSignedOutNudges, cancelSignedOutNudges, NUDGES_KEY, SIGNED_OUT_POOL, NUDGE_DAYS,
+  scheduleSignedOutNudges, cancelSignedOutNudges, suppressSignedOutNudges, NUDGES_KEY, SIGNED_OUT_POOL, NUDGE_DAYS,
 } = require('../signedOutNudges');
 
 const DAY = 24 * 60 * 60;
@@ -85,5 +85,19 @@ describe('signed-out nudges', () => {
     Notifications.getPermissionsAsync.mockResolvedValueOnce({ status: 'denied' });
     await scheduleSignedOutNudges(allowed());
     expect(Notifications.scheduleNotificationAsync).not.toHaveBeenCalled();
+  });
+
+  it('after the account is deleted, schedules nothing (also on later launches) until someone signs in', async () => {
+    await scheduleSignedOutNudges(allowed());
+    jest.clearAllMocks();
+    suppressSignedOutNudges();
+    await scheduleSignedOutNudges(allowed());
+    expect(Notifications.cancelScheduledNotificationAsync).toHaveBeenCalledTimes(4);
+    expect(Notifications.scheduleNotificationAsync).not.toHaveBeenCalled();
+    await scheduleSignedOutNudges(allowed());
+    expect(Notifications.scheduleNotificationAsync).not.toHaveBeenCalled();
+    await cancelSignedOutNudges();
+    await scheduleSignedOutNudges(allowed());
+    expect(Notifications.scheduleNotificationAsync).toHaveBeenCalledTimes(4);
   });
 });

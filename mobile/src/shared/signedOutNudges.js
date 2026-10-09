@@ -3,6 +3,8 @@ import * as Notifications from 'expo-notifications';
 import { campaignsApi } from './api/campaigns';
 
 export const NUDGES_KEY = 'rootaroo_signed_out_nudges';
+// Set when the account was deleted on this phone: nobody is left to win back, so no nudges until someone signs in.
+export const NUDGES_SUPPRESSED_KEY = 'rootaroo_signed_out_nudges_off';
 
 const DAY_SECONDS = 24 * 60 * 60;
 
@@ -59,6 +61,10 @@ function pickDistinct(pool, count, rand) {
 
 async function scheduleNow({ api, rand }) {
   try {
+    if ((await AsyncStorage.getItem(NUDGES_SUPPRESSED_KEY).catch(() => null)) === '1') {
+      await cancelStoredIds();
+      return;
+    }
     const { status } = await Notifications.getPermissionsAsync();
     if (status !== 'granted') return;
 
@@ -102,6 +108,8 @@ async function scheduleNow({ api, rand }) {
 
 async function cancelNow() {
   try {
+    // Someone signed in: a later sign-out may nudge again.
+    await AsyncStorage.removeItem(NUDGES_SUPPRESSED_KEY).catch(() => {});
     await cancelStoredIds();
   } catch {
     // Nothing to cancel is not an error.
@@ -115,4 +123,16 @@ export function scheduleSignedOutNudges(deps = {}) {
 
 export function cancelSignedOutNudges() {
   return enqueue(cancelNow);
+}
+
+/** The account was deleted: cancel any nudges and schedule none on this phone until someone signs in. */
+export function suppressSignedOutNudges() {
+  return enqueue(async () => {
+    try {
+      await AsyncStorage.setItem(NUDGES_SUPPRESSED_KEY, '1');
+      await cancelStoredIds();
+    } catch {
+      // Nudges are optional; never block the sign-out.
+    }
+  });
 }

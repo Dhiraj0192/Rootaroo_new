@@ -13,7 +13,7 @@ import { onPurchaserDeleted, reportPurchaserDeletionFailure } from '../billing/d
 import { jwtVerify, createRemoteJWKSet } from 'jose';
 import { hashOtpCode, MAX_OTP_ATTEMPTS } from '../../shared/utils/otp';
 import { UnauthorizedError, ConflictError, NotFoundError, AppError } from '../../shared/utils/errors';
-import { assertOwnUploadKey } from '../../shared/utils/uploadKeys';
+import { assertOwnUploadKey, storageKeyFromOwnUrl } from '../../shared/utils/uploadKeys';
 import { getEmail, getSms } from '../../services';
 import { upsertDevice, touchDevice } from '../device/service';
 import type { DeviceInfo } from '../device/types';
@@ -203,11 +203,19 @@ export async function updateProfile(
   const user = await User.findByPk(userId);
   if (!user) throw new NotFoundError('User');
 
-  // Own upload, or a Google/Apple photo link; never an arbitrary storage key.
-  if (body.avatarUrl) assertOwnUploadKey(body.avatarUrl, userId, ['avatars'], { allowExternalUrl: true });
+  // Own upload, or a Google photo link; never an arbitrary storage key. One of our
+  // own signed links is stored as the key inside it, never as an expiring URL.
+  let avatarUrl = body.avatarUrl;
+  if (avatarUrl) {
+    const key = storageKeyFromOwnUrl(avatarUrl) ?? avatarUrl;
+    const currentKey = user.avatarUrl ? (storageKeyFromOwnUrl(user.avatarUrl) ?? user.avatarUrl) : null;
+    // The app often sends back the photo it was shown: that is the current one, already accepted.
+    if (key !== currentKey) assertOwnUploadKey(key, userId, ['avatars'], { allowExternalUrl: true });
+    avatarUrl = key;
+  }
 
   if (body.displayName !== undefined) user.displayName = body.displayName;
-  if (body.avatarUrl !== undefined) user.avatarUrl = body.avatarUrl;
+  if (body.avatarUrl !== undefined) user.avatarUrl = avatarUrl ?? null;
   if (body.avatarEmoji !== undefined) user.avatarEmoji = body.avatarEmoji;
   if (body.avatarPresetId !== undefined) user.avatarPresetId = body.avatarPresetId;
   if (body.dateOfBirth !== undefined) user.dateOfBirth = body.dateOfBirth;
@@ -757,7 +765,8 @@ export async function registerPhone(body: RegisterPhoneBody, device?: DeviceInfo
     const id = uuidv4();
     // The account doesn't exist yet, so nothing can have been uploaded under
     // it: only an outside photo link is acceptable here.
-    if (body.avatarUrl) assertOwnUploadKey(body.avatarUrl, id, ['avatars'], { allowExternalUrl: true });
+    const avatarUrl = body.avatarUrl ? (storageKeyFromOwnUrl(body.avatarUrl) ?? body.avatarUrl) : null;
+    if (avatarUrl) assertOwnUploadKey(avatarUrl, id, ['avatars'], { allowExternalUrl: true });
     user = await User.create({
       id,
       email,
@@ -770,7 +779,7 @@ export async function registerPhone(body: RegisterPhoneBody, device?: DeviceInfo
       homeAddress: body.homeAddress || null,
       addToCalendar: body.addToCalendar ?? true,
       notifyHousehold: body.notifyHousehold ?? true,
-      avatarUrl: body.avatarUrl ?? null,
+      avatarUrl,
       avatarPresetId: body.avatarPresetId ?? null,
       avatarEmoji: body.avatarEmoji ?? null,
       role: 'member',

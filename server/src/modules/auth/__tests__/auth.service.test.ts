@@ -144,6 +144,34 @@ describe('Auth Service — Update Profile', () => {
     expect(user.avatarUrl).toBe('https://lh3.googleusercontent.com/a/photo');
   });
 
+  describe('our own signed photo links sent back by the app', () => {
+    const saved = { bucket: env.s3.bucket, cdn: env.cloudfront.domain };
+    beforeEach(() => { env.s3.bucket = 'rootaroo-prod'; env.cloudfront.domain = 'd123.cloudfront.net'; });
+    afterEach(() => { env.s3.bucket = saved.bucket; env.cloudfront.domain = saved.cdn; });
+
+    it('stores the key inside, never the expiring link', async () => {
+      const user = fakeUser({ avatarUrl: null }) as any;
+      (models.User.findByPk as jest.Mock).mockResolvedValue(user);
+      await updateProfile(user.id, { avatarUrl: `https://d123.cloudfront.net/avatars/${user.id}/new.jpg?Signature=s&Key-Pair-Id=k` });
+      expect(user.avatarUrl).toBe(`avatars/${user.id}/new.jpg`);
+    });
+
+    it('accepts the current photo sent back as it was shown, even an older key, and heals a stored link', async () => {
+      const user = fakeUser({ avatarUrl: 'https://rootaroo-prod.s3.us-east-1.amazonaws.com/avatars/old.jpg?X-Amz-Signature=x' }) as any;
+      (models.User.findByPk as jest.Mock).mockResolvedValue(user);
+      await updateProfile(user.id, { displayName: 'Renamed', avatarUrl: user.avatarUrl });
+      expect(user.avatarUrl).toBe('avatars/old.jpg');
+      expect(user.save).toHaveBeenCalled();
+    });
+
+    it("refuses a signed link to someone else's file, and outside sites other than Google", async () => {
+      const user = fakeUser({ avatarUrl: null }) as any;
+      (models.User.findByPk as jest.Mock).mockResolvedValue(user);
+      await expect(updateProfile(user.id, { avatarUrl: 'https://d123.cloudfront.net/vault/h1/secret?Signature=s' })).rejects.toThrow("That file isn't yours");
+      await expect(updateProfile(user.id, { avatarUrl: 'https://example.com/me.jpg' })).rejects.toThrow("That file isn't yours");
+    });
+  });
+
   it('should throw if the new phone number already belongs to another account', async () => {
     const user = fakeUser({ id: 'user-a', phone: null });
     const otherUser = fakeUser({ id: 'user-b', phone: '5550100192' });

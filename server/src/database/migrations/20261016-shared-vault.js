@@ -18,8 +18,11 @@ const has = async (queryInterface, table, column) => Boolean((await queryInterfa
 
 module.exports = {
   async up(queryInterface, Sequelize) {
-    await queryInterface.sequelize.query('DELETE FROM vault_document_keys');
-    await queryInterface.sequelize.query('DELETE FROM vault_documents');
+    // Only while the old plaintext columns are still there: a re-run must never wipe encrypted files.
+    if (await has(queryInterface, 'vault_documents', 'name')) {
+      await queryInterface.sequelize.query('DELETE FROM vault_document_keys');
+      await queryInterface.sequelize.query('DELETE FROM vault_documents');
+    }
 
     for (const column of ['name', 'mime_type', 'encrypted_key', 'iv']) {
       if (await has(queryInterface, 'vault_documents', column)) await queryInterface.removeColumn('vault_documents', column);
@@ -34,8 +37,11 @@ module.exports = {
   },
 
   async down(queryInterface, Sequelize) {
-    await queryInterface.sequelize.query('DELETE FROM vault_document_keys');
-    await queryInterface.sequelize.query('DELETE FROM vault_documents');
+    // Rows in the new shape cannot be converted back; only clear them while they exist.
+    if (await has(queryInterface, 'vault_documents', 'sealed_meta')) {
+      await queryInterface.sequelize.query('DELETE FROM vault_document_keys');
+      await queryInterface.sequelize.query('DELETE FROM vault_documents');
+    }
 
     // The household foreign key leans on this index; give it a plain one before this goes.
     await addIndexIfMissing(queryInterface, 'vault_documents', ['household_id'], { name: 'idx_vault_documents_household_id' });

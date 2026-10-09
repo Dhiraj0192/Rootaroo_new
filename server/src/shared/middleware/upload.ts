@@ -1,4 +1,5 @@
 import multer from 'multer';
+import { ValidationError } from '../utils/errors';
 
 const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
 const VIDEO_EXTENSIONS = ['.mp4', '.mov', '.avi', '.webm', '.mkv'];
@@ -10,7 +11,7 @@ const imageFilter: multer.Options['fileFilter'] = (_req, file, cb) => {
   if (IMAGE_EXTENSIONS.includes(ext)) {
     cb(null, true);
   } else {
-    cb(new Error(`Only images (${IMAGE_EXTENSIONS.join(', ')}) are allowed.`));
+    cb(new ValidationError(`Only images (${IMAGE_EXTENSIONS.join(', ')}) are allowed.`));
   }
 };
 
@@ -19,7 +20,7 @@ const mediaFilter: multer.Options['fileFilter'] = (_req, file, cb) => {
   if (ALLOWED.includes(ext)) {
     cb(null, true);
   } else {
-    cb(new Error(`Only images and videos (${ALLOWED.join(', ')}) are allowed.`));
+    cb(new ValidationError(`Only images and videos (${ALLOWED.join(', ')}) are allowed.`));
   }
 };
 
@@ -28,7 +29,7 @@ const audioFilter: multer.Options['fileFilter'] = (_req, file, cb) => {
   if (AUDIO_EXTENSIONS.includes(ext)) {
     cb(null, true);
   } else {
-    cb(new Error(`Only audio files (${AUDIO_EXTENSIONS.join(', ')}) are allowed.`));
+    cb(new ValidationError(`Only audio files (${AUDIO_EXTENSIONS.join(', ')}) are allowed.`));
   }
 };
 
@@ -58,7 +59,7 @@ const ciphertextFilter: multer.Options['fileFilter'] = (_req, file, cb) => {
   if (file.mimetype === 'application/octet-stream') {
     cb(null, true);
   } else {
-    cb(new Error('Journal uploads must be encrypted (application/octet-stream).'));
+    cb(new ValidationError('Journal uploads must be encrypted (application/octet-stream).'));
   }
 };
 

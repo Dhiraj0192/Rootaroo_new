@@ -84,6 +84,8 @@ export default function AccountDeletionScreen({ navigation }) {
   const handleLogout = () => {
     // The account is gone, so the key that opened its private data goes too.
     usePrivateSpaceStore.getState().forget();
+    // No "come back" nudges for an account that no longer exists. Queued before logout, which schedules them.
+    require('../shared/signedOutNudges').suppressSignedOutNudges();
     logout();
   };
   if (step === 'done') {

@@ -44,13 +44,20 @@ export async function notifyHousehold(
       .map((m) => m.userId)
       .filter((id) => id !== excludeUserId);
 
-    // notifyUser swallows its own errors, so callers that must know about a
-    // failed send go straight to sendToUser.
-    await Promise.all(
-      userIds.map((userId) => (options?.throwOnError
-        ? sendToUser(userId, type, title, body, data, undefined)
-        : notifyUser(userId, type, title, body, data))),
+    if (!options?.throwOnError) {
+      await Promise.all(userIds.map((userId) => notifyUser(userId, type, title, body, data)));
+      return;
+    }
+    // throwOnError: the caller retries the whole household on a throw, so it only throws when
+    // nobody was reached. A partial failure is logged; retrying would re-push the members who got it.
+    const results = await Promise.allSettled(
+      userIds.map((userId) => sendToUser(userId, type, title, body, data, undefined)),
     );
+    const failed = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+    if (failed.length > 0 && failed.length === results.length) throw failed[0].reason;
+    if (failed.length > 0) {
+      logger.warn(`[notifyHousehold] ${failed.length} of ${results.length} sends failed for household ${householdId}; not retried`);
+    }
   } catch (error) {
     if (options?.throwOnError) throw error;
     logger.error(`[notifyHousehold] Failed to notify household ${householdId}:`, error);
