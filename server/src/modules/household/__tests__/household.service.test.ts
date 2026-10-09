@@ -20,6 +20,9 @@ jest.mock('../../vault/access', () => ({
 }));
 import { onMemberLostVaultAccess, onMemberGainedVaultAccess } from '../../vault/access';
 
+jest.mock('../../location-share/service', () => ({ endSharesForMember: jest.fn().mockResolvedValue(undefined) }));
+import { endSharesForMember } from '../../location-share/service';
+
 jest.mock('../../../shared/utils/mailer', () => ({
   sendAdminAlertEmail: jest.fn().mockResolvedValue(undefined),
 }));
@@ -334,6 +337,8 @@ describe('Household Service — Member Management', () => {
 
       expect(destroy).toHaveBeenCalledWith({ transaction: txn });
       expect(onMemberLostVaultAccess).toHaveBeenCalledWith(otherUserId, householdId, txn);
+      // A removed member's live location stops going to this household, in the same transaction.
+      expect(endSharesForMember).toHaveBeenCalledWith(otherUserId, householdId, txn);
     });
 
     it('should throw ForbiddenError if requester is not an admin', async () => {
@@ -389,6 +394,7 @@ describe('Household Service — Member Management', () => {
 
       expect(destroy).toHaveBeenCalledWith({ transaction: txn });
       expect(onMemberLostVaultAccess).toHaveBeenCalledWith(userId, householdId, txn);
+      expect(endSharesForMember).toHaveBeenCalledWith(userId, householdId, txn);
     });
 
     it('should throw ForbiddenError if admin tries to leave without transferring', async () => {
@@ -989,6 +995,8 @@ describe('finalizeDueHouseholdDeletions vault access', () => {
 
     expect(onMemberLostVaultAccess).toHaveBeenCalledWith(userId, householdId, expect.anything());
     expect(onMemberLostVaultAccess).toHaveBeenCalledWith(otherUserId, householdId, expect.anything());
+    expect(endSharesForMember).toHaveBeenCalledWith(userId, householdId, expect.anything());
+    expect(endSharesForMember).toHaveBeenCalledWith(otherUserId, householdId, expect.anything());
     expect(models.HouseholdMember.destroy).toHaveBeenCalledWith({ where: { householdId }, transaction: expect.anything() });
   });
 });

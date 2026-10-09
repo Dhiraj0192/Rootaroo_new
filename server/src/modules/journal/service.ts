@@ -1,8 +1,8 @@
 import { v4 as uuidv4 } from 'uuid';
-import { Op } from 'sequelize';
+import { Op, Transaction } from 'sequelize';
 import { formatInTimeZone, fromZonedTime } from 'date-fns-tz';
 import { UniqueConstraintError } from 'sequelize';
-import { JournalEntry, JournalMedia, JournalUpload, Household } from '../../database/models';
+import { sequelize, JournalEntry, JournalMedia, JournalUpload, Household, User } from '../../database/models';
 import { AppError, ConflictError, NotFoundError } from '../../shared/utils/errors';
 import { assertOwnUploadKey, userUploadFolder } from '../../shared/utils/uploadKeys';
 import { getUserHousehold as getUserHouseholdCore } from '../../shared/utils/household';
@@ -104,14 +104,40 @@ export const JOURNAL_QUOTA_BYTES = 2 * 1024 * 1024 * 1024;
 /**
  * Stores encrypted blobs and records each key, so they count toward the user's
  * quota right away and the daily cleanup can remove any that never get attached
- * to an entry. The quota is checked before anything is written to storage.
+ * to an entry. A cheap quota check runs before anything is written to storage;
+ * the authoritative one runs under a lock once the blobs are stored.
  */
 export async function uploadBlobs(
   userId: string,
   files: Array<{ buffer: Buffer; size: number }>,
 ): Promise<Array<{ fileName: string; size: number }>> {
   const incoming = files.reduce((sum, f) => sum + f.size, 0);
-  const used = Number(await JournalUpload.sum('sizeBytes', { where: { userId } })) || 0;
+  await checkJournalQuota(userId, incoming);
+
+  const results: Array<{ fileName: string; size: number }> = [];
+  try {
+    for (const f of files) {
+      const { key } = await uploadBuffer(f.buffer, userUploadFolder(BLOB_AREA, userId), 'application/octet-stream');
+      results.push({ fileName: key, size: f.size });
+    }
+    await sequelize.transaction(async (transaction) => {
+      // Parallel uploads by one person queue here, so the usage sum below cannot be overshot.
+      await User.findByPk(userId, { attributes: ['id'], transaction, lock: true });
+      await checkJournalQuota(userId, incoming, transaction);
+      for (const r of results) {
+        await JournalUpload.create({ key: r.fileName, userId, sizeBytes: r.size }, { transaction });
+      }
+    });
+  } catch (error) {
+    // Nothing records these objects, so they would otherwise sit in the bucket for good.
+    await Promise.all(results.map((r) => deleteObject(r.fileName).catch(() => undefined)));
+    throw error;
+  }
+  return results;
+}
+
+async function checkJournalQuota(userId: string, incoming: number, transaction?: Transaction): Promise<void> {
+  const used = Number(await JournalUpload.sum('sizeBytes', { where: { userId }, ...(transaction ? { transaction } : {}) })) || 0;
   if (used + incoming > JOURNAL_QUOTA_BYTES) {
     throw new AppError(
       413,
@@ -119,13 +145,6 @@ export async function uploadBlobs(
       'JOURNAL_QUOTA_EXCEEDED',
     );
   }
-  const results: Array<{ fileName: string; size: number }> = [];
-  for (const f of files) {
-    const { key } = await uploadBuffer(f.buffer, userUploadFolder(BLOB_AREA, userId), 'application/octet-stream');
-    await JournalUpload.create({ key, userId, sizeBytes: f.size });
-    results.push({ fileName: key, size: f.size });
-  }
-  return results;
 }
 
 /** An entry now owns these uploads: the cleanup job must leave them alone. */

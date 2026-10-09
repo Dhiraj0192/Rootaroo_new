@@ -71,6 +71,21 @@ describe('shared vault migration is re-runnable', () => {
     await expect(migration.up(qi, Sequelize)).resolves.toBeUndefined();
   });
 
+  it('deletes the old rows only on the old schema, so a re-run never wipes encrypted files', async () => {
+    const old = fake(OLD);
+    await migration.up(old.qi, Sequelize);
+    expect(old.qi.sequelize.query.mock.calls.map((c: string[]) => c[0])).toEqual(['DELETE FROM vault_document_keys', 'DELETE FROM vault_documents']);
+    const again = fake(NEW_WITHOUT_VAULT_KEYS);
+    await migration.up(again.qi, Sequelize);
+    expect(again.qi.sequelize.query).not.toHaveBeenCalled();
+  });
+
+  it('down() on the old schema deletes nothing', async () => {
+    const { qi } = fake(OLD);
+    await migration.down(qi, Sequelize);
+    expect(qi.sequelize.query).not.toHaveBeenCalled();
+  });
+
   it('down() twice in a row is fine, and recreates vault_keys only once', async () => {
     const { qi, state } = fake(NEW_WITHOUT_VAULT_KEYS);
     await migration.down(qi, Sequelize);

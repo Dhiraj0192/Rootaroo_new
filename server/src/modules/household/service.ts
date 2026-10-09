@@ -11,6 +11,7 @@ import { withDeadlockRetry } from '../../shared/utils/dbRetry';
 import { assertSeatAvailable, clearEntitlementCache } from '../billing/entitlement';
 import { onHouseholdDeletionScheduled, onHouseholdDeletionCancelled, onHouseholdPurged, syncBillingEmail, reportDeletionHookFailure } from '../billing/deletion';
 import { onMemberLostVaultAccess, onMemberGainedVaultAccess } from '../vault/access';
+import { endSharesForMember } from '../location-share/service';
 import logger from '../../shared/utils/logger';
 import * as notificationService from '../../shared/services/notifications';
 import type {
@@ -352,6 +353,7 @@ export async function removeMember(
   await sequelize.transaction(async (transaction) => {
     await target.destroy({ transaction });
     await onMemberLostVaultAccess(targetUserId, householdId, transaction);
+    await endSharesForMember(targetUserId, householdId, transaction);
   });
   await removeFromHouseholdConversation(householdId, targetUserId);
   await clearEntitlementCache(householdId);
@@ -372,6 +374,7 @@ export async function leaveHousehold(userId: string, householdId: string, outer?
   const removeAndRevoke = async (transaction: Transaction) => {
     await membership.destroy({ transaction });
     await onMemberLostVaultAccess(userId, householdId, transaction);
+    await endSharesForMember(userId, householdId, transaction);
     await User.update({ role: 'member' }, { where: { id: userId }, transaction });
   };
   if (outer) await removeAndRevoke(outer);
@@ -790,7 +793,10 @@ async function finalizeHouseholdDeletion(household: Household): Promise<void> {
   // owned content (feed posts, tasks, vault docs, etc.).
   await sequelize.transaction(async (transaction) => {
     const members = await HouseholdMember.findAll({ where: { householdId: household.id }, transaction });
-    for (const member of members) await onMemberLostVaultAccess(member.userId, household.id, transaction);
+    for (const member of members) {
+      await onMemberLostVaultAccess(member.userId, household.id, transaction);
+      await endSharesForMember(member.userId, household.id, transaction);
+    }
     await HouseholdMember.destroy({ where: { householdId: household.id }, transaction });
     await household.destroy({ transaction });
   });

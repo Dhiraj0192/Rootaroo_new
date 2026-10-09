@@ -24,7 +24,8 @@ import ErrorState from "../components/ErrorState";
 import { showAlert } from "../shared/services/themedAlert";
 
 /** A photo decrypted on the phone and shown from memory; nothing is cached on disk. */
-function EncryptedPhoto({ media, entryKey }) {
+/** `entry` is the loaded entry: loadPhoto needs its id and its (non-enumerable) entry key. */
+function EncryptedPhoto({ media, entry }) {
   const [uri, setUri] = useState(null);
   useEffect(() => {
     let live = true;
@@ -35,7 +36,7 @@ function EncryptedPhoto({ media, entryKey }) {
     return () => {
       live = false;
     };
-  }, [media, entryKey]);
+  }, [media, entry]);
   if (!uri) return <View style={styles.mediaItem} />;
   return <Image source={{ uri }} style={styles.mediaItem} cachePolicy="none" />;
 }
@@ -205,7 +206,7 @@ export default function JournalEntryDetailScreen({ navigation, route }) {
         {entry?.media?.length > 0 ? (
           <View style={styles.mediaGrid}>
             {entry.media.map((item) => (
-              <EncryptedPhoto key={item.id} media={item} entryKey={entry.entryKey} />
+              <EncryptedPhoto key={item.id} media={item} entry={entry} />
             ))}
           </View>
         ) : null}

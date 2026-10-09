@@ -200,6 +200,13 @@ export async function updateShareLocation(
 ): Promise<LocationShareResponse> {
   const share = await loadOwnActive(userId, shareId, 'This location share is not yours to update');
 
+  // Someone no longer in the household must not keep streaming their position to it.
+  const memberIds = await memberIdsOf(share.householdId);
+  if (!memberIds.includes(userId)) {
+    await endShare(share, new Date());
+    throw new AppError(410, 'This location share has ended');
+  }
+
   // Conditional write: the expiry job or a stop may have ended the share since it was loaded.
   const now = new Date();
   const [changed] = await LocationShare.update(
@@ -210,7 +217,7 @@ export async function updateShareLocation(
 
   const full = await loadFull(share.id);
   const response = toResponse(full || share);
-  emitTo([userId, ...audienceOf(share, await memberIdsOf(share.householdId))], 'location:update', response);
+  emitTo([userId, ...audienceOf(share, memberIds)], 'location:update', response);
   return response;
 }
 
@@ -244,6 +251,32 @@ export async function endExpiredShares(now: Date): Promise<number> {
     await endShare(share, share.expiresAt);
   }
   return expired.length;
+}
+
+/**
+ * Someone stopped being a member of a household (removed, left, or the household was deleted).
+ * Their running shares in it end, so their position stops going to people they no longer
+ * share a household with, and their phone is told to stop sending. Shares they could see
+ * disappear from their map. Pass the transaction of the membership change; the
+ * announcements go out once it has committed.
+ */
+export async function endSharesForMember(userId: string, householdId: string, transaction?: Transaction): Promise<void> {
+  const now = new Date();
+  const own = await LocationShare.findAll({
+    where: { sharerId: userId, householdId, endedAt: null },
+    ...(transaction ? { transaction } : {}),
+  });
+  for (const share of own) await endShare(share, now, transaction);
+  const watching = (await LocationShare.findAll({
+    where: { householdId, endedAt: null, sharerId: { [Op.ne]: userId }, expiresAt: { [Op.gt]: now } },
+    ...(transaction ? { transaction } : {}),
+  })).filter((share) => !share.viewerIds || share.viewerIds.includes(userId));
+
+  await afterCommit(transaction, async () => {
+    // Without a transaction endShare has already announced each one.
+    if (transaction) for (const share of own) await announceEnded(share);
+    for (const share of watching) emitTo([userId], 'location:share-ended', toResponse((await loadFull(share.id)) || share));
+  });
 }
 
 /** Ping responses link to the share they started; one lookup for a whole page of pings. */

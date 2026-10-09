@@ -88,9 +88,15 @@ describe('listDevices', () => {
       where: { userId, revokedAt: null }, order: [['lastSeenAt', 'DESC']],
     }));
     expect(list).toEqual([
-      { id: 'd1', name: 'Phone', platform: 'ios', appVersion: '1.3.0', lastSeenAt: '2026-10-08T10:00:00.000Z', createdAt: '2026-09-01T00:00:00.000Z', current: false },
-      { id: 'd2', name: 'Tablet', platform: 'android', appVersion: '1.3.0', lastSeenAt: '2026-10-01T10:00:00.000Z', createdAt: '2026-09-01T00:00:00.000Z', current: true },
+      { id: 'd1', name: 'Phone', platform: 'ios', appVersion: '1.3.0', lastSeenAt: '2026-10-08T10:00:00.000Z', createdAt: '2026-09-01T00:00:00.000Z', current: false, holdsKey: false },
+      { id: 'd2', name: 'Tablet', platform: 'android', appVersion: '1.3.0', lastSeenAt: '2026-10-01T10:00:00.000Z', createdAt: '2026-09-01T00:00:00.000Z', current: true, holdsKey: false },
     ]);
+  });
+
+  it('says which phone holds the private-space key', async () => {
+    (Device.findAll as jest.Mock).mockResolvedValue([row({ id: 'd1', holdsAccountKey: true }), row({ id: 'd2' })]);
+    const list = await listDevices(userId, 'd2');
+    expect(list.map((d) => [d.id, d.holdsKey])).toEqual([['d1', true], ['d2', false]]);
   });
 
   it('never exposes the device key', async () => {

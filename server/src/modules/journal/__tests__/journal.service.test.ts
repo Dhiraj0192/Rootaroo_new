@@ -38,6 +38,8 @@ jest.mock('../../../database/models', () => {
     JournalUpload: mockModel('JournalUpload'),
     HouseholdMember: mockModel('HouseholdMember'),
     Household: mockModel('Household'),
+    User: mockModel('User'),
+    sequelize: { transaction: jest.fn(async (fn: (t: unknown) => unknown) => fn({ id: 'tx' })) },
   };
 });
 
@@ -323,6 +325,7 @@ describe('Journal blob uploads', () => {
     expect(modelsMock.JournalUpload.create).toHaveBeenCalledTimes(2);
     expect(modelsMock.JournalUpload.create).toHaveBeenCalledWith(
       expect.objectContaining({ key: out[0].fileName, userId, sizeBytes: 100 }),
+      expect.anything(),
     );
     expect(modelsMock.JournalUpload.create.mock.calls[0][0]).not.toHaveProperty('attachedAt');
   });
@@ -345,6 +348,22 @@ describe('Journal blob uploads', () => {
   it('sums by the caller only', async () => {
     await uploadBlobs(userId, [file(1)]);
     expect(modelsMock.JournalUpload.sum).toHaveBeenCalledWith('sizeBytes', { where: { userId } });
+  });
+
+  it('re-checks the quota under a lock on the user, so parallel uploads cannot both slip under it', async () => {
+    await uploadBlobs(userId, [file(1)]);
+    expect(modelsMock.User.findByPk).toHaveBeenCalledWith(userId, expect.objectContaining({ lock: true, transaction: { id: 'tx' } }));
+    expect(modelsMock.JournalUpload.sum).toHaveBeenLastCalledWith('sizeBytes', { where: { userId }, transaction: { id: 'tx' } });
+    expect(modelsMock.JournalUpload.create).toHaveBeenCalledWith(expect.objectContaining({ sizeBytes: 1 }), { transaction: { id: 'tx' } });
+  });
+
+  it('when a parallel upload filled the quota meanwhile, deletes the stored blobs and returns 413', async () => {
+    modelsMock.JournalUpload.sum.mockResolvedValueOnce(0).mockResolvedValueOnce(JOURNAL_QUOTA_BYTES);
+    const err: AppError = await uploadBlobs(userId, [file(100), file(200)]).catch((e) => e);
+    expect(err.statusCode).toBe(413);
+    expect(s3Mock.uploadBuffer).toHaveBeenCalledTimes(2);
+    expect(s3Mock.deleteObject).toHaveBeenCalledTimes(2);
+    expect(modelsMock.JournalUpload.create).not.toHaveBeenCalled();
   });
 });
 

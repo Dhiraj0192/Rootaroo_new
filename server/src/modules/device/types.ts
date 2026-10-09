@@ -16,4 +16,6 @@ export interface DeviceResponse {
   lastSeenAt: string;
   createdAt: string;
   current: boolean;
+  /** This phone holds the account's private-space key. */
+  holdsKey: boolean;
 }

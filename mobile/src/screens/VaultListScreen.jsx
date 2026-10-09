@@ -246,7 +246,7 @@ export default function VaultListScreen({ navigation }) {
       key={item.id}
       style={styles.card}
       onPress={() => (item.pending
-        ? showAlert('Not ready yet', 'This file opens once another adult in your household opens Rootaroo on their phone.')
+        ? showAlert('Not ready yet', 'This file opens once another family member opens Rootaroo on their phone.')
         : openViewer(item))}
       onLongPress={() => openActionSheet(item)}
       delayLongPress={350}

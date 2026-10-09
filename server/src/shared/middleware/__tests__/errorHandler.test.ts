@@ -1,4 +1,5 @@
 import { errorHandler } from '../errorHandler';
+import multer from 'multer';
 import { AppError } from '../../utils/errors';
 
 function mockRes() {
@@ -29,5 +30,15 @@ describe('errorHandler', () => {
     const res = mockRes();
     errorHandler(new AppError(404, 'Gone', 'NOT_FOUND'), {} as any, res, jest.fn());
     expect(res.json).toHaveBeenCalledWith({ success: false, error: 'Gone', message: 'Gone', code: 'NOT_FOUND' });
+  });
+
+  it('answers upload limit errors as client errors, not 500', () => {
+    const big = mockRes();
+    errorHandler(new multer.MulterError('LIMIT_FILE_SIZE', 'files'), {} as any, big, jest.fn());
+    expect(big.status).toHaveBeenCalledWith(413);
+    expect(big.json.mock.calls[0][0]).toMatchObject({ success: false, code: 'FILE_TOO_LARGE' });
+    const many = mockRes();
+    errorHandler(new multer.MulterError('LIMIT_FILE_COUNT', 'files'), {} as any, many, jest.fn());
+    expect(many.status).toHaveBeenCalledWith(400);
   });
 });
