@@ -544,16 +544,15 @@ export default function DashboardScreen() {
       .catch(() => {});
   }, [user?.id]);
 
-  // Vault — latest document
+  // Vault — latest document. Names are end-to-end encrypted, so the dashboard
+  // shows only that a file exists and when it was added, without unlocking the vault.
   useEffect(() => {
     vaultApi
-      .listDocuments({
-        limit: 1,
-      })
+      .list({ limit: 1 })
       .then((r) => {
         if (r.documents?.length) {
-          setLatestDoc(r.documents[0].name);
-          setLatestDocTime(timeHM(r.documents[0].uploadedAt));
+          setLatestDoc("Encrypted file");
+          setLatestDocTime(timeHM(r.documents[0].createdAt));
         }
       })
       .catch(() => {});

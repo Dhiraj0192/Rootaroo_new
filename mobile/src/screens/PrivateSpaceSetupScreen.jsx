@@ -3,7 +3,8 @@
  * route.params.mode === 'backup') changing how it is backed up.
  */
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import { showAlert } from '../shared/services/themedAlert';
 import { usePrivateSpaceStore } from '../shared/store/privateSpaceStore';
@@ -12,9 +13,9 @@ import { colors } from '../shared/theme';
 import { Shell, PrimaryButton, SecondaryButton, Field, Body, ErrorText, ui } from '../shared/components/PrivateSpaceUi';
 
 const OPTIONS = [
-  { key: 'password', title: 'Backup password', body: `At least ${MIN_PASSWORD_LENGTH} characters. A pet's name is fine, because guesses are capped at 10.` },
-  { key: 'recovery_code', title: 'Use a recovery code instead', body: 'We show you a code once. Keep it somewhere safe.' },
-  { key: 'none', title: 'No backup', body: 'If you lose this phone, your journal and vault are gone for good.' },
+  { key: 'password', icon: 'key-outline', title: 'Backup password', body: `At least ${MIN_PASSWORD_LENGTH} characters. A pet's name is fine, because guesses are capped at 10.` },
+  { key: 'recovery_code', icon: 'document-lock-outline', title: 'Use a recovery code instead', body: 'We show you a code once. Keep it somewhere safe.' },
+  { key: 'none', icon: 'warning-outline', danger: true, title: 'No backup', body: 'If you lose this phone, your journal and vault are gone for good.' },
 ];
 
 export default function PrivateSpaceSetupScreen({ navigation, route }) {
@@ -96,6 +97,11 @@ export default function PrivateSpaceSetupScreen({ navigation, route }) {
 
   return (
     <Shell title={changing ? 'Backup' : 'Set up your private space'} onBack={leave}>
+      <View style={styles.hero}>
+        <View style={styles.heroBadge}>
+          <Ionicons name="shield-checkmark" size={34} color={colors.gold} />
+        </View>
+      </View>
       <Body>Rootaroo can't read your journal or vault, and can't reset this password.</Body>
       <View style={ui.stack}>
         {options.map((o) => (
@@ -107,8 +113,20 @@ export default function PrivateSpaceSetupScreen({ navigation, route }) {
             accessibilityState={{ selected: choice === o.key }}
             accessibilityLabel={o.title}
           >
-            <Text style={ui.cardTitle}>{o.title}</Text>
-            <Text style={ui.cardBody}>{o.body}</Text>
+            <View style={styles.row}>
+              <View style={[styles.iconWrap, o.danger && styles.iconWrapDanger]}>
+                <Ionicons name={o.icon} size={22} color={o.danger ? colors.danger : colors.gold} />
+              </View>
+              <View style={styles.grow}>
+                <Text style={ui.cardTitle}>{o.title}</Text>
+                <Text style={ui.cardBody}>{o.body}</Text>
+              </View>
+              <Ionicons
+                name={choice === o.key ? 'radio-button-on' : 'radio-button-off'}
+                size={22}
+                color={choice === o.key ? colors.gold : colors.textMuted}
+              />
+            </View>
           </TouchableOpacity>
         ))}
         {choice === 'password' && (
@@ -123,3 +141,28 @@ export default function PrivateSpaceSetupScreen({ navigation, route }) {
     </Shell>
   );
 }
+
+const styles = StyleSheet.create({
+  hero: { alignItems: 'center', marginBottom: 12 },
+  heroBadge: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.goldTint,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  grow: { flex: 1 },
+  iconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.goldTint,
+  },
+  iconWrapDanger: { backgroundColor: colors.dangerSoft },
+});
