@@ -78,6 +78,16 @@ describe('handleNotificationResponse', () => {
     expect(nav.navigate).toHaveBeenCalledWith('MainTabs', tab('ChatStack', 'ChatScreen', { conversationId: 'c1' }).params);
   });
 
+  it('holds the route while signed out or onboarding, then navigates once the screen exists', () => {
+    const nav = ref(true);
+    nav.getRootState = jest.fn(() => ({ routeNames: ['Welcome', 'SignIn'] }));
+    handleNotificationResponse(nav, response({ type: 'unknown' }));
+    expect(nav.navigate).not.toHaveBeenCalled();
+    nav.getRootState.mockReturnValue({ routeNames: ['MainTabs', 'Notifications'] });
+    flushPendingNotification(nav);
+    expect(nav.navigate).toHaveBeenCalledWith('Notifications', undefined);
+  });
+
   it('handles the same notification only once (listener and cold-start lookup can both report it)', () => {
     const nav = ref(true);
     handleNotificationResponse(nav, response({ type: 'calendar' }, 'same'));

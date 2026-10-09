@@ -1,12 +1,15 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, StatusBar, ActivityIndicator, TextInput } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { BottomTabBarHeightContext } from '@react-navigation/bottom-tabs';
 import { colors, fonts, radius } from '../theme';
 import { GoldFill } from './GoldButton';
 import { KeyboardAvoider, keyboardScrollProps } from './KeyboardAware';
 
 /** Header with a back button, then a scrolling body. Shared by the private-space screens. */
 export function Shell({ title, onBack, children }) {
+  // Inside the tabs the floating tab bar sits over the content; outside it the context is undefined.
+  const tabBarHeight = React.useContext(BottomTabBarHeightContext) || 0;
   const insets = useSafeAreaInsets();
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
@@ -19,7 +22,7 @@ export function Shell({ title, onBack, children }) {
       </View>
       <KeyboardAvoider>
         <ScrollView
-          contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 32 }]}
+          contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + tabBarHeight + 32 }]}
           {...keyboardScrollProps}
           showsVerticalScrollIndicator={false}
         >

@@ -31,6 +31,7 @@ import { usePrivateSpaceStore } from '../shared/store/privateSpaceStore';
 import { colors, fonts, goldButton, radius, withAlpha } from '../shared/theme';
 import { GoldFill } from '../shared/components/GoldButton';
 import { KeyboardAvoider } from '../shared/components/KeyboardAware';
+import { readBytes, deleteTemp } from '../shared/vault/vaultDevice';
 const MAX_SIZE = 20 * 1024 * 1024;
 
 /** Normalize a document-picker or image-picker asset into { uri, name, mimeType, size }. */
@@ -73,6 +74,18 @@ export default function VaultUploadScreen({ navigation }) {
     setNamePrompt({ visible: false, value: '', defaultName: '', resolve: null });
   };
 
+  /**
+   * Reads the picked file into memory straight away and deletes the plain copy.
+   * The picker's copy lives in the app cache, which Android may wipe at any time
+   * when storage is low, so it must not wait through the name prompt.
+   */
+  const takeBytes = async (asset) => {
+    if (asset.size > MAX_SIZE) return asset; // rejected in processAndUpload; never load it
+    const bytes = await readBytes(asset.uri);
+    await deleteTemp(asset.uri);
+    return { ...asset, bytes, size: asset.size || bytes.length };
+  };
+
   /** Shared encryption + upload pipeline for any picked asset. */
   const processAndUpload = async (asset) => {
     try {
@@ -97,6 +110,7 @@ export default function VaultUploadScreen({ navigation }) {
       setProgress(40);
 
       const document = await getVaultRepo().upload({
+        bytes: asset.bytes,
         uri: asset.uri,
         name: asset.name || 'Document',
         mimeType: asset.mimeType,
@@ -137,7 +151,7 @@ export default function VaultUploadScreen({ navigation }) {
         copyToCacheDirectory: true,
       });
       if (result.canceled || !result.assets?.[0]) return;
-      const asset = normalizeAsset(result.assets[0]);
+      const asset = await takeBytes(normalizeAsset(result.assets[0]));
       const name = await promptDocumentName(asset.name);
       await processAndUpload({ ...asset, name });
     } catch (e) {
@@ -151,7 +165,7 @@ export default function VaultUploadScreen({ navigation }) {
         quality: 0.8,
       });
       if (result.canceled || !result.assets?.[0]) return;
-      const asset = normalizeAsset(result.assets[0]);
+      const asset = await takeBytes(normalizeAsset(result.assets[0]));
       const name = await promptDocumentName(asset.name);
       await processAndUpload({ ...asset, name });
     } catch (e) {
@@ -338,7 +352,8 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: colors.surface,
+    // Opaque: a glass fill lets the screen behind show through the sheet.
+    backgroundColor: colors.surfaceRaised,
     borderTopLeftRadius: 32,
     borderTopRightRadius: 32,
     paddingTop: 14,
@@ -449,7 +464,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 32,
   },
   namePromptCard: {
-    backgroundColor: colors.surface,
+    backgroundColor: colors.surfaceRaised,
     borderRadius: 20,
     padding: 20,
   },

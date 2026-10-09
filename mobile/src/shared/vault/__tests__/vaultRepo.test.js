@@ -85,6 +85,22 @@ describe('upload', () => {
     expect(Object.keys(meta).sort()).toEqual(['keys', 'scope', 'sealedMeta', 'sizeBytes']);
   });
 
+  it('uses bytes read at pick time instead of re-reading the picked file', async () => {
+    const { repo, api, deps } = build();
+    await repo.upload({ bytes: enc('picked early'), uri: 'file:///gone.png', name: 'a.png', mimeType: 'image/png', scope: 'personal' });
+    expect(deps.readBytes).not.toHaveBeenCalled();
+    expect(api.upload).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports whether the key is held, so a screen can lock instead of prompting', async () => {
+    const { repo } = build();
+    expect(repo.hasKeys()).toBe(false);
+    await repo.upload({ uri: 'u', name: 'a', mimeType: 'x/y', scope: 'personal' });
+    expect(repo.hasKeys()).toBe(true);
+    repo.clear();
+    expect(repo.hasKeys()).toBe(false);
+  });
+
   it('personal files are sealed to me only and do not ask for members', async () => {
     const { repo, api } = build();
     await repo.upload({ uri: 'u', name: 'diary.txt', mimeType: 'text/plain', scope: 'personal' });

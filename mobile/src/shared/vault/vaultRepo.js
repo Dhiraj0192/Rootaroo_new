@@ -62,6 +62,7 @@ export function createVaultRepo({
   }
 
   const clear = () => { keyPair = null; };
+  const hasKeys = () => keyPair !== null;
 
   async function describe(raw, keys) {
     const base = {
@@ -105,6 +106,7 @@ export function createVaultRepo({
 
   return {
     clear,
+    hasKeys,
 
     onAppStateChange(next, now = Date.now()) {
       if (next === 'background') {
@@ -115,12 +117,12 @@ export function createVaultRepo({
       }
     },
 
-    async upload({ uri, name, mimeType, scope }) {
+    async upload({ bytes: pickedBytes, uri, name, mimeType, scope }) {
       const keys = await getKeys();
       const recipients = scope === 'household'
         ? await memberRecipients(keys)
         : [{ userId: getUserId(), publicKey: keys.publicKey }];
-      const bytes = await readBytes(uri);
+      const bytes = pickedBytes || (await readBytes(uri));
       const sealed = await encryptFile({ bytes, name, mimeType }, recipients);
       const raw = await api.upload({
         blob: sealed.blob,

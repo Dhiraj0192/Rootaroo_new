@@ -142,8 +142,13 @@ export default function VaultListScreen({ navigation }) {
   }, [locked, syncSharing]);
   useEffect(() => {
     const sub = AppState.addEventListener('change', (next) => {
-      getVaultRepo().onAppStateChange(next);
-      if (next === 'active' && !locked) syncSharing();
+      const repo = getVaultRepo();
+      repo.onAppStateChange(next);
+      if (next !== 'active' || locked) return;
+      // Away past the grace period: the key was dropped. Lock the screen instead of
+      // letting the background sync fire a fingerprint prompt the user never asked for.
+      if (!repo.hasKeys()) setLocked(true);
+      else syncSharing();
     });
     return () => sub.remove();
   }, [locked, syncSharing]);
