@@ -60,6 +60,8 @@ export async function listDevices(userId: string, currentDeviceId: string | null
     lastSeenAt: d.lastSeenAt.toISOString(),
     createdAt: d.createdAt.toISOString(),
     current: d.id === currentDeviceId,
+    // The app warns before removing this one: a removed phone erases its private-space key.
+    holdsKey: !!d.holdsAccountKey,
   }));
 }
 

@@ -64,6 +64,22 @@ describe('location shares (real database)', () => {
     expect(raviView.body.data.visible).toHaveLength(0);
   });
 
+  it('removing the sharer from the household ends their share and stops their updates', async () => {
+    const { household, admin, ravi } = await family();
+    const start = await request(app).post('/api/v1/location-shares').set(authHeaderFor(ravi))
+      .send({ durationMinutes: 480, viewerIds: null, latitude: 27.7, longitude: 85.3 });
+    expect(start.status).toBe(201);
+    const id = start.body.data.id;
+
+    const { removeMember } = await import('../../household/service');
+    await removeMember(admin.id, household.id, ravi.id);
+
+    const row = await LocationShare.findByPk(id);
+    expect(row!.endedAt).not.toBeNull();
+    expect(row!.latitude).toBeNull();
+    expect((await request(app).get('/api/v1/location-shares').set(authHeaderFor(admin))).body.data.visible).toEqual([]);
+  });
+
   it('the expiry job closes finished shares', async () => {
     const { admin } = await family();
     await request(app).post('/api/v1/location-shares').set(authHeaderFor(admin))

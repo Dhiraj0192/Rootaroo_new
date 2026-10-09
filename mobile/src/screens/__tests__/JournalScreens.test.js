@@ -35,6 +35,24 @@ describe('JournalEntryDetailScreen', () => {
     expect(getByText('Edit entry')).toBeTruthy();
   });
 
+  it('decrypts each photo with the loaded entry (its id and key)', async () => {
+    const entryKey = new Uint8Array(32).fill(4);
+    const entry = {
+      id: 'e3', createdAt: '2026-10-05T10:00:00Z', text: 'with a photo', mood: null, tags: [],
+      media: [{ id: 'm1', url: 'https://s3/full', thumbnailUrl: 'https://s3/thumb', sizeBytes: 10 }], unreadable: false,
+    };
+    Object.defineProperty(entry, 'entryKey', { value: entryKey, enumerable: false });
+    mockRepo.loadEntry.mockResolvedValue(entry);
+    mockRepo.loadPhoto.mockReset().mockResolvedValue('data:image/jpeg;base64,AAAA');
+    const { findByText } = render(<JournalEntryDetailScreen navigation={navigation} route={{ params: { entryId: 'e3' } }} />);
+    expect(await findByText('with a photo')).toBeTruthy();
+    await waitFor(() => expect(mockRepo.loadPhoto).toHaveBeenCalledTimes(1));
+    const [media, passed] = mockRepo.loadPhoto.mock.calls[0];
+    expect(media.id).toBe('m1');
+    expect(passed.id).toBe('e3');
+    expect(passed.entryKey).toBe(entryKey);
+  });
+
   it('opens the editor with the entry id only, never the decrypted text or key', async () => {
     const entry = {
       id: 'e1', createdAt: '2026-10-05T10:00:00Z', text: 'secret words', mood: null, tags: [], media: [], unreadable: false,

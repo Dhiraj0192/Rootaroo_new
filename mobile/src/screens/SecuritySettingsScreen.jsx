@@ -65,14 +65,21 @@ export default function SecuritySettingsScreen({ navigation }) {
     loadDevices();
   }, [loadDevices]);
 
+  // A removed phone erases its private-space key, so removing the one that holds it needs a clear warning.
   const removeDevice = (device) => {
+    const holdsKey = !!device.holdsKey;
+    const message = !holdsKey
+      ? 'It will be signed out and stop getting notifications.'
+      : hasBackup
+        ? 'This phone holds your private space. Removing it erases the key from that phone. You will need your backup password or recovery code to open your journal and vault again.'
+        : "This phone holds your private space. Removing it erases the key from that phone. Without a backup, your journal and vault can't be recovered.";
     Alert.alert(
       `Remove ${device.name}?`,
-      'It will be signed out and stop getting notifications.',
+      message,
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Remove',
+          text: holdsKey && !hasBackup ? 'Remove anyway' : 'Remove',
           style: 'destructive',
           onPress: async () => {
             try {
@@ -188,6 +195,7 @@ export default function SecuritySettingsScreen({ navigation }) {
                   {`${PLATFORM_LABELS[d.platform] ?? d.platform} · ${deviceActivity(d.lastSeenAt)}`}
                 </Text>
                 {d.current && <Text style={styles.currentTag}>This device</Text>}
+                {d.holdsKey && <Text style={styles.currentTag}>Holds your private space</Text>}
               </View>
               {!d.current && (
                 <TouchableOpacity

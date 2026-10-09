@@ -15,7 +15,7 @@ import { Op } from 'sequelize';
 import { LocationShare, HouseholdMember, User } from '../../../database/models';
 import { notifyUser } from '../../../shared/services/notifications';
 import {
-  startShare, updateShareLocation, stopShare, listShares, endExpiredShares, audienceOf, MAX_SHARE_MINUTES,
+  startShare, updateShareLocation, stopShare, listShares, endExpiredShares, audienceOf, MAX_SHARE_MINUTES, endSharesForMember,
 } from '../service';
 import { AppError, ForbiddenError, NotFoundError } from '../../../shared/utils/errors';
 
@@ -193,5 +193,58 @@ describe('endExpiredShares', () => {
     expect(await endExpiredShares(NOW)).toBe(1);
     expect(s.endedAt).toEqual(s.expiresAt);
     expect(emitted.some((e) => e.event === 'location:share-ended' && e.room === 'user:ravi')).toBe(true);
+  });
+});
+
+describe('updateShareLocation after leaving the household', () => {
+  it('ends the share and answers 410 when the sharer is no longer a member', async () => {
+    const s = share();
+    (LocationShare.findByPk as jest.Mock).mockResolvedValue(s);
+    (HouseholdMember.findAll as jest.Mock).mockResolvedValue([{ userId: 'ravi' }, { userId: 'mina' }]);
+    await expect(updateShareLocation('me', 's1', { latitude: 1, longitude: 2 })).rejects.toMatchObject({ statusCode: 410 });
+    expect(s.endedAt).toEqual(NOW);
+    expect(s.latitude).toBeNull();
+    expect(LocationShare.update).not.toHaveBeenCalled();
+    expect(emitted.filter((e) => e.event === 'location:update')).toEqual([]);
+    expect(emitted.some((e) => e.event === 'location:share-ended' && e.room === 'user:me')).toBe(true);
+  });
+});
+
+describe('endSharesForMember', () => {
+  const tx = () => {
+    const hooks: Array<() => void> = [];
+    return { hooks, afterCommit: (fn: () => void) => hooks.push(fn) } as any;
+  };
+
+  it("ends the person's running shares in that household and announces it after commit", async () => {
+    const mine = share({ id: 'mine' });
+    (LocationShare.findAll as jest.Mock).mockResolvedValueOnce([mine]).mockResolvedValueOnce([]);
+    (LocationShare.findByPk as jest.Mock).mockResolvedValue(mine);
+    (HouseholdMember.findAll as jest.Mock).mockResolvedValue([{ userId: 'ravi' }, { userId: 'mina' }]);
+    const t = tx();
+    await endSharesForMember('me', 'h1', t);
+    expect((LocationShare.findAll as jest.Mock).mock.calls[0][0]).toEqual(expect.objectContaining({
+      where: { sharerId: 'me', householdId: 'h1', endedAt: null }, transaction: t,
+    }));
+    expect(mine.endedAt).toEqual(NOW);
+    expect(mine.save).toHaveBeenCalledWith({ transaction: t });
+    expect(emitted).toEqual([]); // nothing goes out before the membership change commits
+    t.hooks.forEach((fn: () => void) => fn());
+    for (let i = 0; i < 20; i += 1) await Promise.resolve(); // the suite runs on fake timers
+    const ended = emitted.filter((e) => e.event === 'location:share-ended').map((e) => e.room).sort();
+    expect(ended).toEqual(['user:me', 'user:mina', 'user:ravi']);
+  });
+
+  it('takes away the shares they could see, and leaves shares for other people alone', async () => {
+    const forEveryone = share({ id: 'all', sharerId: 'ravi', viewerIds: null });
+    const forMe = share({ id: 'mine-to-see', sharerId: 'mina', viewerIds: ['me'] });
+    const notForMe = share({ id: 'other', sharerId: 'mina', viewerIds: ['ravi'] });
+    (LocationShare.findAll as jest.Mock).mockResolvedValueOnce([]).mockResolvedValueOnce([forEveryone, forMe, notForMe]);
+    (LocationShare.findByPk as jest.Mock).mockImplementation(async (id: string) => share({ id }));
+    await endSharesForMember('me', 'h1');
+    const toMe = emitted.filter((e) => e.room === 'user:me' && e.event === 'location:share-ended');
+    expect(toMe).toHaveLength(2);
+    expect(forEveryone.endedAt).toBeNull();
+    expect(emitted.every((e) => e.room === 'user:me')).toBe(true);
   });
 });
