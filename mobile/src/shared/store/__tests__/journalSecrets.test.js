@@ -4,6 +4,8 @@ jest.mock('../../journal/journalRepo', () => ({
   clearJournalSecrets: (...a) => mockClear(...a),
   peekJournalRepo: () => ({ onAppStateChange: jest.fn() }),
 }));
+const mockClearHeldTap = jest.fn();
+jest.mock('../../notificationRouting', () => ({ clearPendingNotification: (...a) => mockClearHeldTap(...a) }));
 jest.mock('../authPersist', () => ({
   saveTokens: jest.fn().mockResolvedValue(), saveHouseholdId: jest.fn(), clearTokens: jest.fn().mockResolvedValue(),
   loadTokens: jest.fn(),
@@ -34,6 +36,12 @@ describe('journal secrets are cleared', () => {
   it('on logout', () => {
     useAuthStore.getState().logout();
     expect(mockClear).toHaveBeenCalled();
+  });
+
+  it('logout also drops a held notification tap, so it cannot open for the next account', () => {
+    mockClearHeldTap.mockClear();
+    useAuthStore.getState().logout();
+    expect(mockClearHeldTap).toHaveBeenCalled();
   });
 
   it('when the private space key is forgotten (also the device-revoked path)', async () => {

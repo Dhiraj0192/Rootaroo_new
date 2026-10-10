@@ -7,6 +7,11 @@ export async function readBytes(uri) {
   return new Uint8Array(await new File(uri).arrayBuffer());
 }
 
+/** Size in bytes of a local file, or 0 when it is missing or unreadable. */
+export function fileSize(uri) {
+  try { return new File(uri).size || 0; } catch { return 0; }
+}
+
 export async function fetchBytes(url) {
   const res = await fetch(url);
   if (!res.ok) throw new Error('Could not download the file.');

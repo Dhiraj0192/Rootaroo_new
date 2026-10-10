@@ -116,6 +116,7 @@ export const useAuthStore = create((set, get) => ({
     try { require('./privateSpaceStore').usePrivateSpaceStore.getState().reset(); } catch { /* not loaded yet */ }
     try { require('./journalLockStore').useJournalLockStore.getState().reset(); } catch { /* not loaded yet */ }
     try { require('../journal/journalRepo').clearJournalSecrets(); } catch { /* not loaded yet */ }
+    try { require('../notificationRouting').clearPendingNotification(); } catch { /* not loaded yet */ }
     useFeedStore.setState({ posts: [], cursor: null, hasMore: true, lastFetchedAt: null });
   },
 

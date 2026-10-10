@@ -15,6 +15,9 @@ export const PENDING_NAME = "Waiting for a family member's phone";
 const TEMP_FILE_LIFETIME_MS = 60000;
 const KEY_GRACE_MS = 60000;
 const PREVIEW_MAX_BYTES = 8 * 1024 * 1024;
+// Previews are base64 in memory; a grid full of large photos would otherwise exhaust a phone's RAM.
+export const PREVIEW_CACHE_MAX = 12;
+export const PREVIEW_CONCURRENCY = 2;
 
 export class VaultKeyMissingError extends Error {
   constructor() {
@@ -63,7 +66,23 @@ export function createVaultRepo({
   }
 
   // Decrypted image previews, memory only (never written to disk), dropped on lock.
+  // Insertion order is recency: a hit is moved to the end, the oldest is evicted first.
   const previews = new Map();
+  const remember = (id, uri) => {
+    previews.delete(id);
+    previews.set(id, uri);
+    while (previews.size > PREVIEW_CACHE_MAX) previews.delete(previews.keys().next().value);
+  };
+  // Only a few previews download and decrypt at once; the rest wait their turn.
+  let previewsRunning = 0;
+  const previewQueue = [];
+  const nextPreview = () => {
+    if (previewsRunning >= PREVIEW_CONCURRENCY || previewQueue.length === 0) return;
+    previewsRunning += 1;
+    const { run, resolve, reject } = previewQueue.shift();
+    run().then(resolve, reject).finally(() => { previewsRunning -= 1; nextPreview(); });
+  };
+  const limited = (run) => new Promise((resolve, reject) => { previewQueue.push({ run, resolve, reject }); nextPreview(); });
   const clear = () => { keyPair = null; previews.clear(); };
   const hasKeys = () => keyPair !== null;
   /** Hand over a key the screen already unlocked, so loading the list doesn't prompt again. */
@@ -118,14 +137,21 @@ export function createVaultRepo({
     async preview(doc) {
       if (!doc?.mimeType?.startsWith('image/') || !doc.fileKey) return null;
       if (doc.sizeBytes > PREVIEW_MAX_BYTES) return null;
-      if (previews.has(doc.id)) return previews.get(doc.id);
-      // A just-uploaded file has no signed link yet; ask for one.
-      const url = doc.downloadUrl || (await api.get(doc.id)).downloadUrl;
-      if (!url) return null;
-      const plain = await decryptFile(await fetchBytes(url), doc.fileKey);
-      const uri = `data:${doc.mimeType};base64,${bytesToBase64(plain)}`;
-      if (keyPair) previews.set(doc.id, uri); // locked meanwhile: don't keep it
-      return uri;
+      if (previews.has(doc.id)) {
+        const cached = previews.get(doc.id);
+        remember(doc.id, cached);
+        return cached;
+      }
+      return limited(async () => {
+        if (!keyPair) return null; // locked while waiting in the queue
+        // A just-uploaded file has no signed link yet; ask for one.
+        const url = doc.downloadUrl || (await api.get(doc.id)).downloadUrl;
+        if (!url) return null;
+        const plain = await decryptFile(await fetchBytes(url), doc.fileKey);
+        const uri = `data:${doc.mimeType};base64,${bytesToBase64(plain)}`;
+        if (keyPair) remember(doc.id, uri); // locked meanwhile: don't keep it
+        return uri;
+      });
     },
 
     onAppStateChange(next, now = Date.now()) {

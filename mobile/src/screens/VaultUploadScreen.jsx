@@ -31,7 +31,8 @@ import { usePrivateSpaceStore } from '../shared/store/privateSpaceStore';
 import { colors, fonts, goldButton, radius, withAlpha } from '../shared/theme';
 import { GoldFill } from '../shared/components/GoldButton';
 import { KeyboardAvoider } from '../shared/components/KeyboardAware';
-import { readBytes, deleteTemp } from '../shared/vault/vaultDevice';
+import { readBytes, deleteTemp, fileSize } from '../shared/vault/vaultDevice';
+import { takePickedBytes } from '../shared/vault/pickedFile';
 const MAX_SIZE = 20 * 1024 * 1024;
 
 /** Normalize a document-picker or image-picker asset into { uri, name, mimeType, size }. */
@@ -74,17 +75,7 @@ export default function VaultUploadScreen({ navigation }) {
     setNamePrompt({ visible: false, value: '', defaultName: '', resolve: null });
   };
 
-  /**
-   * Reads the picked file into memory straight away and deletes the plain copy.
-   * The picker's copy lives in the app cache, which Android may wipe at any time
-   * when storage is low, so it must not wait through the name prompt.
-   */
-  const takeBytes = async (asset) => {
-    if (asset.size > MAX_SIZE) return asset; // rejected in processAndUpload; never load it
-    const bytes = await readBytes(asset.uri);
-    await deleteTemp(asset.uri);
-    return { ...asset, bytes, size: asset.size || bytes.length };
-  };
+  const takeBytes = (asset) => takePickedBytes(asset, MAX_SIZE, { readBytes, deleteTemp, fileSize });
 
   /** Shared encryption + upload pipeline for any picked asset. */
   const processAndUpload = async (asset) => {

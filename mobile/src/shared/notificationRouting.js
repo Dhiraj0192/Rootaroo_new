@@ -112,6 +112,11 @@ export function flushPendingNotification(navRef) {
   navRef.navigate(route.name, route.params);
 }
 
+/** Signing out drops a held tap, so it can't open later for whoever signs in next. */
+export function clearPendingNotification() {
+  pendingRoute = null;
+}
+
 // Default api is required lazily so tests can import this module without the API client's native deps.
 export async function syncBadge(api = require('./api/notification').notificationApi) {
   try {

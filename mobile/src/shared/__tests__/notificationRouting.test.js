@@ -10,6 +10,7 @@ const {
   routeForNotification,
   handleNotificationResponse,
   flushPendingNotification,
+  clearPendingNotification,
   __resetNotificationRoutingForTests,
 } = require('../notificationRouting');
 
@@ -86,6 +87,16 @@ describe('handleNotificationResponse', () => {
     nav.getRootState.mockReturnValue({ routeNames: ['MainTabs', 'Notifications'] });
     flushPendingNotification(nav);
     expect(nav.navigate).toHaveBeenCalledWith('Notifications', undefined);
+  });
+
+  it('drops a held route on sign-out, so it does not open for the next account', () => {
+    const nav = ref(true);
+    nav.getRootState = jest.fn(() => ({ routeNames: ['Welcome', 'SignIn'] }));
+    handleNotificationResponse(nav, response({ type: 'unknown' }, 'held-then-signed-out'));
+    clearPendingNotification();
+    nav.getRootState.mockReturnValue({ routeNames: ['MainTabs', 'Notifications'] });
+    flushPendingNotification(nav);
+    expect(nav.navigate).not.toHaveBeenCalled();
   });
 
   it('handles the same notification only once (listener and cold-start lookup can both report it)', () => {

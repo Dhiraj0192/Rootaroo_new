@@ -5,7 +5,7 @@ if (!globalThis.crypto?.subtle) globalThis.crypto = webcrypto;
 const { generateAccountKeyPair } = require('../../crypto/accountKey');
 const { encryptFile, openFileKey, decryptFile, decryptMeta } = require('../vaultSharing');
 const {
-  createVaultRepo, MemberKeyChangedError, UNREADABLE_NAME, PENDING_NAME,
+  createVaultRepo, MemberKeyChangedError, UNREADABLE_NAME, PENDING_NAME, PREVIEW_CACHE_MAX, PREVIEW_CONCURRENCY,
 } = require('../vaultRepo');
 
 const enc = (s) => new TextEncoder().encode(s);
@@ -121,6 +121,64 @@ describe('upload', () => {
     expect(await repo.preview({ ...doc, mimeType: 'application/pdf' })).toBeNull();
     repo.clear();
     expect(deps.writeTemp).not.toHaveBeenCalled();
+  });
+
+  describe('image previews', () => {
+    // Previews only need a doc that looks readable; decryptFile is exercised in the test above.
+    async function unlockedWithImage() {
+      const ctx = build();
+      const doc = await ctx.repo.upload({ uri: 'u', name: 'pic.png', mimeType: 'image/png', scope: 'personal' });
+      const sealed = new Uint8Array(ctx.api.upload.mock.calls[0][0].blob);
+      ctx.deps.fetchBytes.mockResolvedValue(sealed);
+      const photo = (id) => Object.defineProperties({ ...doc, id }, {
+        fileKey: { value: doc.fileKey }, downloadUrl: { value: `https://cdn/${id}` },
+      });
+      return { ...ctx, photo };
+    }
+
+    it(`keeps at most ${PREVIEW_CACHE_MAX} previews, dropping the least recently shown`, async () => {
+      const { repo, deps, photo } = await unlockedWithImage();
+      for (let i = 0; i <= PREVIEW_CACHE_MAX; i += 1) await repo.preview(photo(`p${i}`));
+      deps.fetchBytes.mockClear();
+      await repo.preview(photo(`p${PREVIEW_CACHE_MAX}`)); // newest: cached
+      expect(deps.fetchBytes).not.toHaveBeenCalled();
+      await repo.preview(photo('p0')); // oldest: evicted, fetched again
+      expect(deps.fetchBytes).toHaveBeenCalledTimes(1);
+    });
+
+    it(`decrypts at most ${PREVIEW_CONCURRENCY} previews at once`, async () => {
+      const { repo, deps, photo } = await unlockedWithImage();
+      const sealed = await deps.fetchBytes();
+      let running = 0;
+      let peak = 0;
+      deps.fetchBytes.mockImplementation(async () => {
+        running += 1;
+        peak = Math.max(peak, running);
+        await new Promise((r) => setTimeout(r, 5));
+        running -= 1;
+        return sealed;
+      });
+      const uris = await Promise.all(Array.from({ length: 6 }, (_, i) => repo.preview(photo(`c${i}`))));
+      expect(uris.every((u) => u?.startsWith('data:image/png;base64,'))).toBe(true);
+      expect(peak).toBe(PREVIEW_CONCURRENCY);
+    });
+
+    it('previews still waiting when the vault locks come back empty and are not kept', async () => {
+      const { repo, deps, photo } = await unlockedWithImage();
+      const sealed = await deps.fetchBytes();
+      const releases = [];
+      deps.fetchBytes.mockClear();
+      deps.fetchBytes.mockImplementation(() => new Promise((r) => { releases.push(() => r(sealed)); }));
+      const running = [repo.preview(photo('a')), repo.preview(photo('b'))];
+      const waiting = repo.preview(photo('z')); // third: queued behind the limit
+      await new Promise((r) => setTimeout(r, 0));
+      expect(releases).toHaveLength(PREVIEW_CONCURRENCY);
+      repo.clear();
+      releases.forEach((release) => release());
+      await Promise.all(running);
+      expect(await waiting).toBeNull();
+      expect(deps.fetchBytes).toHaveBeenCalledTimes(PREVIEW_CONCURRENCY); // the queued one never downloaded
+    });
   });
 
   it('personal files are sealed to me only and do not ask for members', async () => {
