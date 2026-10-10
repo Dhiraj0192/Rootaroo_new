@@ -85,6 +85,44 @@ describe('upload', () => {
     expect(Object.keys(meta).sort()).toEqual(['keys', 'scope', 'sealedMeta', 'sizeBytes']);
   });
 
+  it('uses bytes read at pick time instead of re-reading the picked file', async () => {
+    const { repo, api, deps } = build();
+    await repo.upload({ bytes: enc('picked early'), uri: 'file:///gone.png', name: 'a.png', mimeType: 'image/png', scope: 'personal' });
+    expect(deps.readBytes).not.toHaveBeenCalled();
+    expect(api.upload).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports whether the key is held, so a screen can lock instead of prompting', async () => {
+    const { repo } = build();
+    expect(repo.hasKeys()).toBe(false);
+    await repo.upload({ uri: 'u', name: 'a', mimeType: 'x/y', scope: 'personal' });
+    expect(repo.hasKeys()).toBe(true);
+    repo.clear();
+    expect(repo.hasKeys()).toBe(false);
+  });
+
+  it('a primed key is reused, so opening the list does not read the key again', async () => {
+    const { repo, deps } = build();
+    repo.prime(await deps.loadKey());
+    deps.loadKey.mockClear();
+    await repo.upload({ uri: 'u', name: 'a', mimeType: 'x/y', scope: 'personal' });
+    expect(deps.loadKey).not.toHaveBeenCalled();
+  });
+
+  it('previews images in memory, fetching a link for a just-uploaded file, and drops them on lock', async () => {
+    const { repo, api, deps } = build();
+    const doc = await repo.upload({ uri: 'u', name: 'pic.png', mimeType: 'image/png', scope: 'personal' });
+    const sealed = new Uint8Array(api.upload.mock.calls[0][0].blob);
+    api.get = jest.fn(async () => ({ downloadUrl: 'https://cdn/new' }));
+    deps.fetchBytes.mockResolvedValue(sealed);
+    const uri = await repo.preview(doc);
+    expect(uri.startsWith('data:image/png;base64,')).toBe(true);
+    expect(api.get).toHaveBeenCalledWith(doc.id);
+    expect(await repo.preview({ ...doc, mimeType: 'application/pdf' })).toBeNull();
+    repo.clear();
+    expect(deps.writeTemp).not.toHaveBeenCalled();
+  });
+
   it('personal files are sealed to me only and do not ask for members', async () => {
     const { repo, api } = build();
     await repo.upload({ uri: 'u', name: 'diary.txt', mimeType: 'text/plain', scope: 'personal' });

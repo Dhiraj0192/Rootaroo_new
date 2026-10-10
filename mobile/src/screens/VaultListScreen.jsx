@@ -7,8 +7,9 @@
  *  - Unlocked (26): "Auto-locks in m:ss" countdown, 2-col grid of ink cards, gold FAB "+".
  * Long-press a card → white bottom sheet (View / Rename / Delete).
  */
-import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import React, { memo, useEffect, useMemo, useState, useCallback } from 'react';
 import {
+  Animated,
   AppState,
   SectionList,
   View,
@@ -38,6 +39,8 @@ import LoadingSkeleton from '../components/LoadingSkeleton';
 import OfflineBanner from '../components/OfflineBanner';
 import ConfirmSheet from '../components/ConfirmSheet';
 import { KeyboardAvoider } from '../shared/components/KeyboardAware';
+import { Image } from 'expo-image';
+import { Ionicons } from '@expo/vector-icons';
 const AUTO_LOCK_SECONDS = 300; // 5 minutes (mock: "Auto-locks in 4:52")
 
 const VAULT_SVG =
@@ -63,6 +66,117 @@ function formatLockTime(totalSeconds) {
   const s = totalSeconds % 60;
   return `${m}:${String(s).padStart(2, '0')}`;
 }
+/** Ticks once a second on its own, so the file grid does not re-render with it. */
+function AutoLockTimer({ onExpire }) {
+  const [left, setLeft] = useState(AUTO_LOCK_SECONDS);
+  useEffect(() => {
+    const id = setInterval(() => setLeft((s) => (s <= 1 ? 0 : s - 1)), 1000);
+    return () => clearInterval(id);
+  }, []);
+  useEffect(() => {
+    if (left === 0) onExpire();
+  }, [left, onExpire]);
+  return <Text style={styles.lockCountdown}>Auto-locks in {formatLockTime(left)}</Text>;
+}
+
+// Compact forms so size and date fit a half-width tile: "259 KB · 10 Oct".
+function shortSize(bytes) {
+  if (!bytes) return '0 KB';
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+function shortDate(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const opts = d.getFullYear() === new Date().getFullYear()
+    ? { day: 'numeric', month: 'short' }
+    : { day: 'numeric', month: 'short', year: 'numeric' };
+  return d.toLocaleDateString('en-GB', opts);
+}
+
+/** Pulsing placeholder shown while an image preview decrypts. */
+function PreviewSkeleton() {
+  const pulse = React.useRef(new Animated.Value(0.45)).current;
+  useEffect(() => {
+    const loop = Animated.loop(Animated.sequence([
+      Animated.timing(pulse, { toValue: 1, duration: 700, useNativeDriver: true }),
+      Animated.timing(pulse, { toValue: 0.45, duration: 700, useNativeDriver: true }),
+    ]));
+    loop.start();
+    return () => loop.stop();
+  }, [pulse]);
+  return <Animated.View style={[styles.previewSkeleton, { opacity: pulse }]} accessibilityLabel="Loading preview" />;
+}
+
+const FILE_ICON = { pdf: 'document-text-outline', image: 'image-outline', document: 'document-outline' };
+
+/** One file tile: decrypted thumbnail for images (memory only), uploader on the preview. */
+const VaultCard = memo(function VaultCard({ item, onOpen, onLongPress }) {
+  const [thumb, setThumb] = useState(null);
+  const type = documentType(item.mimeType);
+  const wantsPreview = type === 'image' && !item.pending && !item.unreadable;
+  const [previewing, setPreviewing] = useState(wantsPreview);
+  useEffect(() => {
+    let alive = true;
+    if (wantsPreview) {
+      setPreviewing(true);
+      getVaultRepo().preview(item)
+        .then((uri) => { if (alive) setThumb(uri); })
+        .catch(() => {})
+        .finally(() => { if (alive) setPreviewing(false); });
+    }
+    return () => { alive = false; };
+  }, [item, wantsPreview]);
+  return (
+    <TouchableOpacity
+      style={styles.card}
+      onPress={() => (item.pending
+        ? showAlert('Not ready yet', 'This file opens once another family member opens Rootaroo on their phone.')
+        : onOpen(item))}
+      onLongPress={() => onLongPress(item)}
+      delayLongPress={350}
+      activeOpacity={0.85}
+      accessibilityRole="button"
+      accessibilityLabel={`${item.name}, ${formatFileSize(item.sizeBytes)}, ${formatDate(item.createdAt)}`}
+    >
+      <View style={styles.cardPreview}>
+        {thumb ? (
+          <Image source={{ uri: thumb }} style={styles.cardThumb} contentFit="cover" cachePolicy="none" transition={150} />
+        ) : previewing ? (
+          <PreviewSkeleton />
+        ) : (
+          <Ionicons name={FILE_ICON[type]} size={34} color={colors.gold} />
+        )}
+        {item.pending && (
+          <View style={[styles.pendingBadge, styles.pendingBadgeFloat]}>
+            <Text style={styles.pendingBadgeText}>Waiting</Text>
+          </View>
+        )}
+        {item.uploadedBy && (
+          <View style={styles.uploaderChip}>
+            <Avatar
+              url={item.uploadedBy.avatarUrl}
+              emoji={item.uploadedBy.avatarEmoji}
+              name={item.uploadedBy.displayName}
+              id={item.uploadedBy.id}
+              size={20}
+            />
+            <Text style={styles.uploaderChipText} numberOfLines={1}>
+              {item.uploadedBy.displayName}
+            </Text>
+          </View>
+        )}
+      </View>
+      <View style={styles.cardBody}>
+        <Text style={styles.cardName} numberOfLines={1}>{item.name}</Text>
+        <Text style={styles.cardMeta} numberOfLines={1}>
+          {shortSize(item.sizeBytes)} · {shortDate(item.createdAt)}
+        </Text>
+      </View>
+    </TouchableOpacity>
+  );
+});
+
 export default function VaultListScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const { documents, loading, refreshing, error } = useVaultStore();
@@ -71,7 +185,7 @@ export default function VaultListScreen({ navigation }) {
   const [safetySheet, setSafetySheet] = useState({ visible: false, prints: {} });
   const [locked, setLocked] = useState(true);
   const [unlockLoading, setUnlockLoading] = useState(false);
-  const [autoLockSeconds, setAutoLockSeconds] = useState(AUTO_LOCK_SECONDS);
+  const [lockSession, setLockSession] = useState(0); // remounts the timer on each unlock
   const [showActionSheet, setShowActionSheet] = useState({
     visible: false,
     document: null,
@@ -83,17 +197,7 @@ export default function VaultListScreen({ navigation }) {
   });
   const [deleteDoc, setDeleteDoc] = useState(null);
 
-  // Auto-lock countdown runs only while unlocked
-  useEffect(() => {
-    if (locked) return;
-    const id = setInterval(() => {
-      setAutoLockSeconds((s) => (s <= 1 ? 0 : s - 1));
-    }, 1000);
-    return () => clearInterval(id);
-  }, [locked]);
-  useEffect(() => {
-    if (autoLockSeconds === 0 && !locked) setLocked(true);
-  }, [autoLockSeconds, locked]);
+  const lockNow = useCallback(() => setLocked(true), []);
   const handleUnlock = useCallback(async () => {
     setUnlockLoading(true);
     try {
@@ -117,8 +221,10 @@ export default function VaultListScreen({ navigation }) {
         showAlert('Private space not on this phone', 'Move it here or restore it from your backup in Privacy & security.');
         return;
       }
+      // One fingerprint: the list and uploads reuse this key instead of reading it again.
+      getVaultRepo().prime(key);
       setLocked(false);
-      setAutoLockSeconds(AUTO_LOCK_SECONDS);
+      setLockSession((n) => n + 1);
     } finally {
       setUnlockLoading(false);
     }
@@ -142,8 +248,13 @@ export default function VaultListScreen({ navigation }) {
   }, [locked, syncSharing]);
   useEffect(() => {
     const sub = AppState.addEventListener('change', (next) => {
-      getVaultRepo().onAppStateChange(next);
-      if (next === 'active' && !locked) syncSharing();
+      const repo = getVaultRepo();
+      repo.onAppStateChange(next);
+      if (next !== 'active' || locked) return;
+      // Away past the grace period: the key was dropped. Lock the screen instead of
+      // letting the background sync fire a fingerprint prompt the user never asked for.
+      if (!repo.hasKeys()) setLocked(true);
+      else syncSharing();
     });
     return () => sub.remove();
   }, [locked, syncSharing]);
@@ -242,49 +353,7 @@ export default function VaultListScreen({ navigation }) {
       document: null,
     });
   const renderCard = (item) => (
-    <TouchableOpacity
-      key={item.id}
-      style={styles.card}
-      onPress={() => (item.pending
-        ? showAlert('Not ready yet', 'This file opens once another family member opens Rootaroo on their phone.')
-        : openViewer(item))}
-      onLongPress={() => openActionSheet(item)}
-      delayLongPress={350}
-      activeOpacity={0.85}
-    >
-      <View style={styles.cardTop}>
-        <Text style={styles.cardType} numberOfLines={1}>
-          {documentType(item.mimeType)}
-        </Text>
-        {item.pending && (
-          <View style={styles.pendingBadge}>
-            <Text style={styles.pendingBadgeText}>Waiting</Text>
-          </View>
-        )}
-      </View>
-      <View>
-        <Text style={styles.cardName} numberOfLines={2}>
-          {item.name}
-        </Text>
-        <Text style={styles.cardMeta} numberOfLines={1}>
-          {formatFileSize(item.sizeBytes)} · {formatDate(item.createdAt)}
-        </Text>
-        {item.uploadedBy && (
-          <View style={styles.cardUploader}>
-            <Avatar
-              url={item.uploadedBy.avatarUrl}
-              emoji={item.uploadedBy.avatarEmoji}
-              name={item.uploadedBy.displayName}
-              id={item.uploadedBy.id}
-              size={16}
-            />
-            <Text style={styles.cardUploaderText} numberOfLines={1}>
-              {item.uploadedBy.displayName}
-            </Text>
-          </View>
-        )}
-      </View>
-    </TouchableOpacity>
+    <VaultCard key={item.id} item={item} onOpen={openViewer} onLongPress={openActionSheet} />
   );
 
   const renderRow = ({ item: row }) => (
@@ -441,7 +510,7 @@ export default function VaultListScreen({ navigation }) {
           <Text style={styles.backIcon}>‹</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Vault</Text>
-        <Text style={styles.lockCountdown}>Auto-locks in {formatLockTime(autoLockSeconds)}</Text>
+        {!locked && <AutoLockTimer key={lockSession} onExpire={lockNow} />}
       </View>
 
       <View style={styles.bannerWrap}>
@@ -793,9 +862,50 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.surfaceRaised,
     borderRadius: radius.cardLg,
-    padding: 16,
-    height: 142,
-    justifyContent: 'space-between',
+    overflow: 'hidden',
+  },
+  cardPreview: {
+    height: 128,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: withAlpha(colors.gold, 0.08),
+  },
+  cardThumb: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  previewSkeleton: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: colors.skeleton,
+  },
+  uploaderChip: {
+    position: 'absolute',
+    left: 8,
+    bottom: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 4,
+    paddingLeft: 4,
+    paddingRight: 10,
+    borderRadius: 999,
+    backgroundColor: withAlpha(colors.shadow, 0.72),
+    maxWidth: '90%',
+  },
+  uploaderChipText: {
+    flexShrink: 1,
+    fontSize: 12,
+    fontFamily: fonts.bodySemiBold,
+    color: colors.ink,
+  },
+  pendingBadgeFloat: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+  },
+  cardBody: {
+    paddingHorizontal: 14,
+    paddingTop: 12,
+    paddingBottom: 14,
   },
   cardTop: {
     flexDirection: 'row',
@@ -887,16 +997,16 @@ const styles = StyleSheet.create({
     color: colors.textFaint,
   },
   cardName: {
-    fontSize: 14,
-    lineHeight: 19,
+    fontSize: 15,
+    lineHeight: 20,
     fontFamily: fonts.displayBold,
     color: colors.onAccent,
   },
   cardMeta: {
-    fontSize: 11,
+    fontSize: 13,
     fontFamily: fonts.body,
-    color: colors.textMutedDark,
-    marginTop: 4,
+    color: colors.textSecondary,
+    marginTop: 6,
   },
   cardUploader: {
     flexDirection: 'row',

@@ -1,4 +1,3 @@
-// OWNER CONFIRMATION REQUIRED before release: these are default URLs, not yet verified.
 // Single source for every Terms/Privacy link in the app.
 export const TERMS_URL = 'https://rootaroo.com/terms';
 export const PRIVACY_URL = 'https://rootaroo.com/privacy';

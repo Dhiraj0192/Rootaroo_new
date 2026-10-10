@@ -62,6 +62,14 @@ export function routeForNotification(data) {
   return { name: 'MainTabs', params: { screen: tab, params: { screen, params } } };
 }
 
+// The root navigator only registers MainTabs/Notifications once signed in and past
+// onboarding. Navigating earlier throws "action not handled", so hold the route until then.
+function canNavigate(navRef, route) {
+  if (!navRef?.isReady?.()) return false;
+  const names = navRef.getRootState?.()?.routeNames;
+  return !names || names.includes(route.name);
+}
+
 // Returns a promise that settles once the id is stored (never rejects).
 export function handleNotificationResponse(navRef, response) {
   const request = response?.notification?.request;
@@ -76,7 +84,7 @@ export function handleNotificationResponse(navRef, response) {
   }
 
   const route = routeForNotification(request?.content?.data);
-  if (navRef?.isReady?.()) {
+  if (canNavigate(navRef, route)) {
     navRef.navigate(route.name, route.params);
   } else {
     pendingRoute = route;
@@ -98,7 +106,7 @@ export async function handleColdStartResponse(navRef, response) {
 }
 
 export function flushPendingNotification(navRef) {
-  if (!pendingRoute || !navRef?.isReady?.()) return;
+  if (!pendingRoute || !canNavigate(navRef, pendingRoute)) return;
   const route = pendingRoute;
   pendingRoute = null;
   navRef.navigate(route.name, route.params);

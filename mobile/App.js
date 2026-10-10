@@ -64,6 +64,7 @@ export default function App() {
             ref={navigationRef}
             theme={navigationTheme}
             onReady={() => flushPendingNotification(navigationRef)}
+            onStateChange={() => flushPendingNotification(navigationRef)}
           >
             <RootNavigator />
           </NavigationContainer>
