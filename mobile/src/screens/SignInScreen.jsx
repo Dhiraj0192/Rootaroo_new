@@ -26,6 +26,8 @@ import { colors, fonts, goldButton, radius, withAlpha } from '../shared/theme';
 import { GoldFill } from '../shared/components/GoldButton';
 import SpinningIcon from '../components/SpinningIcon';
 import { KEYBOARD_BEHAVIOR } from '../shared/components/KeyboardAware';
+import * as WebBrowser from 'expo-web-browser';
+import { TERMS_URL, PRIVACY_URL } from '../shared/billing/legalLinks';
 function SvgApple() {
   return (
     <Svg width="19" height="19" viewBox="0 0 24 24" fill={colors.onAccent}>
@@ -151,6 +153,19 @@ export default function SignInScreen({ navigation }) {
             <Text style={styles.socialBtnIcon}>📱</Text>
             <Text style={styles.socialBtnText}>Continue with phone number</Text>
           </TouchableOpacity>
+
+          {/* Google, Apple and phone also create an account for someone new, so the Terms apply here too. */}
+          <Text style={styles.legalText}>
+            By continuing, you agree to the{' '}
+            <Text style={styles.legalLink} onPress={() => WebBrowser.openBrowserAsync(TERMS_URL).catch(() => {})} accessibilityRole="link">
+              Terms of Service
+            </Text>
+            {' '}and{' '}
+            <Text style={styles.legalLink} onPress={() => WebBrowser.openBrowserAsync(PRIVACY_URL).catch(() => {})} accessibilityRole="link">
+              Privacy Policy
+            </Text>
+            .
+          </Text>
 
           {/* Divider */}
           <View style={styles.divider}>
@@ -323,6 +338,19 @@ const styles = StyleSheet.create({
   },
   socialBtnIcon: {
     fontSize: 17,
+  },
+  legalText: {
+    fontFamily: fonts.body,
+    fontSize: 12.5,
+    lineHeight: 18,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    marginTop: 4,
+    marginBottom: 4,
+  },
+  legalLink: {
+    color: colors.gold,
+    fontFamily: fonts.bodySemiBold,
   },
   // Divider
   divider: {

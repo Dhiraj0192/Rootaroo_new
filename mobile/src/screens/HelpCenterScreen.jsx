@@ -11,7 +11,8 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, fonts, radius } from '../shared/theme';
 import { useTabBarDockHeight } from '../shared/hooks/useTabBarDockHeight';
-const SUPPORT_EMAIL = 'support@rootaroo.app';
+// Same address as the privacy policy and terms on rootaroo.com.
+const SUPPORT_EMAIL = 'contact@rootaroo.com';
 const FAQS = [
   {
     question: 'How do I create or join a household?',
@@ -19,14 +20,14 @@ const FAQS = [
       'From onboarding, choose "Create a household" to start a new one, or "Join" and enter the invite code someone in your household sent you. You can only belong to one household at a time.',
   },
   {
-    question: 'What happens if I lose my device and I have Vault documents?',
+    question: 'What happens to my journal and vault if I lose my phone?',
     answer:
-      'Vault documents are end-to-end encrypted using keys stored only on your device. If you enabled passphrase backup, you can recover access on a new device with that passphrase. If you did not, Vault contents cannot be recovered by you or by us — this is a deliberate security tradeoff, so set up passphrase backup if you want a safety net.',
+      'Your journal and vault are encrypted on your phone with your private-space key, which we never see. To open them on a new phone, move the key with the QR code from your old phone, or restore it from your backup password or recovery code in Privacy & security. Without the old phone or a backup, neither you nor we can open them again (Household vault files stay with your family). So set up a backup when Rootaroo asks.',
   },
   {
-    question: 'How does Ping work?',
+    question: 'How does location sharing work?',
     answer:
-      '"Ping everyone" shares your current location once with your household. "Request location" asks a specific member to share theirs — they choose whether to accept. Nothing is shared automatically or in the background.',
+      'Location is only shared when you choose to. A check-in shares where you are once. A live share sends your location to the people you pick until the timer ends (8 hours at most) or you stop it. If you allow location "all the time", a live share keeps updating in the background, even when the app is closed, and only while that share runs. "Request location" asks someone to share theirs; they decide whether to accept.',
   },
   {
     question: 'Can I remove someone from my household?',

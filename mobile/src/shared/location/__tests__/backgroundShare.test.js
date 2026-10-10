@@ -6,7 +6,10 @@ const {
   handleLocationTask,
   startSharing,
   stopSharing,
+  explainBackground,
+  BACKGROUND_NOTICE,
 } = require('../backgroundShare');
+const { registerAlertHandler } = require('../../services/themedAlert');
 
 const NOW = new Date('2026-10-08T10:00:00Z').getTime();
 
@@ -14,6 +17,7 @@ function fakeLocation(overrides = {}) {
   return {
     requestForegroundPermissionsAsync: jest.fn(async () => ({ status: 'granted' })),
     requestBackgroundPermissionsAsync: jest.fn(async () => ({ status: 'granted' })),
+    getBackgroundPermissionsAsync: jest.fn(async () => ({ status: 'undetermined', canAskAgain: true })),
     getCurrentPositionAsync: jest.fn(async () => ({ coords: { latitude: 27.7, longitude: 85.3, accuracy: 12 } })),
     startLocationUpdatesAsync: jest.fn(async () => {}),
     stopLocationUpdatesAsync: jest.fn(async () => {}),
@@ -30,7 +34,12 @@ function fakeApi(overrides = {}) {
     ...overrides,
   };
 }
-const deps = (o = {}) => ({ Location: fakeLocation(o.Location), api: fakeApi(o.api), now: () => NOW });
+const deps = (o = {}) => ({
+  Location: fakeLocation(o.Location),
+  api: fakeApi(o.api),
+  now: () => NOW,
+  explainBackground: jest.fn(async () => o.agree ?? true),
+});
 
 beforeEach(async () => {
   await AsyncStorage.clear();
@@ -57,6 +66,41 @@ describe('startSharing', () => {
     expect(result.mode).toBe('foreground');
     expect(d.Location.startLocationUpdatesAsync).not.toHaveBeenCalled();
     expect(d.api.create).toHaveBeenCalled();
+  });
+
+  it('explains background sharing before the phone asks for "all the time" location', async () => {
+    const d = deps();
+    const order = [];
+    d.explainBackground.mockImplementation(async () => { order.push('notice'); return true; });
+    d.Location.requestBackgroundPermissionsAsync.mockImplementation(async () => { order.push('prompt'); return { status: 'granted' }; });
+    await startSharing({ durationMinutes: 60, viewerIds: null }, d);
+    expect(order).toEqual(['notice', 'prompt']);
+  });
+
+  it('"Not now" on the notice shares in the foreground and never shows the phone prompt', async () => {
+    const d = deps({ agree: false });
+    const result = await startSharing({ durationMinutes: 60, viewerIds: null }, d);
+    expect(result.mode).toBe('foreground');
+    expect(d.Location.requestBackgroundPermissionsAsync).not.toHaveBeenCalled();
+    expect(d.Location.startLocationUpdatesAsync).not.toHaveBeenCalled();
+    expect(d.api.create).toHaveBeenCalled();
+  });
+
+  it('skips the notice when background location is already allowed', async () => {
+    const d = deps({ Location: { getBackgroundPermissionsAsync: jest.fn(async () => ({ status: 'granted' })) } });
+    const result = await startSharing({ durationMinutes: 60, viewerIds: null }, d);
+    expect(d.explainBackground).not.toHaveBeenCalled();
+    expect(result.mode).toBe('background');
+  });
+
+  it('skips the notice when the phone will not ask again', async () => {
+    const d = deps({ Location: {
+      getBackgroundPermissionsAsync: jest.fn(async () => ({ status: 'denied', canAskAgain: false })),
+      requestBackgroundPermissionsAsync: jest.fn(async () => ({ status: 'denied' })),
+    } });
+    const result = await startSharing({ durationMinutes: 60, viewerIds: null }, d);
+    expect(d.explainBackground).not.toHaveBeenCalled();
+    expect(result.mode).toBe('foreground');
   });
 
   it('refuses to start without location permission and creates nothing', async () => {
@@ -140,3 +184,27 @@ describe('stopSharing', () => {
     expect(await AsyncStorage.getItem(ACTIVE_SHARE_KEY)).toBeNull();
   });
 });
+
+describe('explainBackground (the in-app notice)', () => {
+  afterEach(() => registerAlertHandler(null));
+
+  it('shows the notice and resolves with the choice; closing the sheet counts as "Not now"', async () => {
+    let shown;
+    registerAlertHandler((title, message, buttons) => { shown = { title, message, buttons }; });
+    const agreed = explainBackground();
+    expect(shown.title).toBe(BACKGROUND_NOTICE.title);
+    expect(shown.message).toMatch(/even when the app is closed/);
+    shown.buttons.find((b) => b.text === 'Continue').onPress();
+    await expect(agreed).resolves.toBe(true);
+
+    const declined = explainBackground();
+    shown.buttons.find((b) => b.style === 'cancel').onPress(); // AlertHost runs this when the sheet is dismissed
+    await expect(declined).resolves.toBe(false);
+  });
+
+  it('goes straight on to the phone prompt when no alert can be shown', async () => {
+    registerAlertHandler(null);
+    await expect(explainBackground()).resolves.toBe(true);
+  });
+});
+
