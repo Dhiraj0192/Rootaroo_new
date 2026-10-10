@@ -10,7 +10,35 @@ const defaultDeps = {
   get Location() { return require('expo-location'); },
   get api() { return require('../api/locationShares').locationSharesApi; },
   now: () => Date.now(),
+  explainBackground: () => explainBackground(),
 };
+
+// Shown before the phone's own "Allow all the time" prompt: Play's prominent-disclosure
+// rule, and our privacy policy, promise this explanation comes first.
+export const BACKGROUND_NOTICE = {
+  title: 'Keep sharing while Rootaroo is closed?',
+  body: 'Next, your phone asks whether Rootaroo may use your location all the time. If you allow it, Rootaroo keeps sending your location in the background, even when the app is closed, only to the people you chose. It stops when the timer ends or when you stop sharing.',
+};
+
+/** Resolves true to go on to the permission prompt, false for "Not now". */
+export function explainBackground() {
+  const { showAlert, canShowAlert } = require('../services/themedAlert');
+  if (!canShowAlert()) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    showAlert(BACKGROUND_NOTICE.title, BACKGROUND_NOTICE.body, [
+      { text: 'Not now', style: 'cancel', onPress: () => resolve(false) },
+      { text: 'Continue', onPress: () => resolve(true) },
+    ]);
+  });
+}
+
+/** Explains background sharing first, unless it's already allowed or the phone won't ask again. */
+async function mayAskForBackground(deps) {
+  const current = await deps.Location.getBackgroundPermissionsAsync?.();
+  if (current?.status === 'granted') return true;
+  if (current?.canAskAgain === false) return true; // no prompt will show, so there is nothing to explain
+  return (deps.explainBackground ?? defaultDeps.explainBackground)();
+}
 
 async function readActive() {
   try {
@@ -58,6 +86,7 @@ export async function attachSharing(share, deps = defaultDeps) {
   const { Location } = deps;
   await AsyncStorage.setItem(ACTIVE_SHARE_KEY, JSON.stringify({ id: share.id, expiresAt: share.expiresAt }));
   try {
+    if (!(await mayAskForBackground(deps))) return { mode: 'foreground' };
     const bg = await Location.requestBackgroundPermissionsAsync();
     if (bg.status !== 'granted') return { mode: 'foreground' };
     await Location.startLocationUpdatesAsync(LOCATION_SHARE_TASK, {

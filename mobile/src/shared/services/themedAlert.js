@@ -5,6 +5,11 @@ export function registerAlertHandler(fn) {
   _handler = fn;
 }
 
+/** True once the AlertHost is mounted and an alert would actually show. */
+export function canShowAlert() {
+  return _handler !== null;
+}
+
 /**
  * Themed drop-in replacement for React Native's `Alert.alert`. Same
  * (title, message, buttons) signature, rendered as the app's own glass/gold
